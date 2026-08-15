@@ -1,0 +1,26 @@
+{
+  "timeZone": "America/New_York",
+  "dependencies": {
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "sheets": {
+    "macros": [{
+      "menuName": "filterToRoute",
+      "functionName": "filterToRoute",
+      "defaultShortcut": "Ctrl+Alt+Shift+8"
+    }, {
+      "menuName": "clearRouteFilter",
+      "functionName": "clearRouteFilter",
+      "defaultShortcut": "Ctrl+Alt+Shift+0"
+    }, {
+      "menuName": "walkUpcomingFlights",
+      "functionName": "walkUpcomingFlights",
+      "defaultShortcut": "Ctrl+Alt+Shift+9"
+    }, {
+      "menuName": "openEntryDialog",
+      "functionName": "openEntryDialog",
+      "defaultShortcut": "Ctrl+Alt+Shift+9"
+    }]
+  }
+}

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    .pickerRow { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px; flex-wrap: wrap; }
+    .pickerField label { display: block; font-size: 11px; color: #888; margin-bottom: 2px; }
+    .pickerField input, .pickerField select { font-size: 13px; padding: 4px; }
+    #orgInput, #destInput { width: 60px; text-transform: lowercase; text-align: center; }
+    #swapBtn { background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 14px; padding: 5px 8px; align-self: flex-end; margin-bottom: 1px; }
+    #swapBtn:hover { background: #f1f1f1; }
+    #loadBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
+    #loadBtn:disabled { background: #a9c6f2; }
+    .durationRow { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: #666; }
+    #durationInput { width: 50px; text-align: center; font-size: 12px; padding: 3px; }
+    table { border-collapse: collapse; width: 100%; table-layout: fixed; margin-top: 6px; }
+    th { text-align: left; font-size: 11px; color: #888; padding: 2px 4px; }
+    td { padding: 3px 4px; vertical-align: middle; }
+    input.car { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; text-transform: lowercase; }
+    input.dep { font-weight: bold; font-size: 14px; width: 100%; box-sizing: border-box; }
+    input.flt, input.airc { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; }
+    .status-icon { font-size: 14px; }
+    .status-icon.confirmed { color: #1a8a3d; }
+    .status-icon.unconfirmed { color: #b06000; font-weight: bold; }
+    .delBtn { cursor: pointer; color: #888; font-size: 14px; background: none; border: none; }
+    .delBtn:hover { color: #c5221f; }
+    #addBtn { margin-top: 8px; font-size: 12px; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+    .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; border-top: 1px solid #eee; padding-top: 10px; }
+    #status { color: #666; font-size: 12px; }
+    #cancelBtn { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 8px 16px; cursor: pointer; margin-right: 6px; }
+    #saveBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    #saveBtn:disabled { background: #a9c6f2; }
+    #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; display: none; }
+  </style>
+</head>
+<body>
+  <div class="pickerRow">
+    <div class="pickerField">
+      <label for="orgInput">from</label>
+      <input type="text" id="orgInput" placeholder="slc">
+    </div>
+    <button id="swapBtn" onclick="swapOrgDest()" title="swap origin/destination">&#8646;</button>
+    <div class="pickerField">
+      <label for="destInput">to</label>
+      <input type="text" id="destInput" placeholder="lax">
+    </div>
+    <div class="pickerField">
+      <label for="dowSelect">day</label>
+      <div style="display:flex; gap:2px;">
+        <button id="prevDayBtn" onclick="shiftDay(-1)" title="previous day" style="padding:4px 7px; cursor:pointer;">&#8592;</button>
+        <select id="dowSelect"></select>
+        <button id="nextDayBtn" onclick="shiftDay(1)" title="next day" style="padding:4px 7px; cursor:pointer;">&#8594;</button>
+      </div>
+    </div>
+    <button id="loadBtn" onclick="loadSchedule()">Load</button>
+  </div>
+
+  <div class="durationRow" id="durationRow" style="display:none;">
+    <span class="status-icon" id="durationIcon"></span>
+    <label for="durationInput" style="margin:0;">flight time (hhmm, route-wide)</label>
+    <input type="text" id="durationInput" placeholder="0215">
+  </div>
+
+  <div id="emptyMsg">No flights logged for this route/day yet - add one below.</div>
+
+  <table id="schedTable" style="display:none;">
+    <colgroup>
+      <col style="width:24px;">
+      <col style="width:44px;">
+      <col style="width:90px;">
+      <col style="width:100px;">
+      <col>
+      <col style="width:28px;">
+    </colgroup>
+    <thead>
+      <tr>
+        <th></th>
+        <th>car</th>
+        <th>flight</th>
+        <th>dep time</th>
+        <th>aircraft</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <datalist id="aircraftOptions"></datalist>
+
+  <button id="addBtn" style="display:none;" onclick="addRow()">+ add flight</button>
+
+  <div class="btnRow" style="display:none;" id="btnRow">
+    <span id="status"></span>
+    <span>
+      <button id="cancelBtn" onclick="google.script.host.close()">cancel</button>
+      <button id="saveBtn" onclick="saveSchedule()">save</button>
+    </span>
+  </div>
+
+  <script>
+    var initData = __INIT_DATA__;
+    var current = null; // { org, dest, dow, rows: [...] }
+    var aircraftOptionsRendered = false;
+    var DOW_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+    function populateDowSelect() {
+      var sel = document.getElementById('dowSelect');
+      var todayIdx = DOW_ORDER.indexOf(initData && initData.todayDow);
+      if (todayIdx === -1) todayIdx = 0; // fallback: still populate all 7 days, just not "today"-first
+      for (var i = 0; i < 7; i++) {
+        var day = DOW_ORDER[(todayIdx + i) % 7];
+        var opt = document.createElement('option');
+        opt.value = day;
+        opt.textContent = day + (day === (initData && initData.todayDow) ? ' (today)' : '');
+        sel.appendChild(opt);
+      }
+    }
+    populateDowSelect();
+
+    // Mimics the swap icon on Delta's own site - flips whatever's typed in
+    // the two route fields without touching the day picker or reloading.
+    function swapOrgDest() {
+      var orgEl = document.getElementById('orgInput');
+      var destEl = document.getElementById('destInput');
+      var tmp = orgEl.value;
+      orgEl.value = destEl.value;
+      destEl.value = tmp;
+    }
+
+    // Steps the day picker forward or back one day within the 7-day list
+    // (wraps around at either end) - lets him walk a whole route's week
+    // without retyping the route each time. Auto-reloads only if a route
+    // is already entered; otherwise it just moves the selector.
+    function shiftDay(delta) {
+      var sel = document.getElementById('dowSelect');
+      sel.selectedIndex = (sel.selectedIndex + delta + sel.options.length) % sel.options.length;
+      var org = document.getElementById('orgInput').value.trim();
+      var dest = document.getElementById('destInput').value.trim();
+      if (org && dest) loadSchedule();
+    }
+
+    function renderAircraftOptions(options) {
+      if (aircraftOptionsRendered) return;
+      var dl = document.getElementById('aircraftOptions');
+      (options || []).forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt;
+        dl.appendChild(o);
+      });
+      aircraftOptionsRendered = true;
+    }
+    renderAircraftOptions(initData.aircraftOptions);
+
+    function loadSchedule() {
+      var org = document.getElementById('orgInput').value.trim().toLowerCase();
+      var dest = document.getElementById('destInput').value.trim().toLowerCase();
+      if (!org || !dest) {
+        alert('Enter both a from and a to airport code.');
+        return;
+      }
+      var dow = document.getElementById('dowSelect').value;
+      var btn = document.getElementById('loadBtn');
+      btn.disabled = true;
+      btn.textContent = 'Loading\u2026';
+      google.script.run
+        .withSuccessHandler(function (result) {
+          btn.disabled = false;
+          btn.textContent = 'Load';
+          current = result;
+          current.rows.forEach(function (r) { r.deleted = false; });
+          renderRows();
+          renderDuration();
+        })
+        .withFailureHandler(function (err) {
+          btn.disabled = false;
+          btn.textContent = 'Load';
+          alert('Error: ' + err.message);
+        })
+        .getScheduleForRouteDay(org, dest, dow);
+    }
+
+    // Duration is route-wide, not day-specific, so it's shown once
+    // regardless of which day is loaded - same confirmed/unconfirmed icon
+    // convention as each schedule row, just for this one field.
+    // Duration is stored as total minutes (unchanged in RouteDurations),
+    // but typed/shown as HHMM to match how Delta's own site reports flight
+    // time - "2h 15m" becomes "0215" here. Blank input means "don't touch
+    // it" rather than "zero minutes".
+    function minutesToHHMM(totalMinutes) {
+      if (totalMinutes === '' || totalMinutes === null || totalMinutes === undefined) return '';
+      var h = Math.floor(totalMinutes / 60), m = totalMinutes % 60;
+      return ('0' + h).slice(-2) + ('0' + m).slice(-2);
+    }
+
+    function parseDurationHHMM(text) {
+      var raw = text.trim();
+      if (raw === '') return '';
+      var m = raw.match(/^(\d{1,3})(\d{2})$/);
+      if (!m) return null;
+      var hh = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+      if (mm > 59) return null;
+      return hh * 60 + mm;
+    }
+
+    function renderDuration() {
+      var row = document.getElementById('durationRow');
+      var icon = document.getElementById('durationIcon');
+      var input = document.getElementById('durationInput');
+      row.style.display = 'flex';
+      input.value = minutesToHHMM(current.durationMinutes);
+      icon.className = 'status-icon ' + (current.durationConfirmed ? 'confirmed' : 'unconfirmed');
+      icon.textContent = current.durationConfirmed ? '\u2713' : '?';
+      icon.title = current.durationConfirmed ? 'confirmed' : 'unconfirmed';
+    }
+
+    function renderRows() {
+      var tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+      var visibleRows = current.rows.filter(function (r) { return !r.deleted; });
+
+      visibleRows.forEach(function (row) {
+        var idx = current.rows.indexOf(row);
+        var tr = document.createElement('tr');
+        var iconClass = row.confirmed ? 'confirmed' : 'unconfirmed';
+        var iconChar = row.confirmed ? '\u2713' : '?';
+        tr.innerHTML =
+          '<td><span class="status-icon ' + iconClass + '" title="' +
+            (row.confirmed ? 'confirmed' : 'unconfirmed') + '">' + iconChar + '</span></td>' +
+          '<td><input class="car" data-i="' + idx + '" value="' + (row.carrier || 'dl') + '"></td>' +
+          '<td><input class="flt" data-i="' + idx + '" value="' + (row.flightNumber || '') + '"></td>' +
+          '<td><input class="dep" data-i="' + idx + '" value="' + (row.depDisplay || '') + '"></td>' +
+          '<td><input class="airc" list="aircraftOptions" data-i="' + idx + '" value="' + (row.aircraftConfig || '') + '"></td>' +
+          '<td><button class="delBtn" data-i="' + idx + '" onclick="deleteRow(' + idx + ')" title="delete row">\u2716</button></td>';
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('schedTable').style.display = visibleRows.length > 0 ? '' : 'none';
+      document.getElementById('emptyMsg').style.display = visibleRows.length === 0 ? 'block' : 'none';
+      document.getElementById('addBtn').style.display = '';
+      document.getElementById('btnRow').style.display = 'flex';
+      document.getElementById('status').textContent = '';
+    }
+
+    function addRow() {
+      current.rows.push({
+        scheduleRow: null,
+        carrier: 'dl',
+        flightNumber: 'bogus' + current.nextBogusNumber,
+        dep: null, depDisplay: '',
+        aircraftConfig: '',
+        confirmed: false,
+        deleted: false
+      });
+      current.nextBogusNumber++;
+      renderRows();
+    }
+
+    function deleteRow(idx) {
+      var row = current.rows[idx];
+      if (row.scheduleRow) {
+        row.deleted = true; // existing row - server needs to delete it on save
+      } else {
+        current.rows.splice(idx, 1); // never-saved row - just drop it
+      }
+      renderRows();
+    }
+
+    // Accepts either the original "h:mm am/pm" form, or a faster shorthand
+    // with no colon or "m" - just 4 digits plus a/p, e.g. "0927a" for
+    // 9:27 am, "1815p" for 6:15 pm (the trailing a/p still resolves 12h
+    // vs 24h the normal way - "p" past noon adds 12, "a" at 12 wraps to 0).
+    function parseDepTime(text) {
+      var raw = text.trim().toUpperCase();
+
+      var shorthand = raw.match(/^(\d{2})(\d{2})\s*([AP])$/);
+      if (shorthand) {
+        var sh = parseInt(shorthand[1], 10), sm = parseInt(shorthand[2], 10), sp = shorthand[3];
+        if (sm > 59) return null;
+        if (sp === 'P' && sh !== 12) sh += 12;
+        if (sp === 'A' && sh === 12) sh = 0;
+        if (sh > 23) return null;
+        return sh * 100 + sm;
+      }
+
+      var parts = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+      if (!parts) return null;
+      var h = parseInt(parts[1], 10), m = parseInt(parts[2], 10), period = parts[3];
+      if (period === 'PM' && h !== 12) h += 12;
+      if (period === 'AM' && h === 12) h = 0;
+      return h * 100 + m;
+    }
+
+    function saveSchedule() {
+      var cars = document.querySelectorAll('input.car');
+      var flts = document.querySelectorAll('input.flt');
+      var deps = document.querySelectorAll('input.dep');
+      var aircs = document.querySelectorAll('input.airc');
+
+      var badTime = null;
+      deps.forEach(function (el) {
+        if (parseDepTime(el.value) === null) badTime = el;
+      });
+      if (badTime) {
+        document.getElementById('status').textContent = 'Enter a departure time like 6:15 am or 0615a.';
+        badTime.focus();
+        return;
+      }
+
+      cars.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].carrier = el.value.trim().toLowerCase() || 'dl';
+      });
+      flts.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].flightNumber = el.value.trim();
+      });
+      deps.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].dep = parseDepTime(el.value);
+      });
+      aircs.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].aircraftConfig = el.value.trim();
+      });
+
+      var durationRaw = document.getElementById('durationInput').value.trim();
+      var durationMinutes = parseDurationHHMM(durationRaw);
+      if (durationMinutes === null) {
+        document.getElementById('status').textContent = 'Enter flight time as hhmm (e.g. 0215 for 2h 15m), or leave blank.';
+        document.getElementById('durationInput').focus();
+        return;
+      }
+
+      var btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      document.getElementById('status').textContent = 'Saving\u2026';
+
+      google.script.run
+        .withSuccessHandler(function (result) {
+          btn.disabled = false;
+          document.getElementById('status').textContent = 'Saved.';
+          if (result.offerCopy) {
+            var doCopy = confirm('This is the only day you\'ve entered for ' +
+                result.org + '-' + result.dest + '. Copy these flights to the other 6 days too?');
+            if (doCopy) {
+              google.script.run
+                .withSuccessHandler(function (copyResult) {
+                  document.getElementById('status').textContent =
+                      'Saved. Copied to ' + copyResult.copiedCount + ' row(s) across the other days.';
+                })
+                .withFailureHandler(function (err) {
+                  document.getElementById('status').textContent = 'Saved, but copy failed: ' + err.message;
+                })
+                .copyToOtherDays(result.org, result.dest, result.dow);
+            }
+          }
+          // Reload this route/day fresh, so confirmed icons and any
+          // server-assigned bogus numbers reflect what actually got saved.
+          loadSchedule();
+        })
+        .withFailureHandler(function (err) {
+          btn.disabled = false;
+          document.getElementById('status').textContent = 'Error: ' + err.message;
+        })
+        .saveScheduleForRouteDay({
+          org: current.org, dest: current.dest, dow: current.dow,
+          rows: current.rows,
+          durationMinutes: durationMinutes
+        });
+    }
+  </script>
+</body>
+</html>

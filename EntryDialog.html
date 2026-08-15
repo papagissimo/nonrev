@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    .subhead { margin-bottom: 2px; }
+    .routeTitle { font-size: 22px; font-weight: bold; color: #222; }
+    .dateSub { font-size: 13px; color: #666; margin-left: 8px; }
+    .summary { color: #888; font-size: 12px; margin-bottom: 10px; }
+    .wait { color: #1a73e8; font-size: 14px; margin: 14px 0; }
+    table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    th { text-align: left; font-size: 11px; color: #888; padding: 2px 4px; overflow: hidden; }
+    td { padding: 3px 4px; vertical-align: middle; overflow: hidden; }
+    tr.next { background: #e6f4ea; }
+    .dep { font-weight: bold; font-size: 14px; }
+    .airc { font-size: 11px; color: #666; }
+    .car { font-size: 11px; color: #666; }
+    .hrs { font-size: 12px; color: #666; }
+    .hrs.soon { color: #c5221f; font-weight: bold; }
+    input.seat { width: 30px; text-align: center; box-sizing: border-box; }
+    input.timeEdit, input.aircEdit, input.fltEdit { font-size: 11px; display: none; width: 100%; box-sizing: border-box; }
+    .flt { font-size: 11px; color: #666; }
+    .pencil { cursor: pointer; color: #888; font-size: 13px; }
+    .prev { font-size: 10px; color: #888; line-height: 1.3; }
+    .prev .row { white-space: nowrap; }
+    .prevHrsCell { font-size: 11px; color: #888; }
+    .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+    #getNextBtn, #logBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    #getNextBtn:disabled, #logBtn:disabled { background: #a9c6f2; }
+    #status { color: #666; font-size: 12px; }
+    #startState { text-align: center; padding: 40px 0; }
+    .settingsLink { text-align: right; font-size: 12px; margin-bottom: 4px; }
+    .settingsLink a { color: #1a73e8; cursor: pointer; text-decoration: none; }
+    #settingsPanel { display: none; border: 1px solid #ddd; border-radius: 4px; padding: 10px; margin-bottom: 10px; font-size: 12px; background: #fafafa; }
+    #settingsPanel .tierRow { margin-top: 8px; }
+    #settingsPanel input[type=number] { width: 46px; text-align: center; }
+    #settingsPanel label { display: block; margin-bottom: 4px; }
+    #saveSettingsBtn { margin-top: 10px; background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="startState">
+    <button id="getNextBtn" onclick="loadBatch()">Get Next Flights</button>
+  </div>
+
+  <div id="batchView" style="display:none;">
+    <div class="settingsLink"><a onclick="toggleSettings()">Settings</a></div>
+    <div id="settingsPanel">
+      <label><input type="checkbox" id="setLogEverything"> Log every flight regardless of timing (ignores tiers below)</label>
+      <div class="tierRow">
+        <b>Near tier</b> - always runs to the 45-min cutoff, no "done for the day"<br>
+        Due within <input type="number" step="0.1" id="setNearMax"> h &middot;
+        recheck every <input type="number" step="0.1" id="setNearGap"> h
+      </div>
+      <div class="tierRow">
+        <b>Far tier</b> - closes for the day once a close-enough reading lands<br>
+        Due between <input type="number" step="0.1" id="setFarMin"> and <input type="number" step="0.1" id="setFarMax"> h &middot;
+        target <input type="number" step="0.1" id="setFarTarget"> h<br>
+        done once within <input type="number" step="0.1" id="setFarTol"> h of target &middot;
+        else recheck every <input type="number" step="0.1" id="setFarGap"> h
+      </div>
+      <button id="saveSettingsBtn" onclick="saveSettings()">Save Settings</button>
+      <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
+    </div>
+    <div class="subhead">
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="wait" id="wait" style="display:none;"></div>
+    <table id="flightTable" style="display:none;">
+      <colgroup id="colgroup"></colgroup>
+      <thead><tr id="headerRow"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <datalist id="aircraftOptions"></datalist>
+    <div class="btnRow" id="btnRow" style="display:none;">
+      <span id="status">Blank rows aren't logged.</span>
+      <button id="logBtn" onclick="logReadings()">Log these readings</button>
+    </div>
+  </div>
+
+  <script>
+    var initData = __INIT_DATA__;
+    var batch = null;
+    var SEAT_FIELDS = ['y', 'cplus', 'onePS', 'd1'];
+    var aircraftOptionsRendered = false;
+    var skippedRouteKeys = [];
+
+    function buildColumns(anyD1) {
+      var cols = [
+        { key: 'dep', label: 'Dep', width: 78 },
+        { key: 'y', label: 'Y', width: 40 },
+        { key: 'cplus', label: 'C+', width: 40 },
+        { key: 'onePS', label: '1/PS', width: 40 }
+      ];
+      if (anyD1) cols.push({ key: 'd1', label: 'D1', width: 40 });
+      cols.push({ key: 'prevHrs', label: 'Prev', width: 44 });
+      cols.push({ key: 'prev', label: 'Prev', width: 70 });
+      cols.push({ key: 'hrs', label: 'Hrs', width: 46 });
+      cols.push({ key: 'car', label: 'Car', width: 36 });
+      cols.push({ key: 'flt', label: 'Flight', width: 60 });
+      cols.push({ key: 'airc', label: 'Aircraft', width: 100 });
+      cols.push({ key: 'pencil', label: '', width: 24 });
+      return cols;
+    }
+
+    function formatMostRecentPrevHrs(readings) {
+      if (!readings || readings.length === 0) return '';
+      return readings[0].hrs.toFixed(1) + 'h';
+    }
+
+    function formatPreviousReadings(anyD1, readings) {
+      if (!readings || readings.length === 0) return '';
+      return readings.map(function (rd) {
+        var parts = [rd.y, rd.cplus, rd.onePS];
+        if (anyD1) parts.push(rd.d1);
+        var text = parts.map(function (v) {
+          return (v === '' || v === null || v === undefined) ? '-' : v;
+        }).join(' ');
+        return '<div class="row">' + text + '</div>';
+      }).join('');
+    }
+
+    function renderAircraftOptions(options) {
+      if (aircraftOptionsRendered) return;
+      var dl = document.getElementById('aircraftOptions');
+      (options || []).forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt;
+        dl.appendChild(o);
+      });
+      aircraftOptionsRendered = true;
+    }
+
+    function toggleSettings() {
+      var panel = document.getElementById('settingsPanel');
+      panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    }
+
+    function populateSettingsForm(settings) {
+      document.getElementById('setLogEverything').checked = !!settings.logEverything;
+      var near = settings.tiers[0], far = settings.tiers[1];
+      document.getElementById('setNearMax').value = near.maxHours;
+      document.getElementById('setNearGap').value = near.recheckGapHours;
+      document.getElementById('setFarMin').value = far.minHours;
+      document.getElementById('setFarMax').value = far.maxHours;
+      document.getElementById('setFarTarget').value = far.targetHours;
+      document.getElementById('setFarTol').value = far.doneToleranceHours;
+      document.getElementById('setFarGap').value = far.recheckGapHours;
+    }
+
+    function saveSettings() {
+      var settings = {
+        logEverything: document.getElementById('setLogEverything').checked,
+        tiers: [
+          {
+            minHours: 0,
+            maxHours: parseFloat(document.getElementById('setNearMax').value),
+            recheckGapHours: parseFloat(document.getElementById('setNearGap').value)
+          },
+          {
+            minHours: parseFloat(document.getElementById('setFarMin').value),
+            maxHours: parseFloat(document.getElementById('setFarMax').value),
+            targetHours: parseFloat(document.getElementById('setFarTarget').value),
+            doneToleranceHours: parseFloat(document.getElementById('setFarTol').value),
+            recheckGapHours: parseFloat(document.getElementById('setFarGap').value)
+          }
+        ]
+      };
+      var status = document.getElementById('settingsStatus');
+      status.textContent = 'Saving\u2026';
+      google.script.run
+        .withSuccessHandler(function () {
+          status.textContent = 'Saved.';
+          loadBatch();
+        })
+        .withFailureHandler(function (err) {
+          status.textContent = 'Error: ' + err.message;
+        })
+        .saveNextUpSettings(settings);
+    }
+
+    function loadBatch() {
+      var btn = document.getElementById('getNextBtn');
+      btn.disabled = true;
+      btn.textContent = 'Loading\u2026';
+      google.script.run
+        .withSuccessHandler(function (result) {
+          document.getElementById('startState').style.display = 'none';
+          document.getElementById('batchView').style.display = 'block';
+          renderBatch(result);
+        })
+        .withFailureHandler(function (err) {
+          btn.disabled = false;
+          btn.textContent = 'Get Next Flights';
+          alert('Error: ' + err.message);
+        })
+        .getNextBatch(skippedRouteKeys);
+    }
+
+    function renderBatch(result) {
+      batch = result;
+      renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
+      if (batch.settings) populateSettingsForm(batch.settings);
+
+      document.getElementById('dateSub').textContent = batch.dowDisplay + ' ' + batch.dateDisplay;
+
+      var waitEl = document.getElementById('wait');
+      var table = document.getElementById('flightTable');
+      var btnRow = document.getElementById('btnRow');
+
+      if (!batch.routeOrg) {
+        document.getElementById('routeTitle').textContent = 'Nothing due right now';
+        document.getElementById('summary').textContent = '';
+        waitEl.style.display = 'block';
+        waitEl.textContent = batch.waitMessage || 'Nothing left to check today.';
+        table.style.display = 'none';
+        btnRow.style.display = 'none';
+        return;
+      }
+
+      document.getElementById('routeTitle').textContent = batch.routeOrg + ' \u2192 ' + batch.routeDest;
+      document.getElementById('summary').textContent = batch.summaryText || '';
+      waitEl.style.display = 'none';
+      table.style.display = '';
+      btnRow.style.display = 'flex';
+
+      var anyD1 = batch.rows.some(function (r) { return r.hasD1; });
+      var columns = buildColumns(anyD1);
+
+      var colgroup = document.getElementById('colgroup');
+      colgroup.innerHTML = columns.map(function (c) {
+        return '<col style="width:' + c.width + 'px;">';
+      }).join('');
+
+      var headerRow = document.getElementById('headerRow');
+      headerRow.innerHTML = columns.map(function (c) {
+        return '<th>' + c.label + '</th>';
+      }).join('');
+
+      var tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+      batch.rows.forEach(function (row, i) {
+        var tr = document.createElement('tr');
+        if (row.isNext) tr.className = 'next';
+        var hrsClass = 'hrs' + (row.hoursUntilDep <= 2 ? ' soon' : '');
+
+        var cellHtml = {
+          dep:
+            '<span class="dep" data-i="' + i + '" id="depDisplay' + i + '">' + row.depDisplay + '</span>' +
+            '<input class="timeEdit" data-i="' + i + '" id="depEdit' + i + '" value="' + row.depDisplay + '">',
+          y: '<input class="seat" data-i="' + i + '" data-field="y" placeholder="-">',
+          cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-">',
+          onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-">',
+          d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-">',
+          prevHrs: '<span class="prevHrsCell">' + formatMostRecentPrevHrs(row.previousReadings) + '</span>',
+          prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
+          hrs: '<span class="' + hrsClass + '">' + row.hoursUntilDep.toFixed(1) + 'h</span>',
+          car: '<span class="car">' + row.car + '</span>',
+          flt:
+            '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber + '</span>' +
+            '<input class="fltEdit" data-i="' + i + '" id="fltEdit' + i + '" value="' + row.flightNumber + '">',
+          airc:
+            '<span class="airc" data-i="' + i + '" id="aircDisplay' + i + '">' + row.aircraftConfig + '</span>' +
+            '<input class="aircEdit" list="aircraftOptions" data-i="' + i + '" id="aircEdit' + i + '" value="' + row.aircraftConfig + '">',
+          pencil: '<span class="pencil" data-i="' + i + '" onclick="toggleEdit(' + i + ')" title="edit schedule">\u270e</span>'
+        };
+
+        tr.innerHTML = columns.map(function (c) {
+          return '<td>' + (cellHtml[c.key] || '') + '</td>';
+        }).join('');
+        tbody.appendChild(tr);
+      });
+
+      tbody.removeEventListener('keydown', handleArrowNav);
+      tbody.addEventListener('keydown', handleArrowNav);
+    }
+
+    function handleArrowNav(e) {
+      var key = e.key;
+      if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft' && key !== 'ArrowRight') return;
+      var el = e.target;
+      if (!el.classList || !el.classList.contains('seat')) return;
+
+      var i = parseInt(el.getAttribute('data-i'), 10);
+      var field = el.getAttribute('data-field');
+      var fieldIdx = SEAT_FIELDS.indexOf(field);
+      var target = null;
+
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        var dir = key === 'ArrowLeft' ? -1 : 1;
+        var idx = fieldIdx + dir;
+        while (idx >= 0 && idx < SEAT_FIELDS.length) {
+          var candidate = document.querySelector('input[data-field="' + SEAT_FIELDS[idx] + '"][data-i="' + i + '"]');
+          if (candidate) { target = candidate; break; }
+          idx += dir;
+        }
+      } else {
+        var rowDir = key === 'ArrowUp' ? -1 : 1;
+        var targetRow = i + rowDir;
+        if (targetRow >= 0 && targetRow < batch.rows.length) {
+          target = document.querySelector('input[data-field="' + field + '"][data-i="' + targetRow + '"]');
+        }
+      }
+
+      if (target) {
+        e.preventDefault();
+        target.focus();
+        target.select();
+      }
+    }
+
+    function toggleEdit(i) {
+      var display = document.getElementById('depDisplay' + i);
+      var edit = document.getElementById('depEdit' + i);
+      var aDisplay = document.getElementById('aircDisplay' + i);
+      var aEdit = document.getElementById('aircEdit' + i);
+      var fDisplay = document.getElementById('fltDisplay' + i);
+      var fEdit = document.getElementById('fltEdit' + i);
+      var editing = edit.style.display === 'inline-block';
+      display.style.display = editing ? 'inline' : 'none';
+      edit.style.display = editing ? 'none' : 'inline-block';
+      aDisplay.style.display = editing ? 'inline' : 'none';
+      aEdit.style.display = editing ? 'none' : 'inline-block';
+      fDisplay.style.display = editing ? 'inline' : 'none';
+      fEdit.style.display = editing ? 'none' : 'inline-block';
+      batch.rows[i].scheduleEdited = !editing;
+    }
+
+    function logReadings() {
+      var btn = document.getElementById('logBtn');
+      var status = document.getElementById('status');
+      btn.disabled = true;
+      status.textContent = 'Logging\u2026';
+
+      var entries = batch.rows.map(function (row, i) {
+        var dep = row.dep, aircraftConfig = row.aircraftConfig, flightNumber = row.flightNumber;
+        var scheduleEdited = !!row.scheduleEdited;
+        if (scheduleEdited) {
+          var timeText = document.getElementById('depEdit' + i).value;
+          aircraftConfig = document.getElementById('aircEdit' + i).value;
+          flightNumber = document.getElementById('fltEdit' + i).value;
+          var parts = timeText.trim().toUpperCase().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+          if (parts) {
+            var h = parseInt(parts[1], 10), m = parseInt(parts[2], 10), period = parts[3];
+            if (period === 'PM' && h !== 12) h += 12;
+            if (period === 'AM' && h === 12) h = 0;
+            dep = h * 100 + m;
+          }
+        }
+        function val(field) {
+          var el = document.querySelector('input[data-field="' + field + '"][data-i="' + i + '"]');
+          return el ? el.value.trim() : '';
+        }
+        return {
+          scheduleRow: row.scheduleRow, org: row.org, dest: row.dest, car: row.car,
+          dep: dep, aircraftConfig: aircraftConfig, flightNumber: flightNumber,
+          scheduleEdited: scheduleEdited,
+          y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1')
+        };
+      });
+
+      var hasAnyData = entries.some(function (e) {
+        return e.scheduleEdited || e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
+      });
+
+      if (!hasAnyData) {
+        var key = batch.routeOrg + '|' + batch.routeDest;
+        if (skippedRouteKeys.indexOf(key) === -1) skippedRouteKeys.push(key);
+        status.textContent = 'Skipped. Getting next\u2026';
+        google.script.run
+          .withSuccessHandler(function (nextResult) {
+            btn.disabled = false;
+            status.textContent = 'Blank rows aren\u2019t logged.';
+            renderBatch(nextResult);
+          })
+          .withFailureHandler(function (err) {
+            btn.disabled = false;
+            status.textContent = 'Error: ' + err.message;
+          })
+          .getNextBatch(skippedRouteKeys);
+        return;
+      }
+
+      google.script.run
+        .withSuccessHandler(function (result) {
+          btn.disabled = false;
+          status.textContent = 'Blank rows aren\u2019t logged.';
+          renderBatch(result.next);
+        })
+        .withFailureHandler(function (err) {
+          btn.disabled = false;
+          status.textContent = 'Error: ' + err.message;
+        })
+        .saveAndGetNextBatch({
+          flightYr: batch.flightYr, flightMMDD: batch.flightMMDD,
+          entries: entries
+        }, skippedRouteKeys);
+    }
+
+    loadBatch();
+  </script>
+</body>
+</html>
