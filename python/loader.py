@@ -12,7 +12,27 @@ def format_date(year, monthday):
 
 
 def format_hhmm(value):
-    return f"{int(value):04d}" if value is not None else None
+    # Always normalizes, regardless of whether openpyxl handed us an int,
+    # a float (700.0), or a string ("0700" or the corrupted "700.0") -
+    # int(float(x)) collapses all of those to the same integer first.
+    return f"{int(float(value)):04d}" if value is not None else None
+
+
+def normalize_flight_number(value):
+    # flightNumber is nominal (an identifier, not a quantity) - openpyxl
+    # sometimes hands back a real numeric flight number as a Python float
+    # (2142.0), which str()'d straight into the db as the literal text
+    # "2142.0". Strip that artifact; leave text placeholders like
+    # "bogus029" untouched.
+    if value is None:
+        return None
+    s = str(value)
+    if s.endswith('.0'):
+        try:
+            return str(int(float(s)))
+        except ValueError:
+            return s
+    return s
 
 
 def day_of_week(year, monthday):
@@ -33,7 +53,10 @@ def load_flight_schedule(ws, conn):
         for r in skipped:
             print("  ", r[:8])
     rows = [r for r in rows if r[1]]
-    data = [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], bool(r[7])) for r in rows]
+    data = [
+        (r[0], normalize_flight_number(r[1]), r[2], r[3], r[4], format_hhmm(r[5]), r[6], bool(r[7]))
+        for r in rows
+    ]
     conn.executemany(
         """INSERT INTO flightSchedule
            (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed)
@@ -41,10 +64,10 @@ def load_flight_schedule(ws, conn):
         data,
     )
     # keyed by (org, dest, dayOfWeek) -> list of (depTimeMinutes, depTimeStr, carrier, flightNumber)
+    # data is already normalized above, so no further fixing needed here.
     by_route_day = {}
     for r in data:
         carrier, flightNumber, org, dest, dow, depTime = r[0], r[1], r[2], r[3], r[4], r[5]
-        depTime = format_hhmm(depTime) if not isinstance(depTime, str) else depTime
         key = (org, dest, dow)
         by_route_day.setdefault(key, []).append(
             (hhmm_to_minutes(depTime), depTime, carrier, flightNumber)

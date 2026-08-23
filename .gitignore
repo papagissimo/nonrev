@@ -1,0 +1,6 @@
+ __pycache__/
+*.pyc
+*.db-journal
+*.db-wal
+*.db-shm
+python/fix_flightnumber_deptime.py
