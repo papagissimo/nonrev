@@ -81,7 +81,7 @@
   </div>
 
   <script>
-    var initData = __INIT_DATA__;
+    var initData = {}; // aircraftOptions now arrives on the batch result itself, see renderAircraftOptions
     var batch = null;
     var SEAT_FIELDS = ['y', 'cplus', 'onePS', 'd1'];
     var aircraftOptionsRendered = false;
@@ -170,33 +170,43 @@
       };
       var status = document.getElementById('settingsStatus');
       status.textContent = 'Saving\u2026';
-      google.script.run
-        .withSuccessHandler(function () {
+      fetch('/api/saveSettings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
           status.textContent = 'Saved.';
           loadBatch();
         })
-        .withFailureHandler(function (err) {
+        .catch(function (err) {
           status.textContent = 'Error: ' + err.message;
-        })
-        .saveNextUpSettings(settings);
+        });
     }
 
     function loadBatch() {
       var btn = document.getElementById('getNextBtn');
       btn.disabled = true;
       btn.textContent = 'Loading\u2026';
-      google.script.run
-        .withSuccessHandler(function (result) {
+      fetch('/api/getNextBatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skipRouteKeys: skippedRouteKeys })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
           document.getElementById('startState').style.display = 'none';
           document.getElementById('batchView').style.display = 'block';
           renderBatch(result);
         })
-        .withFailureHandler(function (err) {
+        .catch(function (err) {
           btn.disabled = false;
           btn.textContent = 'Get Next Flights';
           alert('Error: ' + err.message);
-        })
-        .getNextBatch(skippedRouteKeys);
+        });
     }
 
     function renderBatch(result) {
@@ -369,34 +379,44 @@
         var key = batch.routeOrg + '|' + batch.routeDest;
         if (skippedRouteKeys.indexOf(key) === -1) skippedRouteKeys.push(key);
         status.textContent = 'Skipped. Getting next\u2026';
-        google.script.run
-          .withSuccessHandler(function (nextResult) {
+        fetch('/api/getNextBatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skipRouteKeys: skippedRouteKeys })
+        })
+          .then(function (res) { return res.json(); })
+          .then(function (nextResult) {
+            if (nextResult.error) throw new Error(nextResult.error);
             btn.disabled = false;
             status.textContent = 'Blank rows aren\u2019t logged.';
             renderBatch(nextResult);
           })
-          .withFailureHandler(function (err) {
+          .catch(function (err) {
             btn.disabled = false;
             status.textContent = 'Error: ' + err.message;
-          })
-          .getNextBatch(skippedRouteKeys);
+          });
         return;
       }
 
-      google.script.run
-        .withSuccessHandler(function (result) {
+      fetch('/api/saveAndGetNextBatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payload: { flightDate: batch.flightDate, entries: entries },
+          skipRouteKeys: skippedRouteKeys
+        })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
           btn.disabled = false;
           status.textContent = 'Blank rows aren\u2019t logged.';
           renderBatch(result.next);
         })
-        .withFailureHandler(function (err) {
+        .catch(function (err) {
           btn.disabled = false;
           status.textContent = 'Error: ' + err.message;
-        })
-        .saveAndGetNextBatch({
-          flightYr: batch.flightYr, flightMMDD: batch.flightMMDD,
-          entries: entries
-        }, skippedRouteKeys);
+        });
     }
 
     loadBatch();
