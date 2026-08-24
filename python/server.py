@@ -1,5 +1,5 @@
 """
-Local web server for the canBuy Entry Dialogue - the direct replacement
+Local web server for the SeatLoggingDialog - the direct replacement
 for Apps Script's openEntryDialog(). Run this, then open the printed
 localhost address in a browser tab.
 
@@ -16,7 +16,7 @@ import sqlite3
 
 from flask import Flask, jsonify, request, send_from_directory
 
-import dialogue
+import SeatLoggingDialog
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -34,7 +34,7 @@ def get_conn():
 
 @app.route('/')
 def index():
-    return send_from_directory(STATIC_DIR, 'EntryDialog.html')
+    return send_from_directory(STATIC_DIR, 'SeatLoggingDialog.html')
 
 
 @app.route('/api/getNextBatch', methods=['POST'])
@@ -42,7 +42,7 @@ def api_get_next_batch():
     skip_route_keys = (request.get_json(silent=True) or {}).get('skipRouteKeys', [])
     conn = get_conn()
     try:
-        return jsonify(dialogue.get_next_batch(conn, skip_route_keys))
+        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_keys))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -56,7 +56,7 @@ def api_save_and_get_next_batch():
     skip_route_keys = body.get('skipRouteKeys', [])
     conn = get_conn()
     try:
-        return jsonify(dialogue.save_and_get_next_batch(conn, payload, skip_route_keys))
+        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, skip_route_keys))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -77,5 +77,5 @@ def api_save_settings():
 
 
 if __name__ == '__main__':
-    print(f"Entry Dialogue running at http://localhost:{PORT}")
+    print(f"SeatLoggingDialog running at http://localhost:{PORT}")
     app.run(host='localhost', port=PORT, debug=True)

@@ -1,6 +1,7 @@
 """
-Port of Entrydialog.gs.js's getNextBatch / saveEntryDialog / cadence
-engine to Python against nonrev.db, replacing Sheets/PropertiesService.
+SeatLoggingDialog backend: port of Entrydialog.gs.js's getNextBatch /
+saveEntryDialog / cadence engine to Python against nonrev.db, replacing
+Sheets/PropertiesService.
 
 One real simplification versus the old version: the old sheet had no
 reliable flight-number field, so "which readings are for this exact
