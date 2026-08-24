@@ -65,9 +65,8 @@ def evaluate_eligibility(hours_until_dep, todays_hrs_list, tiers):
     return eligible_now, minutes_until_eligible
 
 
-def hhmm_to_12h(hhmm):
-    hhmm = int(hhmm)
-    h, m = hhmm // 100, hhmm % 100
+def minutes_to_12h(dep_minutes):
+    h, m = divmod(int(dep_minutes), 60)
     period = 'pm' if h >= 12 else 'am'
     h12 = h % 12 or 12
     return f"{h12}:{m:02d} {period}"
@@ -195,7 +194,7 @@ def get_next_batch(conn, skip_route_keys=None):
             continue
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
-            'dep': c['dep'], 'depDisplay': hhmm_to_12h(c['dep']),
+            'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
             'flightNumber': c['flightNumber'], 'aircraftConfig': c['aircraftConfig'],
             'hasD1': d1_map.get(str(c['aircraftConfig']).lower(), False),
             'hoursUntilDep': round(c['hoursUntilDep'], 1),

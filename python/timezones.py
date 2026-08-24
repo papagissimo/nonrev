@@ -63,20 +63,20 @@ def get_confirmed_timezone(conn, airport_code):
     return row[0]
 
 
-def et_equivalent_minutes(conn, hhmm, airport_code, on_date):
+def et_equivalent_minutes(conn, dep_minutes, airport_code, on_date):
     """
-    Converts a local HHMM departure time (string or int, e.g. '1707' or
-    1707) at airport_code, on a specific calendar date (matters because
-    the correct UTC offset can differ depending on the date, DST), into
-    "ET-equivalent minutes since midnight ET" on that same date.
+    Converts a local departure time - given as minutes-since-midnight
+    (e.g. 455 for 07:35) - at airport_code, on a specific calendar date
+    (matters because the correct UTC offset can differ depending on the
+    date, DST), into "ET-equivalent minutes since midnight ET" on that
+    same date.
 
     May come back negative or over 1440 if the real ET-equivalent instant
     falls on the adjacent calendar day - expected and fine, this value is
     only ever used for relative comparison against other
     et_equivalent_minutes values, never displayed directly.
     """
-    hhmm = int(hhmm)
-    h, m = hhmm // 100, hhmm % 100
+    h, m = divmod(int(dep_minutes), 60)
 
     tz_name = get_confirmed_timezone(conn, airport_code)
     local_tz = ZoneInfo(tz_name)

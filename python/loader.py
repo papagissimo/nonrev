@@ -54,23 +54,24 @@ def load_flight_schedule(ws, conn):
             print("  ", r[:8])
     rows = [r for r in rows if r[1]]
     data = [
-        (r[0], normalize_flight_number(r[1]), r[2], r[3], r[4], format_hhmm(r[5]), r[6], bool(r[7]))
+        (r[0], normalize_flight_number(r[1]), r[2], r[3], r[4],
+         hhmm_to_minutes(format_hhmm(r[5])), r[6], bool(r[7]))
         for r in rows
     ]
     conn.executemany(
         """INSERT INTO flightSchedule
-           (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed)
-           VALUES (?,?,?,?,?,?,?,?)""",
+           (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed, classification)
+           VALUES (?,?,?,?,?,?,?,?,NULL)""",
         data,
     )
-    # keyed by (org, dest, dayOfWeek) -> list of (depTimeMinutes, depTimeStr, carrier, flightNumber)
-    # data is already normalized above, so no further fixing needed here.
+    # keyed by (org, dest, dayOfWeek) -> list of (depTimeMinutes, carrier, flightNumber)
+    # data is already normalized above (depTime is minutes-since-midnight), no further fixing needed.
     by_route_day = {}
     for r in data:
-        carrier, flightNumber, org, dest, dow, depTime = r[0], r[1], r[2], r[3], r[4], r[5]
+        carrier, flightNumber, org, dest, dow, depTimeMinutes = r[0], r[1], r[2], r[3], r[4], r[5]
         key = (org, dest, dow)
         by_route_day.setdefault(key, []).append(
-            (hhmm_to_minutes(depTime), depTime, carrier, flightNumber)
+            (depTimeMinutes, carrier, flightNumber)
         )
     return by_route_day
 
@@ -89,7 +90,7 @@ def find_match(by_route_day, org, dest, dow, dep_time):
         second_diff = abs(scored[1][0] - target)
         if second_diff <= FUZZY_TOLERANCE_MIN:
             return None, "ambiguous"  # two candidates both plausibly close
-    return (best[2], best[3]), best_diff
+    return (best[1], best[2]), best_diff
 
 
 def load_aircraft_configs(ws, conn):
