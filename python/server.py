@@ -17,6 +17,7 @@ import sqlite3
 from flask import Flask, jsonify, request, send_from_directory
 
 import SeatLoggingDialog
+import FlightScheduleDialog
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -35,6 +36,11 @@ def get_conn():
 @app.route('/')
 def index():
     return send_from_directory(STATIC_DIR, 'SeatLoggingDialog.html')
+
+
+@app.route('/schedule')
+def schedule():
+    return send_from_directory(STATIC_DIR, 'FlightScheduleDialog.html')
 
 
 @app.route('/api/getNextBatch', methods=['POST'])
@@ -70,6 +76,46 @@ def api_save_settings():
     try:
         settings_module.save_settings(conn, new_settings)
         return jsonify({'saved': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getScheduleForRouteDay', methods=['POST'])
+def api_get_schedule_for_route_day():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(FlightScheduleDialog.get_schedule_for_route_day(
+            conn, body['org'], body['dest'], body['dow']
+        ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveScheduleForRouteDay', methods=['POST'])
+def api_save_schedule_for_route_day():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(FlightScheduleDialog.save_schedule_for_route_day(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/copyToOtherDays', methods=['POST'])
+def api_copy_to_other_days():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(FlightScheduleDialog.copy_to_other_days(
+            conn, body['org'], body['dest'], body['sourceDow']
+        ))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
