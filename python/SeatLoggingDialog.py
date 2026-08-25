@@ -137,7 +137,7 @@ def get_next_batch(conn, skip_route_keys=None):
 
         sched_rows = conn.execute(
             """SELECT rowid, carrier, flightNumber, org, dest, depTime, aircraftConfig
-               FROM flightSchedule WHERE dayOfWeek = ?""",
+               FROM flightSchedule WHERE dayOfWeek = ? AND ignore = 0""",
             (dow,),
         ).fetchall()
 
@@ -257,6 +257,7 @@ def save_entry_dialog(conn, payload):
                                    # handling above, not always ET-today
       entries: [{ scheduleRow, org, dest, car, dep (HHMM string),
                   aircraftConfig, flightNumber, scheduleEdited (bool),
+                  ignore (bool),
                   y, cplus, onePS, d1 (each '' or a value as typed) }]
     }
     """
@@ -265,10 +266,30 @@ def save_entry_dialog(conn, payload):
 
     for entry in payload['entries']:
         if entry.get('scheduleEdited'):
+            # Local import to dodge a circular import - FlightScheduleDialog
+            # already imports minutes_to_12h from this module, so importing
+            # back at module load time would deadlock; a function-local
+            # import only resolves once both modules have finished loading.
+            from FlightScheduleDialog import cascade_flight_number_rename, normalize_dow
+
+            old_row = conn.execute(
+                "SELECT carrier, flightNumber FROM flightSchedule WHERE rowid=?",
+                (entry['scheduleRow'],),
+            ).fetchone()
+            if old_row is not None:
+                old_carrier, old_flight_number = old_row
+                dow = normalize_dow(flight_date_obj.strftime('%a'))
+                cascade_flight_number_rename(
+                    conn, entry['org'], entry['dest'], dow,
+                    old_carrier, old_flight_number,
+                    old_carrier, entry['flightNumber'],  # this backdoor never edits carrier
+                )
+
             conn.execute(
-                """UPDATE flightSchedule SET depTime=?, aircraftConfig=?, flightNumber=?
+                """UPDATE flightSchedule SET depTime=?, aircraftConfig=?, flightNumber=?, ignore=?
                    WHERE rowid=?""",
-                (entry['dep'], entry['aircraftConfig'], entry['flightNumber'], entry['scheduleRow']),
+                (entry['dep'], entry['aircraftConfig'], entry['flightNumber'],
+                 1 if entry.get('ignore') else 0, entry['scheduleRow']),
             )
 
     to_write = [

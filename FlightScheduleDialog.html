@@ -79,6 +79,7 @@
         <th>flight</th>
         <th>dep time</th>
         <th>aircraft</th>
+        <th>ignore</th>
         <th></th>
       </tr>
     </thead>
@@ -227,6 +228,8 @@
           '<td><input class="flt" data-i="' + idx + '" value="' + (row.flightNumber || '') + '"></td>' +
           '<td><input class="dep" data-i="' + idx + '" value="' + (row.depDisplay || '') + '"></td>' +
           '<td><input class="airc" list="aircraftOptions" data-i="' + idx + '" value="' + (row.aircraftConfig || '') + '"></td>' +
+          '<td><input type="checkbox" class="ignore" data-i="' + idx + '" title="Never offer this flight for logging"' +
+            (row.ignore ? ' checked' : '') + '></td>' +
           '<td><button class="delBtn" data-i="' + idx + '" onclick="deleteRow(' + idx + ')" title="delete row">\u2716</button></td>';
         tbody.appendChild(tr);
       });
@@ -246,6 +249,7 @@
         dep: null, depDisplay: '',
         aircraftConfig: '',
         confirmed: false,
+        ignore: false,
         deleted: false
       });
       current.nextBogusNumber++;
@@ -319,6 +323,10 @@
       aircs.forEach(function (el) {
         var i = parseInt(el.getAttribute('data-i'), 10);
         current.rows[i].aircraftConfig = el.value.trim();
+      });
+      document.querySelectorAll('input.ignore').forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].ignore = el.checked;
       });
 
       var durationRaw = document.getElementById('durationInput').value.trim();

@@ -81,7 +81,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
     dow = normalize_dow(dow)
 
     rows = conn.execute(
-        """SELECT rowid, carrier, flightNumber, depTime, aircraftConfig, confirmed
+        """SELECT rowid, carrier, flightNumber, depTime, aircraftConfig, confirmed, ignore
            FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek=?
            ORDER BY depTime""",
         (org, dest, dow),
@@ -97,9 +97,9 @@ def get_schedule_for_route_day(conn, org, dest, dow):
             'scheduleRow': rowid, 'carrier': carrier or 'dl',
             'flightNumber': flight_number or '', 'dep': dep_time,
             'depDisplay': minutes_to_12h(dep_time), 'aircraftConfig': aircraft_config or '',
-            'confirmed': bool(confirmed),
+            'confirmed': bool(confirmed), 'ignore': bool(ignore),
         }
-        for rowid, carrier, flight_number, dep_time, aircraft_config, confirmed in rows
+        for rowid, carrier, flight_number, dep_time, aircraft_config, confirmed, ignore in rows
     ]
 
     duration = get_route_duration(conn, org, dest)
@@ -164,7 +164,7 @@ def save_schedule_for_route_day(conn, payload):
       org, dest, dow,
       rows: [{ scheduleRow (existing rowid, or null for a new row),
                carrier, flightNumber, dep (minutes-since-midnight int),
-               aircraftConfig, deleted (bool) }],
+               aircraftConfig, ignore (bool), deleted (bool) }],
       durationMinutes: '' or a number
     }
     """
@@ -196,10 +196,10 @@ def save_schedule_for_route_day(conn, payload):
 
         conn.execute(
             """UPDATE flightSchedule
-               SET carrier=?, flightNumber=?, depTime=?, aircraftConfig=?, confirmed=1
+               SET carrier=?, flightNumber=?, depTime=?, aircraftConfig=?, confirmed=1, ignore=?
                WHERE rowid=?""",
             (new_carrier, new_flight_number, entry['dep'],
-             entry['aircraftConfig'], entry['scheduleRow']),
+             entry['aircraftConfig'], 1 if entry.get('ignore') else 0, entry['scheduleRow']),
         )
 
     to_delete = [e['scheduleRow'] for e in payload['rows'] if e.get('scheduleRow') and e.get('deleted')]
@@ -210,10 +210,10 @@ def save_schedule_for_route_day(conn, payload):
     for entry in new_rows:
         conn.execute(
             """INSERT INTO flightSchedule
-               (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed, classification)
-               VALUES (?,?,?,?,?,?,?,1,NULL)""",
+               (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed, verdict, ignore)
+               VALUES (?,?,?,?,?,?,?,1,NULL,?)""",
             (entry.get('carrier') or 'dl', entry['flightNumber'], org, dest, dow,
-             entry['dep'], entry['aircraftConfig']),
+             entry['dep'], entry['aircraftConfig'], 1 if entry.get('ignore') else 0),
         )
 
     duration_minutes = payload.get('durationMinutes')

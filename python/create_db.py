@@ -12,7 +12,9 @@ CREATE TABLE flightSchedule (
     depTime         INTEGER NOT NULL,
     aircraftConfig  TEXT NOT NULL,
     confirmed       INTEGER NOT NULL DEFAULT 0,
-    classification  TEXT,
+    verdict         TEXT,
+    ignore          INTEGER NOT NULL DEFAULT 0,
+    humanReviewed   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (carrier, flightNumber, org, dest, dayOfWeek)
 );
 
