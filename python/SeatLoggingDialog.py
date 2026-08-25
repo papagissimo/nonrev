@@ -13,12 +13,25 @@ against), so "today's readings for this flight" is an exact match on
 part. depTime itself still deliberately isn't stored on observations
 (see schema notes) - it's read from flightSchedule via flightNumber
 whenever it's needed for display or hours-until-departure math.
+
+Cross-midnight handling: a flight can still be legitimately "in play"
+even after the calendar has rolled over in ET, if its own origin airport
+is far enough west - e.g. a 10pm Pacific departure is already 1am ET the
+next day. Every batch fetch therefore considers flightSchedule rows for
+BOTH today's and yesterday's (ET) day-of-week, each evaluated against
+its own real calendar date via timezones.et_equivalent_datetime, and
+everything downstream (eligibility, sorting, grouping into "this route's
+rows", the flightDate written on save) tracks each candidate's own
+correct date rather than assuming a single global "today". Flights that
+are simply in the past fall out through the ordinary 45-minute cutoff -
+no separate yesterday/today branching is needed once the math is done
+in absolute datetimes instead of minutes-since-midnight.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from timezones import et_equivalent_minutes, UnconfirmedAirportError
+from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from settings import load_settings
 
 DEP_CUTOFF_MINUTES = 45
@@ -90,6 +103,8 @@ def previous_readings_for(conn, carrier, flight_number, flight_date):
     Every reading logged today for this exact flight, sorted
     most-recent-check first (ascending hoursBeforeDep, since it counts
     down as departure approaches) - same as getPreviousReadingsForRow_.
+    flight_date is the flight's own schedule date, not necessarily
+    "today" in ET (see module docstring).
     """
     rows = conn.execute(
         """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1 FROM observations
@@ -107,52 +122,59 @@ def get_next_batch(conn, skip_route_keys=None):
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
     now = eastern_now()
-    dow = now.strftime('%a')  # e.g. 'Tue' - matches loader.py's day_of_week format
-    today_str = now.strftime('%Y-%m-%d')
-    date_display = now.strftime('%-m/%-d')
-    now_minutes = now.hour * 60 + now.minute
 
-    sched_rows = conn.execute(
-        """SELECT rowid, carrier, flightNumber, org, dest, depTime, aircraftConfig
-           FROM flightSchedule WHERE dayOfWeek = ?""",
-        (dow,),
-    ).fetchall()
+    # Consider both today's and yesterday's (ET) day-of-week schedule
+    # rows - see module docstring. Each is evaluated against its own
+    # real calendar date, so a flight that's already departed just falls
+    # out through the normal 45-minute cutoff below, same as always.
+    schedule_days = [now.date(), now.date() - timedelta(days=1)]
 
     candidates = []
     unconfirmed_codes = set()
-    for rowid, carrier, flight_number, org, dest, dep_time, aircraft_config in sched_rows:
-        try:
-            dep_et_minutes = et_equivalent_minutes(conn, dep_time, org, now.date())
-        except UnconfirmedAirportError:
-            unconfirmed_codes.add(org)
-            continue
+    for schedule_date in schedule_days:
+        dow = schedule_date.strftime('%a')
+        flight_date_str = schedule_date.isoformat()
 
-        hours_until_dep = (dep_et_minutes - now_minutes) / 60
-        if hours_until_dep * 60 <= DEP_CUTOFF_MINUTES:
-            continue
+        sched_rows = conn.execute(
+            """SELECT rowid, carrier, flightNumber, org, dest, depTime, aircraftConfig
+               FROM flightSchedule WHERE dayOfWeek = ?""",
+            (dow,),
+        ).fetchall()
 
-        if settings['logEverything']:
-            eligible_now, minutes_until_eligible = True, 0
-        else:
-            todays_hrs = [
-                r[0] for r in conn.execute(
-                    """SELECT hoursBeforeDep FROM observations
-                       WHERE readingType='avail' AND carrier=? AND flightNumber=? AND flightDate=?
-                       AND hoursBeforeDep IS NOT NULL""",
-                    (carrier, flight_number, today_str),
-                ).fetchall()
-            ]
-            eligible_now, minutes_until_eligible = evaluate_eligibility(
-                hours_until_dep, todays_hrs, settings['tiers']
-            )
+        for rowid, carrier, flight_number, org, dest, dep_time, aircraft_config in sched_rows:
+            try:
+                dep_dt = et_equivalent_datetime(conn, dep_time, org, schedule_date)
+            except UnconfirmedAirportError:
+                unconfirmed_codes.add(org)
+                continue
 
-        candidates.append({
-            'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
-            'dep': dep_time, 'depEtMinutes': dep_et_minutes,
-            'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
-            'hoursUntilDep': hours_until_dep,
-            'eligibleNow': eligible_now, 'minutesUntilEligible': minutes_until_eligible,
-        })
+            hours_until_dep = (dep_dt - now).total_seconds() / 3600
+            if hours_until_dep * 60 <= DEP_CUTOFF_MINUTES:
+                continue
+
+            if settings['logEverything']:
+                eligible_now, minutes_until_eligible = True, 0
+            else:
+                todays_hrs = [
+                    r[0] for r in conn.execute(
+                        """SELECT hoursBeforeDep FROM observations
+                           WHERE readingType='avail' AND carrier=? AND flightNumber=? AND flightDate=?
+                           AND hoursBeforeDep IS NOT NULL""",
+                        (carrier, flight_number, flight_date_str),
+                    ).fetchall()
+                ]
+                eligible_now, minutes_until_eligible = evaluate_eligibility(
+                    hours_until_dep, todays_hrs, settings['tiers']
+                )
+
+            candidates.append({
+                'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
+                'dep': dep_time, 'depEtDatetime': dep_dt,
+                'flightDate': flight_date_str, 'dow': dow,
+                'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
+                'hoursUntilDep': hours_until_dep,
+                'eligibleNow': eligible_now, 'minutesUntilEligible': minutes_until_eligible,
+            })
 
     if unconfirmed_codes:
         codes = ', '.join(sorted(unconfirmed_codes))
@@ -161,10 +183,16 @@ def get_next_batch(conn, skip_route_keys=None):
             f"{codes}. Run `python confirm_airports.py`, then try again."
         )
 
-    candidates.sort(key=lambda c: c['depEtMinutes'])
+    candidates.sort(key=lambda c: c['depEtDatetime'])
 
+    # Skip-key format stays org|dest (no date) to match the client's
+    # existing session-skip list - skipping a route mid-session skips it
+    # regardless of which calendar day it's currently grouped under,
+    # which is the right behavior (the person thinks of it as "that
+    # route", not "that route on that specific date").
     next_candidate = next(
-        (c for c in candidates if c['eligibleNow'] and f"{c['org']}|{c['dest']}" not in skip_set),
+        (c for c in candidates
+         if c['eligibleNow'] and f"{c['org']}|{c['dest']}" not in skip_set),
         None,
     )
 
@@ -176,8 +204,8 @@ def get_next_batch(conn, skip_route_keys=None):
             if wait_minutes is not None else "Nothing left to check today."
         )
         return {
-            'dowDisplay': dow, 'dateDisplay': date_display,
-            'flightDate': today_str,
+            'dowDisplay': now.strftime('%a'), 'dateDisplay': now.strftime('%-m/%-d'),
+            'flightDate': now.date().isoformat(),
             'routeOrg': None, 'routeDest': None, 'summaryText': '',
             'waitMinutes': wait_minutes, 'waitMessage': wait_message, 'rows': [],
             'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
@@ -187,7 +215,11 @@ def get_next_batch(conn, skip_route_keys=None):
     route_rows = []
     route_departed_count = 0
     for c in candidates:
-        if c['org'] != next_candidate['org'] or c['dest'] != next_candidate['dest']:
+        # Same route AND same schedule date - two different calendar
+        # days' worth of the same org/dest must never be shown together
+        # in one batch, or per-row flightDate would be ambiguous.
+        if (c['org'] != next_candidate['org'] or c['dest'] != next_candidate['dest']
+                or c['flightDate'] != next_candidate['flightDate']):
             continue
         if c['hoursUntilDep'] * 60 <= DEP_CUTOFF_MINUTES:
             route_departed_count += 1
@@ -199,7 +231,7 @@ def get_next_batch(conn, skip_route_keys=None):
             'hasD1': d1_map.get(str(c['aircraftConfig']).lower(), False),
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
-            'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], today_str),
+            'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['flightDate']),
         })
 
     summary_text = (
@@ -207,9 +239,10 @@ def get_next_batch(conn, skip_route_keys=None):
         if route_departed_count > 0 else ''
     )
 
+    next_date = datetime.strptime(next_candidate['flightDate'], '%Y-%m-%d').date()
     return {
-        'dowDisplay': dow, 'dateDisplay': date_display,
-        'flightDate': today_str,
+        'dowDisplay': next_candidate['dow'], 'dateDisplay': f"{next_date.month}/{next_date.day}",
+        'flightDate': next_candidate['flightDate'],
         'routeOrg': next_candidate['org'], 'routeDest': next_candidate['dest'],
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
         'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
@@ -219,13 +252,16 @@ def get_next_batch(conn, skip_route_keys=None):
 def save_entry_dialog(conn, payload):
     """
     payload: {
-      flightDate: "YYYY-MM-DD",
+      flightDate: "YYYY-MM-DD",   # the flight's own schedule date - may
+                                   # be "yesterday" per the cross-midnight
+                                   # handling above, not always ET-today
       entries: [{ scheduleRow, org, dest, car, dep (HHMM string),
                   aircraftConfig, flightNumber, scheduleEdited (bool),
                   y, cplus, onePS, d1 (each '' or a value as typed) }]
     }
     """
     flight_date = payload['flightDate']
+    flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()
 
     for entry in payload['entries']:
         if entry.get('scheduleEdited'):
@@ -252,8 +288,12 @@ def save_entry_dialog(conn, payload):
             return None if v in ('', None) else float(v)
 
         try:
-            dep_et_minutes = et_equivalent_minutes(conn, entry['dep'], entry['org'], now.date())
-            hours_before_dep = (dep_et_minutes - (now.hour * 60 + now.minute)) / 60
+            # flight_date_obj (the flight's own schedule date), not
+            # now.date() - a "yesterday" West Coast flight's departure
+            # time is only correct when computed against its own actual
+            # calendar date.
+            dep_dt = et_equivalent_datetime(conn, entry['dep'], entry['org'], flight_date_obj)
+            hours_before_dep = (dep_dt - now).total_seconds() / 3600
         except UnconfirmedAirportError as e:
             print(f"Warning: couldn't compute hoursBeforeDep for logged entry ({entry['org']}->{entry['dest']}): {e}")
             hours_before_dep = None

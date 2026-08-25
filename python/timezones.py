@@ -63,6 +63,30 @@ def get_confirmed_timezone(conn, airport_code):
     return row[0]
 
 
+def et_equivalent_datetime(conn, dep_minutes, airport_code, on_date):
+    """
+    Returns the real, absolute, timezone-aware ET datetime for a local
+    departure time - given as minutes-since-midnight (e.g. 455 for
+    07:35) - at airport_code, on a specific calendar date (matters
+    because the correct UTC offset can differ depending on the date,
+    DST).
+
+    Because this is an actual instant in time (not a same-day-relative
+    number), it's safe to compare or subtract directly against any other
+    aware datetime - e.g. "now" - even when the two sides fall on
+    different calendar dates. That's what makes it possible to reason
+    about a flight whose origin-local calendar date is still "yesterday"
+    even though it's already a new day in ET.
+    """
+    h, m = divmod(int(dep_minutes), 60)
+
+    tz_name = get_confirmed_timezone(conn, airport_code)
+    local_tz = ZoneInfo(tz_name)
+
+    local_dt = datetime(on_date.year, on_date.month, on_date.day, h, m, tzinfo=local_tz)
+    return local_dt.astimezone(_ET_ZONE)
+
+
 def et_equivalent_minutes(conn, dep_minutes, airport_code, on_date):
     """
     Converts a local departure time - given as minutes-since-midnight
@@ -74,15 +98,14 @@ def et_equivalent_minutes(conn, dep_minutes, airport_code, on_date):
     May come back negative or over 1440 if the real ET-equivalent instant
     falls on the adjacent calendar day - expected and fine, this value is
     only ever used for relative comparison against other
-    et_equivalent_minutes values, never displayed directly.
+    et_equivalent_minutes values computed with the SAME on_date, never
+    displayed directly. Comparing values computed against two different
+    on_date anchors will be off by whatever the ET midnight-to-midnight
+    gap between those two dates actually was (normally exactly 1440
+    minutes, but not on the two nights DST changes) - use
+    et_equivalent_datetime instead for any comparison that might cross a
+    calendar date.
     """
-    h, m = divmod(int(dep_minutes), 60)
-
-    tz_name = get_confirmed_timezone(conn, airport_code)
-    local_tz = ZoneInfo(tz_name)
-
-    local_dt = datetime(on_date.year, on_date.month, on_date.day, h, m, tzinfo=local_tz)
-    et_dt = local_dt.astimezone(_ET_ZONE)
+    et_dt = et_equivalent_datetime(conn, dep_minutes, airport_code, on_date)
     et_midnight = datetime(on_date.year, on_date.month, on_date.day, tzinfo=_ET_ZONE)
-
     return (et_dt - et_midnight).total_seconds() / 60
