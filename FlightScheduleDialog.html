@@ -273,21 +273,24 @@
     function parseDepTime(text) {
       var raw = text.trim().toUpperCase();
 
-      var shorthand = raw.match(/^(\d{2})(\d{2})\s*([AP])$/);
-      if (shorthand) {
-        var sh = parseInt(shorthand[1], 10), sm = parseInt(shorthand[2], 10), sp = shorthand[3];
-        if (sm > 59) return null;
-        if (sp === 'P' && sh !== 12) sh += 12;
-        if (sp === 'A' && sh === 12) sh = 0;
-        if (sh > 23) return null;
-        return sh * 60 + sm;
+      var parts = raw.match(/^(\d{1,2}):(\d{2})\s*(A|AM|P|PM)?$/);
+      if (!parts) {
+        // Bare digits, no colon, no leading zero required: "522" (3
+        // digits, defaults AM same as an unmarked colon time always has),
+        // "522p"/"522P"/"522PM" (PM), "0522" (leading zero still fine).
+        var bare = raw.match(/^(\d{3,4})\s*(A|AM|P|PM)?$/);
+        if (bare) {
+          var digits = bare[1];
+          var hh = digits.length === 3 ? digits.slice(0, 1) : digits.slice(0, 2);
+          var mm = digits.slice(-2);
+          parts = [null, hh, mm, bare[2]];
+        }
       }
-
-      var parts = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
       if (!parts) return null;
       var h = parseInt(parts[1], 10), m = parseInt(parts[2], 10), period = parts[3];
-      if (period === 'PM' && h !== 12) h += 12;
-      if (period === 'AM' && h === 12) h = 0;
+      if (m > 59) return null;
+      if (period && period[0] === 'P' && h !== 12) h += 12;
+      if (period && period[0] === 'A' && h === 12) h = 0;
       if (h > 23) return null;
       return h * 60 + m;
     }
