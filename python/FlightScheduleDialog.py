@@ -20,6 +20,7 @@ Real differences from the Sheets version, not just syntax:
 """
 
 import re
+from datetime import datetime
 
 from SeatLoggingDialog import minutes_to_12h
 
@@ -114,6 +115,49 @@ def get_schedule_for_route_day(conn, org, dest, dow):
     }
 
 
+def cascade_flight_number_rename(conn, org, dest, dow, old_carrier, old_flight_number,
+                                  new_carrier, new_flight_number):
+    """
+    When a schedule row's identity changes (typically a placeholder bogus
+    number getting corrected to a real one), any observations already
+    logged against the OLD (carrier, flightNumber) for this exact row need
+    to move to the new identity too - otherwise they're silently orphaned:
+    SeatLoggingDialog's cadence check (get_next_batch/previous_readings_for)
+    keys strictly on (carrier, flightNumber, flightDate), so an orphaned
+    reading becomes invisible to it, and a flight already logged today can
+    get offered again as if it never was.
+
+    Scoped to observations whose flightDate actually falls on this row's
+    dayOfWeek (not just matching org/dest/old flightNumber) - a real Delta
+    flight number can be reused across multiple days of the week, so a
+    real->real correction must not sweep up a different day's readings
+    that happen to share the old number.
+    """
+    if (old_carrier, old_flight_number) == (new_carrier, new_flight_number):
+        return 0  # nothing actually changed - don't touch observations
+
+    candidates = conn.execute(
+        """SELECT observationId, flightDate FROM observations
+           WHERE carrier=? AND flightNumber=? AND org=? AND dest=?""",
+        (old_carrier, old_flight_number, org, dest),
+    ).fetchall()
+
+    matching_ids = [
+        obs_id for obs_id, flight_date in candidates
+        if normalize_dow(datetime.strptime(flight_date, '%Y-%m-%d').strftime('%a')) == dow
+    ]
+    if not matching_ids:
+        return 0
+
+    placeholders = ','.join('?' for _ in matching_ids)
+    conn.execute(
+        f"""UPDATE observations SET carrier=?, flightNumber=?
+            WHERE observationId IN ({placeholders})""",
+        (new_carrier, new_flight_number, *matching_ids),
+    )
+    return len(matching_ids)
+
+
 def save_schedule_for_route_day(conn, payload):
     """
     payload: {
@@ -135,11 +179,26 @@ def save_schedule_for_route_day(conn, payload):
     for entry in payload['rows']:
         if not entry.get('scheduleRow') or entry.get('deleted'):
             continue
+
+        old_row = conn.execute(
+            "SELECT carrier, flightNumber FROM flightSchedule WHERE rowid=?",
+            (entry['scheduleRow'],),
+        ).fetchone()
+        new_carrier = entry.get('carrier') or 'dl'
+        new_flight_number = entry['flightNumber']
+
+        if old_row is not None:
+            cascade_flight_number_rename(
+                conn, org, dest, dow,
+                old_row[0], old_row[1],
+                new_carrier, new_flight_number,
+            )
+
         conn.execute(
             """UPDATE flightSchedule
                SET carrier=?, flightNumber=?, depTime=?, aircraftConfig=?, confirmed=1
                WHERE rowid=?""",
-            (entry.get('carrier') or 'dl', entry['flightNumber'], entry['dep'],
+            (new_carrier, new_flight_number, entry['dep'],
              entry['aircraftConfig'], entry['scheduleRow']),
         )
 
