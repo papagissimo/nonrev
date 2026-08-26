@@ -7,9 +7,16 @@ column filters and click-to-sort headers.
 
 Filtering is intentionally uniform across every column (substring match on
 the text form of the value) rather than type-aware (numeric ranges, date
-pickers, etc). That covers the real use case - eyeballing recent rows and
-narrowing by whatever's visible - without needing a UI per column type.
+pickers, etc), except org/dest, which get a distinct-values dropdown since
+those are naturally a short closed list and a click beats retyping an
+airport code. The page defaults its flightDate filter to today (ET, same
+"today" the rest of the app uses) precisely so a normal visit doesn't have
+to pull the whole table before narrowing - "All rows, filtered from the
+server side" beats "All rows, then filter in the browser" for a table
+that only grows.
 """
+
+from SeatLoggingDialog import eastern_now
 
 COLUMNS = [
     'observationId', 'checkTimestamp', 'flightDate', 'carrier', 'flightNumber',
@@ -20,6 +27,20 @@ COLUMNS = [
 # observationId is real but not user-facing sort/filter surface - it's
 # still selectable/orderable defensively, so no harm leaving it in.
 SORTABLE_COLUMNS = set(COLUMNS)
+
+
+def get_filter_options(conn):
+    origins = [r[0] for r in conn.execute(
+        "SELECT DISTINCT org FROM observations ORDER BY org"
+    ).fetchall()]
+    destinations = [r[0] for r in conn.execute(
+        "SELECT DISTINCT dest FROM observations ORDER BY dest"
+    ).fetchall()]
+    return {
+        'origins': origins,
+        'destinations': destinations,
+        'today': eastern_now().date().isoformat(),
+    }
 
 
 def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20, filters=None):
@@ -34,8 +55,15 @@ def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20,
     for col, val in filters.items():
         if col not in SORTABLE_COLUMNS or val in (None, ''):
             continue
-        where_clauses.append(f"CAST({col} AS TEXT) LIKE ?")
-        params.append(f"%{val}%")
+        # Comma-separated values ("slc,lax") mean "match any of these" -
+        # useful for a pair of origins/destinations, or any other column
+        # where more than one specific value is wanted at once.
+        parts = [p.strip() for p in str(val).split(',') if p.strip()]
+        if not parts:
+            continue
+        or_clause = ' OR '.join(f"CAST({col} AS TEXT) LIKE ?" for _ in parts)
+        where_clauses.append(f"({or_clause})")
+        params.extend(f"%{p}%" for p in parts)
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
     total = conn.execute(

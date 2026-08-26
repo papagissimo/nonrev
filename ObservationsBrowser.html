@@ -78,6 +78,7 @@
     let sortDir = 'desc';
     let filters = {};
     let selected = new Set();
+    let filterOptions = { origins: [], destinations: [] };
 
     function buildHeaders() {
       const headerRow = document.getElementById('headerRow');
@@ -95,6 +96,7 @@
         const fth = document.createElement('th');
         const input = document.createElement('input');
         input.value = filters[col.key] || '';
+        input.placeholder = (col.key === 'org' || col.key === 'dest') ? 'e.g. slc,lax' : '';
         input.oninput = (e) => { filters[col.key] = e.target.value; debounceLoad(); };
         fth.appendChild(input);
         filterRow.appendChild(fth);
@@ -187,8 +189,19 @@
         .catch(err => { document.getElementById('status').textContent = 'Error: ' + err; });
     }
 
-    buildHeaders();
-    load();
+    function init() {
+      fetch('/api/getObservationFilterOptions')
+        .then(r => r.json())
+        .then(data => {
+          filterOptions = data;
+          filters.flightDate = data.today;
+          buildHeaders();
+          load();
+        })
+        .catch(err => { document.getElementById('status').textContent = 'Error: ' + err; });
+    }
+
+    init();
   </script>
 </body>
 </html>

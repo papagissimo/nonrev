@@ -133,6 +133,17 @@ def api_copy_to_other_days():
         conn.close()
 
 
+@app.route('/api/getObservationFilterOptions', methods=['GET'])
+def api_get_observation_filter_options():
+    conn = get_conn()
+    try:
+        return jsonify(ObservationsBrowser.get_filter_options(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
 @app.route('/api/getObservations', methods=['POST'])
 def api_get_observations():
     body = request.get_json(force=True)
