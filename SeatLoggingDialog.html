@@ -25,7 +25,7 @@
     .pencil { cursor: pointer; color: #888; font-size: 13px; }
     .prev { font-size: 10px; color: #888; line-height: 1.3; }
     .prev .row { white-space: nowrap; }
-    .prevHrsCell { font-size: 11px; color: #888; }
+    .prevHrsInline { display: inline-block; width: 26px; color: #666; }
     .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
     #getNextBtn, #logBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
     #getNextBtn:disabled, #logBtn:disabled { background: #a9c6f2; }
@@ -96,8 +96,7 @@
         { key: 'onePS', label: '1/PS', width: 40 }
       ];
       if (anyD1) cols.push({ key: 'd1', label: 'D1', width: 40 });
-      cols.push({ key: 'prevHrs', label: 'Prev', width: 44 });
-      cols.push({ key: 'prev', label: 'Prev', width: 70 });
+      cols.push({ key: 'prev', label: 'Prev', width: 96 });
       cols.push({ key: 'hrs', label: 'Hrs', width: 46 });
       cols.push({ key: 'car', label: 'Car', width: 36 });
       cols.push({ key: 'flt', label: 'Flight', width: 60 });
@@ -107,12 +106,11 @@
       return cols;
     }
 
-    function formatMostRecentPrevHrs(readings) {
-      if (!readings || readings.length === 0) return '';
-      return readings[0].hrs.toFixed(1) + 'h';
-    }
-
     function formatPreviousReadings(anyD1, readings) {
+      // Most-recent-first (backend sorts by hoursBeforeDep ascending -
+      // smaller hours-before-departure means the check happened later).
+      // Each row carries its own hrs value inline so it's never
+      // ambiguous which reading a given hours-before-dep belongs to.
       if (!readings || readings.length === 0) return '';
       return readings.map(function (rd) {
         var parts = [rd.y, rd.cplus, rd.onePS];
@@ -120,7 +118,8 @@
         var text = parts.map(function (v) {
           return (v === '' || v === null || v === undefined) ? '-' : v;
         }).join(' ');
-        return '<div class="row">' + text + '</div>';
+        var hrsText = (rd.hrs === null || rd.hrs === undefined) ? '--' : rd.hrs.toFixed(1) + 'h';
+        return '<div class="row"><span class="prevHrsInline">' + hrsText + '</span> ' + text + '</div>';
       }).join('');
     }
 
@@ -266,7 +265,6 @@
           cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-">',
           onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-">',
           d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-">',
-          prevHrs: '<span class="prevHrsCell">' + formatMostRecentPrevHrs(row.previousReadings) + '</span>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + row.hoursUntilDep.toFixed(1) + 'h</span>',
           car: '<span class="car">' + row.car + '</span>',

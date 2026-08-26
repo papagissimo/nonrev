@@ -22,7 +22,8 @@ Real differences from the Sheets version, not just syntax:
 import re
 from datetime import datetime
 
-from SeatLoggingDialog import minutes_to_12h
+from SeatLoggingDialog import minutes_to_12h, ET_ZONE
+from timezones import et_equivalent_datetime, UnconfirmedAirportError
 
 BOGUS_RE = re.compile(r'^bogus(\d+)$', re.IGNORECASE)
 DOW_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -158,6 +159,59 @@ def cascade_flight_number_rename(conn, org, dest, dow, old_carrier, old_flight_n
     return len(matching_ids)
 
 
+def recompute_hours_before_dep(conn, carrier, flight_number, org, dest, dow, dep_time):
+    """
+    Fixes the stale-hoursBeforeDep bug: that value used to be computed
+    once at logging time from whatever depTime was current then, and
+    never touched again - so a later depTime correction (typo fix,
+    Delta schedule churn) left already-logged rows showing an
+    increasingly wrong number of hours-before-departure. Departure time
+    is itself an observation, refined over the day same as seat counts,
+    so the stored value gets corrected in place here instead.
+
+    Recomputes every observation currently attributed to (carrier,
+    flightNumber, org, dest) on this exact dayOfWeek, using the flight's
+    current depTime. Called both when a row's depTime is edited directly,
+    and after cascade_flight_number_rename reassigns observations onto a
+    new flightNumber - either can leave hoursBeforeDep stale.
+
+    Scoped to this exact dow, same as cascade_flight_number_rename and
+    for the same reason: a flight number can be reused across different
+    days of the week, so matching without dow filtering would sweep up
+    a different day's readings. Deliberately inherits cascade's known
+    blind spot rather than fixing it: if Delta drops a flight and a
+    surviving neighbor absorbs its number, this can recompute
+    hoursBeforeDep against the wrong depTime for misattributed
+    historical rows. Accepted risk, not addressed here - see project
+    handoff on scope.
+    """
+    candidates = conn.execute(
+        """SELECT observationId, flightDate, checkTimestamp FROM observations
+           WHERE carrier=? AND flightNumber=? AND org=? AND dest=?""",
+        (carrier, flight_number, org, dest),
+    ).fetchall()
+
+    updated = 0
+    for obs_id, flight_date_str, check_timestamp in candidates:
+        flight_date = datetime.strptime(flight_date_str, '%Y-%m-%d').date()
+        if normalize_dow(flight_date.strftime('%a')) != dow:
+            continue
+
+        try:
+            dep_dt = et_equivalent_datetime(conn, dep_time, org, flight_date)
+        except UnconfirmedAirportError:
+            continue  # can't compute right now - leave the existing value alone
+
+        check_dt = datetime.strptime(check_timestamp, '%Y-%m-%d %H:%M').replace(tzinfo=ET_ZONE)
+        hours_before_dep = (dep_dt - check_dt).total_seconds() / 3600
+        conn.execute(
+            "UPDATE observations SET hoursBeforeDep=? WHERE observationId=?",
+            (hours_before_dep, obs_id),
+        )
+        updated += 1
+    return updated
+
+
 def save_schedule_for_route_day(conn, payload):
     """
     payload: {
@@ -181,16 +235,17 @@ def save_schedule_for_route_day(conn, payload):
             continue
 
         old_row = conn.execute(
-            "SELECT carrier, flightNumber FROM flightSchedule WHERE rowid=?",
+            "SELECT carrier, flightNumber, depTime FROM flightSchedule WHERE rowid=?",
             (entry['scheduleRow'],),
         ).fetchone()
         new_carrier = entry.get('carrier') or 'dl'
         new_flight_number = entry['flightNumber']
 
         if old_row is not None:
+            old_carrier, old_flight_number, old_dep_time = old_row
             cascade_flight_number_rename(
                 conn, org, dest, dow,
-                old_row[0], old_row[1],
+                old_carrier, old_flight_number,
                 new_carrier, new_flight_number,
             )
 
@@ -201,6 +256,18 @@ def save_schedule_for_route_day(conn, payload):
             (new_carrier, new_flight_number, entry['dep'],
              entry['aircraftConfig'], 1 if entry.get('ignore') else 0, entry['scheduleRow']),
         )
+
+        # A depTime correction or a flightNumber rename can both leave
+        # already-logged observations' hoursBeforeDep stale - see
+        # recompute_hours_before_dep's docstring. Only bother when
+        # something that actually feeds the calculation changed.
+        if old_row is not None:
+            dep_changed = old_dep_time != entry['dep']
+            flight_changed = (old_carrier, old_flight_number) != (new_carrier, new_flight_number)
+            if dep_changed or flight_changed:
+                recompute_hours_before_dep(
+                    conn, new_carrier, new_flight_number, org, dest, dow, entry['dep'],
+                )
 
     to_delete = [e['scheduleRow'] for e in payload['rows'] if e.get('scheduleRow') and e.get('deleted')]
     for rowid in to_delete:

@@ -270,14 +270,16 @@ def save_entry_dialog(conn, payload):
             # already imports minutes_to_12h from this module, so importing
             # back at module load time would deadlock; a function-local
             # import only resolves once both modules have finished loading.
-            from FlightScheduleDialog import cascade_flight_number_rename, normalize_dow
+            from FlightScheduleDialog import (
+                cascade_flight_number_rename, normalize_dow, recompute_hours_before_dep,
+            )
 
             old_row = conn.execute(
-                "SELECT carrier, flightNumber FROM flightSchedule WHERE rowid=?",
+                "SELECT carrier, flightNumber, depTime FROM flightSchedule WHERE rowid=?",
                 (entry['scheduleRow'],),
             ).fetchone()
             if old_row is not None:
-                old_carrier, old_flight_number = old_row
+                old_carrier, old_flight_number, old_dep_time = old_row
                 dow = normalize_dow(flight_date_obj.strftime('%a'))
                 cascade_flight_number_rename(
                     conn, entry['org'], entry['dest'], dow,
@@ -291,6 +293,18 @@ def save_entry_dialog(conn, payload):
                 (entry['dep'], entry['aircraftConfig'], entry['flightNumber'],
                  1 if entry.get('ignore') else 0, entry['scheduleRow']),
             )
+
+            # Same stale-hoursBeforeDep fix as FlightScheduleDialog's save
+            # path - this pencil-edit is the other place depTime/flightNumber
+            # get corrected, so it needs the same recompute.
+            if old_row is not None:
+                dep_changed = old_dep_time != entry['dep']
+                flight_changed = old_flight_number != entry['flightNumber']
+                if dep_changed or flight_changed:
+                    recompute_hours_before_dep(
+                        conn, old_carrier, entry['flightNumber'],
+                        entry['org'], entry['dest'], dow, entry['dep'],
+                    )
 
     to_write = [
         e for e in payload['entries']

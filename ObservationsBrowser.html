@@ -64,6 +64,7 @@
       { key: 'flightNumber', label: 'Flight #' },
       { key: 'org', label: 'Org' },
       { key: 'dest', label: 'Dest' },
+      { key: 'depTime', label: 'Dep Time' },
       { key: 'readingType', label: 'Type' },
       { key: 'y', label: 'Y' },
       { key: 'cPlus', label: 'C+' },
@@ -101,6 +102,14 @@
         fth.appendChild(input);
         filterRow.appendChild(fth);
       }
+    }
+
+    function formatDepTime(minutes) {
+      if (minutes === null || minutes === undefined) return '';
+      const h = Math.floor(minutes / 60), m = Math.round(minutes % 60);
+      const period = h >= 12 ? 'pm' : 'am';
+      const h12 = (h % 12) || 12;
+      return `${h12}:${String(m).padStart(2, '0')} ${period}`;
     }
 
     function toggleSort(key) {
@@ -159,7 +168,8 @@
           const td = document.createElement('td');
           const v = row[col.key];
           td.textContent = (v === null || v === undefined) ? '' :
-            (col.key === 'hoursBeforeDep' && typeof v === 'number') ? v.toFixed(1) : v;
+            (col.key === 'hoursBeforeDep' && typeof v === 'number') ? v.toFixed(1) :
+            (col.key === 'depTime') ? formatDepTime(v) : v;
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
