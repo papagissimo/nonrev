@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 import SeatLoggingDialog
 import FlightScheduleDialog
+import ObservationsBrowser
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -35,12 +36,22 @@ def get_conn():
 
 @app.route('/')
 def index():
+    return send_from_directory(STATIC_DIR, 'Launcher.html')
+
+
+@app.route('/log')
+def log():
     return send_from_directory(STATIC_DIR, 'SeatLoggingDialog.html')
 
 
 @app.route('/schedule')
 def schedule():
     return send_from_directory(STATIC_DIR, 'FlightScheduleDialog.html')
+
+
+@app.route('/observations')
+def observations():
+    return send_from_directory(STATIC_DIR, 'ObservationsBrowser.html')
 
 
 @app.route('/api/getNextBatch', methods=['POST'])
@@ -116,6 +127,36 @@ def api_copy_to_other_days():
         return jsonify(FlightScheduleDialog.copy_to_other_days(
             conn, body['org'], body['dest'], body['sourceDow']
         ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getObservations', methods=['POST'])
+def api_get_observations():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(ObservationsBrowser.get_observations(
+            conn,
+            sort_col=body.get('sortCol', 'checkTimestamp'),
+            sort_dir=body.get('sortDir', 'desc'),
+            limit=body.get('limit', 20),
+            filters=body.get('filters', {}),
+        ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/deleteObservations', methods=['POST'])
+def api_delete_observations():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(ObservationsBrowser.delete_observations(conn, body.get('observationIds', [])))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

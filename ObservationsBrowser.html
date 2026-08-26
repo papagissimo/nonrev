@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>Browse Observations</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    h1 { font-size: 18px; margin: 0 0 10px 0; }
+    .topBar { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+    .topBar label { color: #666; }
+    #rowCount { font-size: 13px; }
+    #status { color: #666; font-size: 12px; margin-left: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th { text-align: left; font-size: 11px; color: #888; padding: 3px 6px; white-space: nowrap; cursor: pointer; user-select: none; }
+    th:hover { color: #1a73e8; }
+    th .arrow { font-size: 9px; }
+    td { padding: 3px 6px; font-size: 12px; border-bottom: 1px solid #eee; white-space: nowrap; }
+    tr.delRow td { background: #fce8e6; }
+    .filterRow th { padding: 2px 4px; }
+    .filterRow input { width: 100%; box-sizing: border-box; font-size: 11px; padding: 2px 3px; border: 1px solid #ddd; border-radius: 3px; }
+    .checkCol { width: 22px; }
+    #deleteBar { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    #deleteBtn { background: #c5221f; color: white; border: none; border-radius: 4px; padding: 7px 14px; cursor: pointer; }
+    #deleteBtn:disabled { background: #e6a8a5; cursor: default; }
+    #selCount { color: #666; font-size: 12px; }
+    a.back { color: #1a73e8; text-decoration: none; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Launcher</a>
+  <h1>Browse Observations</h1>
+
+  <div class="topBar">
+    <label>Show
+      <select id="rowCount" onchange="load()">
+        <option value="20">20</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="all">All</option>
+      </select>
+      rows
+    </label>
+    <span id="status"></span>
+  </div>
+
+  <table id="obsTable">
+    <thead>
+      <tr id="headerRow"></tr>
+      <tr class="filterRow" id="filterRow"></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div id="deleteBar">
+    <button id="deleteBtn" onclick="deleteSelected()" disabled>Delete selected</button>
+    <span id="selCount"></span>
+  </div>
+
+  <script>
+    const COLUMNS = [
+      { key: 'checkTimestamp', label: 'Checked' },
+      { key: 'flightDate', label: 'Flight Date' },
+      { key: 'carrier', label: 'Car' },
+      { key: 'flightNumber', label: 'Flight #' },
+      { key: 'org', label: 'Org' },
+      { key: 'dest', label: 'Dest' },
+      { key: 'readingType', label: 'Type' },
+      { key: 'y', label: 'Y' },
+      { key: 'cPlus', label: 'C+' },
+      { key: 'firstOrPS', label: '1/PS' },
+      { key: 'd1', label: 'D1' },
+      { key: 'hoursBeforeDep', label: 'Hrs Before Dep' },
+      { key: 'nextDesiredLog', label: 'Next Log' },
+      { key: 'observationId', label: 'ID' },
+    ];
+
+    let sortCol = 'checkTimestamp';
+    let sortDir = 'desc';
+    let filters = {};
+    let selected = new Set();
+
+    function buildHeaders() {
+      const headerRow = document.getElementById('headerRow');
+      const filterRow = document.getElementById('filterRow');
+      headerRow.innerHTML = '<th class="checkCol"></th>';
+      filterRow.innerHTML = '<th></th>';
+
+      for (const col of COLUMNS) {
+        const th = document.createElement('th');
+        th.onclick = () => { toggleSort(col.key); };
+        const arrow = (col.key === sortCol) ? (sortDir === 'asc' ? '&#9650;' : '&#9660;') : '';
+        th.innerHTML = `${col.label} <span class="arrow">${arrow}</span>`;
+        headerRow.appendChild(th);
+
+        const fth = document.createElement('th');
+        const input = document.createElement('input');
+        input.value = filters[col.key] || '';
+        input.oninput = (e) => { filters[col.key] = e.target.value; debounceLoad(); };
+        fth.appendChild(input);
+        filterRow.appendChild(fth);
+      }
+    }
+
+    function toggleSort(key) {
+      if (sortCol === key) {
+        sortDir = (sortDir === 'asc') ? 'desc' : 'asc';
+      } else {
+        sortCol = key;
+        sortDir = 'desc';
+      }
+      buildHeaders();
+      load();
+    }
+
+    let debounceTimer = null;
+    function debounceLoad() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(load, 250);
+    }
+
+    function currentLimit() {
+      const v = document.getElementById('rowCount').value;
+      return (v === 'all') ? null : parseInt(v, 10);
+    }
+
+    function load() {
+      selected.clear();
+      updateDeleteBar();
+      document.getElementById('status').textContent = 'Loading...';
+      fetch('/api/getObservations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sortCol, sortDir, limit: currentLimit(), filters }),
+      })
+        .then(r => r.json())
+        .then(data => renderRows(data))
+        .catch(err => { document.getElementById('status').textContent = 'Error: ' + err; });
+    }
+
+    function renderRows(data) {
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+      for (const row of data.rows) {
+        const tr = document.createElement('tr');
+        const checkTd = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.onchange = () => {
+          if (cb.checked) { selected.add(row.observationId); tr.classList.add('delRow'); }
+          else { selected.delete(row.observationId); tr.classList.remove('delRow'); }
+          updateDeleteBar();
+        };
+        checkTd.appendChild(cb);
+        tr.appendChild(checkTd);
+
+        for (const col of COLUMNS) {
+          const td = document.createElement('td');
+          const v = row[col.key];
+          td.textContent = (v === null || v === undefined) ? '' :
+            (col.key === 'hoursBeforeDep' && typeof v === 'number') ? v.toFixed(1) : v;
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      const shown = data.rows.length;
+      document.getElementById('status').textContent =
+        (data.total > shown) ? `Showing ${shown} of ${data.total} matching rows` : `${shown} row${shown === 1 ? '' : 's'}`;
+    }
+
+    function updateDeleteBar() {
+      const btn = document.getElementById('deleteBtn');
+      const selCount = document.getElementById('selCount');
+      btn.disabled = selected.size === 0;
+      selCount.textContent = selected.size > 0 ? `${selected.size} selected` : '';
+    }
+
+    function deleteSelected() {
+      if (selected.size === 0) return;
+      if (!confirm(`Delete ${selected.size} observation${selected.size === 1 ? '' : 's'}? This can't be undone.`)) return;
+      fetch('/api/deleteObservations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ observationIds: Array.from(selected) }),
+      })
+        .then(r => r.json())
+        .then(() => load())
+        .catch(err => { document.getElementById('status').textContent = 'Error: ' + err; });
+    }
+
+    buildHeaders();
+    load();
+  </script>
+</body>
+</html>
