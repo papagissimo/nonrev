@@ -124,29 +124,19 @@ def recent_observations(conn, limit=3):
     for seeding the recent-readings panel on page load - it otherwise
     has no memory of anything before the current browser session.
     Returned oldest-of-the-batch first / most-recent last, matching the
-    client's own recentlyLogged accumulation order.
+    client's own recentlyLogged accumulation order. Deliberately doesn't
+    carry flightNumber - his call, not wanted in this particular view.
     """
     rows = conn.execute(
-        """SELECT org, dest, flightNumber, hoursBeforeDep, y, cPlus, firstOrPS, d1
+        """SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1
            FROM observations WHERE readingType='avail'
            ORDER BY checkTimestamp DESC LIMIT ?""",
         (limit,),
     ).fetchall()
-
-    def fmt(v):
-        if v is None:
-            return '-'
-        return str(int(v)) if float(v).is_integer() else str(v)
-
-    result = []
-    for org, dest, flight_number, hrs, y, cplus, ps, d1 in rows:
-        parts = [y, cplus, ps]
-        if d1 is not None:
-            parts.append(d1)
-        result.append({
-            'route': f'{org}\u2192{dest}', 'flightNumber': flight_number or '',
-            'hrs': hrs, 'values': ' '.join(fmt(v) for v in parts),
-        })
+    result = [
+        {'org': org, 'dest': dest, 'hrs': hrs, 'y': y, 'cplus': cplus, 'onePS': ps, 'd1': d1}
+        for org, dest, hrs, y, cplus, ps, d1 in rows
+    ]
     return list(reversed(result))
 
 

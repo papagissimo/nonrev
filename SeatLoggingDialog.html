@@ -43,8 +43,10 @@
     #settingsPanel input[type=number] { width: 46px; text-align: center; }
     #settingsPanel label { display: block; margin-bottom: 4px; }
     #saveSettingsBtn { margin-top: 10px; background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
-    #recentPanel { font-size: 12px; color: #888; margin-top: 10px; line-height: 1.5; }
-    #recentPanel .cur { color: #333; font-weight: bold; }
+    #recentPanel { font-size: 12px; color: #888; margin-top: 10px; }
+    .recentTable { border-collapse: collapse; }
+    .recentTable td { text-align: left; padding: 2px 10px 2px 0; }
+    .recentTable tr.cur td { color: #333; }
   </style>
 </head>
 <body>
@@ -106,16 +108,36 @@
     var recentlyLogged = [];
     var recentSeeded = false;
 
+    function formatHours(h) {
+      // Below 10h, precision to a tenth still matters. At 10h+ it
+      // doesn't - his call ("no difference between 10.3 and 11.6") -
+      // so just round to a whole number past that point. One shared
+      // function so every place hours get shown (current Hrs, Prev,
+      // the recent-readings panel) follows the same rule.
+      if (h === null || h === undefined || h === '') return '--';
+      var n = Number(h);
+      if (Math.abs(n) >= 10) return Math.round(n) + 'h';
+      return n.toFixed(1) + 'h';
+    }
+
     function renderRecentPanel() {
       var el = document.getElementById('recentPanel');
       if (recentlyLogged.length === 0) { el.innerHTML = ''; return; }
       var toShow = recentlyLogged.slice(-3).reverse(); // most recent first
-      el.innerHTML = toShow.map(function (r, idx) {
+      function fmt(v) {
+        return (v === '' || v === null || v === undefined) ? '-' : v;
+      }
+      var anyD1 = toShow.some(function (r) {
+        return r.d1 !== '' && r.d1 !== null && r.d1 !== undefined;
+      });
+      var rowsHtml = toShow.map(function (r, idx) {
         var cls = idx === 0 ? 'cur' : '';
-        var hrsText = (r.hrs === null || r.hrs === undefined) ? '--' : r.hrs.toFixed(1) + 'h';
-        return '<div class="' + cls + '">' + r.route + ' ' + r.flightNumber + ' \u00b7 ' +
-          hrsText + ' \u00b7 ' + r.values + '</div>';
+        var cells = '<td>' + r.org + '</td><td>' + r.dest + '</td><td>' + formatHours(r.hrs) + '</td>' +
+          '<td>' + fmt(r.y) + '</td><td>' + fmt(r.cplus) + '</td><td>' + fmt(r.onePS) + '</td>';
+        if (anyD1) cells += '<td>' + fmt(r.d1) + '</td>';
+        return '<tr class="' + cls + '">' + cells + '</tr>';
       }).join('');
+      el.innerHTML = '<table class="recentTable">' + rowsHtml + '</table>';
     }
 
     function buildColumns(anyD1) {
@@ -159,7 +181,7 @@
         var text = parts.map(function (v) {
           return (v === '' || v === null || v === undefined) ? '-' : v;
         }).join(' ');
-        var hrsText = (rd.hrs === null || rd.hrs === undefined) ? '--' : rd.hrs.toFixed(1) + 'h';
+        var hrsText = formatHours(rd.hrs);
         var hrsClass = 'prevHrsInline' + (idx === 0 ? ' mostRecent' : '');
         return '<div class="row"><span class="' + hrsClass + '">' + hrsText + '</span> ' + text + '</div>';
       }).join('');
@@ -317,12 +339,12 @@
           dep:
             '<span class="dep" data-i="' + i + '" id="depDisplay' + i + '">' + row.depDisplay + '</span>' +
             '<input class="timeEdit" data-i="' + i + '" id="depEdit' + i + '" value="' + row.depDisplay + '">',
-          y: '<input class="seat" data-i="' + i + '" data-field="y" placeholder="-">',
-          cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-">',
-          onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-">',
-          d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-">',
+          y: '<input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric">',
+          cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric">',
+          onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric">',
+          d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric">',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
-          hrs: '<span class="' + hrsClass + '">' + row.hoursUntilDep.toFixed(1) + 'h</span>',
+          hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
           flt:
             '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber + '</span>' +
@@ -353,6 +375,18 @@
 
       tbody.removeEventListener('keydown', handleArrowNav);
       tbody.addEventListener('keydown', handleArrowNav);
+      tbody.removeEventListener('input', sanitizeSeatInput);
+      tbody.addEventListener('input', sanitizeSeatInput);
+    }
+
+    function sanitizeSeatInput(e) {
+      // Hard block at the source - the whole reason a stray "65" ever
+      // got into observations. A single digit 0-9, nothing else, no
+      // matter how it got typed or pasted in.
+      var el = e.target;
+      if (!el.classList || !el.classList.contains('seat')) return;
+      var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, 1);
+      if (cleaned !== el.value) el.value = cleaned;
     }
 
     function handleArrowNav(e) {
@@ -465,12 +499,9 @@
       });
       function recordRecentlyLogged() {
         loggedEntries.forEach(function (e) {
-          var parts = [e.y, e.cplus, e.onePS];
-          if (e.d1 !== '') parts.push(e.d1);
-          var values = parts.map(function (v) { return v === '' ? '-' : v; }).join(' ');
           recentlyLogged.push({
-            route: e.org + '\u2192' + e.dest, flightNumber: e.flightNumber,
-            hrs: e.hoursUntilDep, values: values
+            org: e.org, dest: e.dest, hrs: e.hoursUntilDep,
+            y: e.y, cplus: e.cplus, onePS: e.onePS, d1: e.d1
           });
         });
         if (recentlyLogged.length > 3) recentlyLogged = recentlyLogged.slice(-3);
