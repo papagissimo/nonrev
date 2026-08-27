@@ -46,7 +46,7 @@
     #recentPanel { font-size: 15px; color: #888; margin-top: 10px; }
     .recentTable { border-collapse: collapse; }
     .recentTable td { text-align: left; padding: 0px 10px 0px 0; line-height: 1.15; }
-    .recentTable td.seat { padding: 0px 6px 0px 0; }
+    .recentTable td.seatTuple { font-variant-numeric: tabular-nums; letter-spacing: 0.5px; }
     .recentTable tr.cur td { color: #333; }
   </style>
 </head>
@@ -133,9 +133,14 @@
       });
       var rowsHtml = toShow.map(function (r, idx) {
         var cls = idx === 0 ? 'cur' : '';
+        // The seat-count tuple is one plain-text string with ordinary
+        // spaces (like the active table's own Prev column), not separate
+        // cells - a real tuple reads as one unit, and no amount of <td>
+        // padding tuning gets there the way a single text run does.
+        var tuple = [fmt(r.y), fmt(r.cplus), fmt(r.onePS)];
+        if (anyD1) tuple.push(fmt(r.d1));
         var cells = '<td>' + r.org + '</td><td>' + r.dest + '</td><td>' + formatHours(r.hrs) + '</td>' +
-          '<td class="seat">' + fmt(r.y) + '</td><td class="seat">' + fmt(r.cplus) + '</td><td class="seat">' + fmt(r.onePS) + '</td>';
-        if (anyD1) cells += '<td class="seat">' + fmt(r.d1) + '</td>';
+          '<td class="seatTuple">' + tuple.join(' ') + '</td>';
         return '<tr class="' + cls + '">' + cells + '</tr>';
       }).join('');
       el.innerHTML = '<table class="recentTable">' + rowsHtml + '</table>';
