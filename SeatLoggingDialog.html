@@ -22,9 +22,10 @@
     label.ignoreEdit { font-size: 12px; color: #666; display: none; white-space: nowrap; }
     .flt { font-size: 14px; color: #666; }
     .pencil { cursor: pointer; color: #888; font-size: 16px; }
-    .prev { font-size: 12px; color: #888; line-height: 1.35; }
+    .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; }
-    .prevHrsInline { display: inline-block; width: 32px; color: #666; }
+    .prevHrsInline { display: inline-block; width: 38px; color: #666; }
+    .prevHrsInline.mostRecent { color: #c5221f; }
     col.hiddenCol { visibility: collapse; }
     .flagCell input { font-size: 13px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 3px 5px; }
     #routeFlagRow { margin: 4px 0 8px; }
@@ -99,8 +100,11 @@
 
     // Session-scoped only (resets on page reload) - just-logged entries,
     // most recent last. Rendered as a plain static "current + last 2"
-    // list, no auto-scroll/animation - his call, keeps it simple.
+    // list, no auto-scroll/animation - his call, keeps it simple. Seeded
+    // once from real db history on first load (see renderBatch) since it
+    // otherwise starts with no memory of anything before this page load.
     var recentlyLogged = [];
+    var recentSeeded = false;
 
     function renderRecentPanel() {
       var el = document.getElementById('recentPanel');
@@ -126,7 +130,7 @@
       // reading), with Prev pushed past a small gap - his call, so the
       // "what I'm about to log" block reads as one unit.
       cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
-      cols.push({ key: 'gap', label: '', width: 22 });
+      cols.push({ key: 'gap', label: '', width: 40 });
       cols.push({ key: 'prev', label: 'Prev', width: 130 });
       cols.push({ key: 'flt', label: 'Flight', width: 76 });
       cols.push({ key: 'flag', label: 'Flag', width: 140 });
@@ -145,15 +149,19 @@
       // smaller hours-before-departure means the check happened later).
       // Each row carries its own hrs value inline so it's never
       // ambiguous which reading a given hours-before-dep belongs to.
+      // The most recent one (index 0) is highlighted - his call, since
+      // that's the number he's actually comparing the live Hrs column
+      // against, over and over, while working a route.
       if (!readings || readings.length === 0) return '';
-      return readings.map(function (rd) {
+      return readings.map(function (rd, idx) {
         var parts = [rd.y, rd.cplus, rd.onePS];
         if (anyD1) parts.push(rd.d1);
         var text = parts.map(function (v) {
           return (v === '' || v === null || v === undefined) ? '-' : v;
         }).join(' ');
         var hrsText = (rd.hrs === null || rd.hrs === undefined) ? '--' : rd.hrs.toFixed(1) + 'h';
-        return '<div class="row"><span class="prevHrsInline">' + hrsText + '</span> ' + text + '</div>';
+        var hrsClass = 'prevHrsInline' + (idx === 0 ? ' mostRecent' : '');
+        return '<div class="row"><span class="' + hrsClass + '">' + hrsText + '</span> ' + text + '</div>';
       }).join('');
     }
 
@@ -248,6 +256,19 @@
       batch = result;
       renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
       if (batch.settings) populateSettingsForm(batch.settings);
+
+      // Seed the recent-readings panel from real logged history exactly
+      // once, on the very first batch this page load ever sees - after
+      // that, it's purely built up from what's actually logged in this
+      // session (recordRecentlyLogged), so it isn't clobbered by a fresh
+      // db read every time a route gets skipped/reloaded.
+      if (!recentSeeded) {
+        recentSeeded = true;
+        if (recentlyLogged.length === 0 && result.recentObservations) {
+          recentlyLogged = result.recentObservations;
+        }
+      }
+      renderRecentPanel();
 
       document.getElementById('dateSub').textContent = batch.dowDisplay + ', ' + batch.dateDisplay;
 

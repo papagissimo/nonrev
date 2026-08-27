@@ -118,6 +118,38 @@ def previous_readings_for(conn, carrier, flight_number, flight_date):
     ]
 
 
+def recent_observations(conn, limit=3):
+    """
+    The last N real logged observations, globally (any route/flight),
+    for seeding the recent-readings panel on page load - it otherwise
+    has no memory of anything before the current browser session.
+    Returned oldest-of-the-batch first / most-recent last, matching the
+    client's own recentlyLogged accumulation order.
+    """
+    rows = conn.execute(
+        """SELECT org, dest, flightNumber, hoursBeforeDep, y, cPlus, firstOrPS, d1
+           FROM observations WHERE readingType='avail'
+           ORDER BY checkTimestamp DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+
+    def fmt(v):
+        if v is None:
+            return '-'
+        return str(int(v)) if float(v).is_integer() else str(v)
+
+    result = []
+    for org, dest, flight_number, hrs, y, cplus, ps, d1 in rows:
+        parts = [y, cplus, ps]
+        if d1 is not None:
+            parts.append(d1)
+        result.append({
+            'route': f'{org}\u2192{dest}', 'flightNumber': flight_number or '',
+            'hrs': hrs, 'values': ' '.join(fmt(v) for v in parts),
+        })
+    return list(reversed(result))
+
+
 def get_flight_day_flag(conn, carrier, flight_number, org, dest, flight_date):
     row = conn.execute(
         """SELECT flag FROM flightDayFlag
@@ -173,7 +205,7 @@ def get_next_batch(conn, skip_route_keys=None):
 
     candidates = []
     unconfirmed_codes = set()
-    departed_count = 0  # whole-day total across every route, not just the one about to be shown
+    departed_by_route = {}  # (org, dest, flightDate) -> count - see summary_text below
     for schedule_date in schedule_days:
         dow = schedule_date.strftime('%a')
         flight_date_str = schedule_date.isoformat()
@@ -198,7 +230,11 @@ def get_next_batch(conn, skip_route_keys=None):
                 # makes it past this line can never trip this same test
                 # again later, so counting it anywhere downstream (as the
                 # old per-route loop tried to) can never find anything.
-                departed_count += 1
+                # Per his call: back to per-route scope (not whole-day) -
+                # bucketed here, by the route+date it actually belongs to,
+                # so it's still counted at the only place it's real.
+                route_key = (org, dest, flight_date_str)
+                departed_by_route[route_key] = departed_by_route.get(route_key, 0) + 1
                 continue
 
             if settings['logEverything']:
@@ -234,11 +270,6 @@ def get_next_batch(conn, skip_route_keys=None):
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
-    summary_text = (
-        f"{departed_count} flight{'s' if departed_count != 1 else ''} already left, not shown"
-        if departed_count > 0 else ''
-    )
-
     # Skip-key format stays org|dest (no date) to match the client's
     # existing session-skip list - skipping a route mid-session skips it
     # regardless of which calendar day it's currently grouped under,
@@ -251,6 +282,11 @@ def get_next_batch(conn, skip_route_keys=None):
     )
 
     if next_candidate is None:
+        total_departed = sum(departed_by_route.values())
+        summary_text = (
+            f"{total_departed} flight{'s' if total_departed != 1 else ''} already left, not shown"
+            if total_departed > 0 else ''
+        )
         future_waits = [c['minutesUntilEligible'] for c in candidates if c['minutesUntilEligible'] is not None]
         wait_minutes = min(future_waits) if future_waits else None
         wait_message = (
@@ -263,6 +299,7 @@ def get_next_batch(conn, skip_route_keys=None):
             'routeOrg': None, 'routeDest': None, 'summaryText': summary_text,
             'waitMinutes': wait_minutes, 'waitMessage': wait_message, 'rows': [],
             'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
+            'recentObservations': recent_observations(conn),
         }
 
     d1_map = load_d1_map(conn)
@@ -276,8 +313,8 @@ def get_next_batch(conn, skip_route_keys=None):
             continue
         # Note: a candidate reaching this loop already cleared the
         # DEP_CUTOFF_MINUTES check above, by construction - nothing here
-        # can still be departed. (departed_count, computed above, is the
-        # one and only place that count is real.)
+        # can still be departed. (departed_by_route, computed above, is
+        # the one and only place that count is real.)
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
             'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
@@ -293,6 +330,13 @@ def get_next_batch(conn, skip_route_keys=None):
         conn, next_candidate['car'], next_candidate['org'], next_candidate['dest'], next_candidate['flightDate'],
     )
 
+    route_key = (next_candidate['org'], next_candidate['dest'], next_candidate['flightDate'])
+    route_departed_count = departed_by_route.get(route_key, 0)
+    summary_text = (
+        f"{route_departed_count} flight{'s' if route_departed_count != 1 else ''} already left, not shown"
+        if route_departed_count > 0 else ''
+    )
+
     next_date = datetime.strptime(next_candidate['flightDate'], '%Y-%m-%d').date()
     return {
         'dowDisplay': next_candidate['dow'], 'dateDisplay': next_date.strftime('%b %-d'),
@@ -301,6 +345,7 @@ def get_next_batch(conn, skip_route_keys=None):
         'carrier': next_candidate['car'], 'routeFlag': route_flag,
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
         'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
+        'recentObservations': recent_observations(conn),
     }
 
 
