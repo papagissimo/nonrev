@@ -58,6 +58,33 @@ CREATE TABLE observations (
 
 CREATE INDEX idxObservationsFlightDay
     ON observations (carrier, flightNumber, org, dest, flightDate);
+
+-- Both flag tables below are the free-text "hey, look here" mechanism -
+-- deliberately NOT the same thing as flightSchedule.verdict (a
+-- multi-week (flightNumber, dayOfWeek) pattern judgment). These are
+-- single mutable fields scoped to one specific flight-date instance:
+-- writing over one replaces whatever was there, no history kept.
+-- No fixed vocabulary - plain text, searchable later the same
+-- substring-filter way ObservationsBrowser already works.
+
+CREATE TABLE flightDayFlag (
+    carrier       TEXT NOT NULL,
+    flightNumber  TEXT NOT NULL,
+    org           TEXT NOT NULL,
+    dest          TEXT NOT NULL,
+    flightDate    TEXT NOT NULL,
+    flag          TEXT,
+    PRIMARY KEY (carrier, flightNumber, org, dest, flightDate)
+);
+
+CREATE TABLE routeDayFlag (
+    carrier     TEXT NOT NULL,
+    org         TEXT NOT NULL,
+    dest        TEXT NOT NULL,
+    flightDate  TEXT NOT NULL,
+    flag        TEXT,
+    PRIMARY KEY (carrier, org, dest, flightDate)
+);
 """
 
 

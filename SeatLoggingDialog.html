@@ -3,41 +3,47 @@
 <head>
   <base target="_top">
   <style>
-    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
-    .subhead { margin-bottom: 2px; }
-    .routeTitle { font-size: 22px; font-weight: bold; color: #222; }
-    .dateSub { font-size: 13px; color: #666; margin-left: 8px; }
-    .summary { color: #888; font-size: 12px; margin-bottom: 10px; }
-    .wait { color: #1a73e8; font-size: 14px; margin: 14px 0; }
+    body { font-family: Arial, sans-serif; font-size: 16px; margin: 10px; }
+    .subhead { margin-bottom: 2px; display: flex; align-items: baseline; }
+    .routeTitle { font-size: 27px; font-weight: bold; color: #222; }
+    .dateSub { font-size: 16px; color: #666; margin-left: 10px; }
+    .summary { color: #888; font-size: 13px; margin-left: 10px; }
+    .wait { color: #1a73e8; font-size: 17px; margin: 14px 0; }
     table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-    th { text-align: left; font-size: 11px; color: #888; padding: 2px 4px; overflow: hidden; }
-    td { padding: 3px 4px; vertical-align: middle; overflow: hidden; }
+    th { text-align: left; font-size: 13px; color: #888; padding: 3px 5px; overflow: hidden; }
+    td { padding: 5px 5px; vertical-align: middle; overflow: hidden; }
     tr.next { background: #e6f4ea; }
-    .dep { font-weight: bold; font-size: 14px; }
-    .airc { font-size: 11px; color: #666; }
-    .car { font-size: 11px; color: #666; }
-    .hrs { font-size: 12px; color: #666; }
+    .dep { font-weight: bold; font-size: 17px; }
+    .airc { font-size: 13px; color: #666; }
+    .hrs { font-size: 15px; color: #666; }
     .hrs.soon { color: #c5221f; font-weight: bold; }
-    input.seat { width: 30px; text-align: center; box-sizing: border-box; }
-    input.timeEdit, input.aircEdit, input.fltEdit { font-size: 11px; display: none; width: 100%; box-sizing: border-box; }
-    label.ignoreEdit { font-size: 10px; color: #666; display: none; white-space: nowrap; }
-    .flt { font-size: 11px; color: #666; }
-    .pencil { cursor: pointer; color: #888; font-size: 13px; }
-    .prev { font-size: 10px; color: #888; line-height: 1.3; }
+    input.seat { width: 38px; font-size: 16px; text-align: center; box-sizing: border-box; }
+    input.timeEdit, input.aircEdit, input.fltEdit { font-size: 14px; display: none; width: 100%; box-sizing: border-box; }
+    label.ignoreEdit { font-size: 12px; color: #666; display: none; white-space: nowrap; }
+    .flt { font-size: 14px; color: #666; }
+    .pencil { cursor: pointer; color: #888; font-size: 16px; }
+    .prev { font-size: 12px; color: #888; line-height: 1.35; }
     .prev .row { white-space: nowrap; }
-    .prevHrsInline { display: inline-block; width: 26px; color: #666; }
+    .prevHrsInline { display: inline-block; width: 32px; color: #666; }
+    col.hiddenCol { visibility: collapse; }
+    .flagCell input { font-size: 13px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 3px 5px; }
+    #routeFlagRow { margin: 4px 0 8px; }
+    #routeFlagRow input { font-size: 14px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; padding: 5px 8px; color: #555; }
+    #routeFlagRow input::placeholder { color: #aaa; }
     .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
-    #getNextBtn, #logBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    #getNextBtn, #logBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 10px 18px; font-size: 16px; cursor: pointer; }
     #getNextBtn:disabled, #logBtn:disabled { background: #a9c6f2; }
-    #status { color: #666; font-size: 12px; }
+    #status { color: #666; font-size: 14px; }
     #startState { text-align: center; padding: 40px 0; }
-    .settingsLink { text-align: right; font-size: 12px; margin-bottom: 4px; }
+    .settingsLink { text-align: right; font-size: 13px; margin-bottom: 4px; }
     .settingsLink a { color: #1a73e8; cursor: pointer; text-decoration: none; }
-    #settingsPanel { display: none; border: 1px solid #ddd; border-radius: 4px; padding: 10px; margin-bottom: 10px; font-size: 12px; background: #fafafa; }
+    #settingsPanel { display: none; border: 1px solid #ddd; border-radius: 4px; padding: 10px; margin-bottom: 10px; font-size: 13px; background: #fafafa; }
     #settingsPanel .tierRow { margin-top: 8px; }
     #settingsPanel input[type=number] { width: 46px; text-align: center; }
     #settingsPanel label { display: block; margin-bottom: 4px; }
-    #saveSettingsBtn { margin-top: 10px; background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
+    #saveSettingsBtn { margin-top: 10px; background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+    #recentPanel { font-size: 12px; color: #888; margin-top: 10px; line-height: 1.5; }
+    #recentPanel .cur { color: #333; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -65,9 +71,11 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span>
     </div>
-    <div class="summary" id="summary"></div>
+    <div id="routeFlagRow">
+      <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
+    </div>
     <div class="wait" id="wait" style="display:none;"></div>
     <table id="flightTable" style="display:none;">
       <colgroup id="colgroup"></colgroup>
@@ -79,6 +87,7 @@
       <span id="status">Blank rows aren't logged.</span>
       <button id="logBtn" onclick="logReadings()">Log these readings</button>
     </div>
+    <div id="recentPanel"></div>
   </div>
 
   <script>
@@ -88,21 +97,46 @@
     var aircraftOptionsRendered = false;
     var skippedRouteKeys = [];
 
+    // Session-scoped only (resets on page reload) - just-logged entries,
+    // most recent last. Rendered as a plain static "current + last 2"
+    // list, no auto-scroll/animation - his call, keeps it simple.
+    var recentlyLogged = [];
+
+    function renderRecentPanel() {
+      var el = document.getElementById('recentPanel');
+      if (recentlyLogged.length === 0) { el.innerHTML = ''; return; }
+      var toShow = recentlyLogged.slice(-3).reverse(); // most recent first
+      el.innerHTML = toShow.map(function (r, idx) {
+        var cls = idx === 0 ? 'cur' : '';
+        var hrsText = (r.hrs === null || r.hrs === undefined) ? '--' : r.hrs.toFixed(1) + 'h';
+        return '<div class="' + cls + '">' + r.route + ' ' + r.flightNumber + ' \u00b7 ' +
+          hrsText + ' \u00b7 ' + r.values + '</div>';
+      }).join('');
+    }
+
     function buildColumns(anyD1) {
       var cols = [
-        { key: 'dep', label: 'Dep', width: 78 },
-        { key: 'y', label: 'Y', width: 40 },
-        { key: 'cplus', label: 'C+', width: 40 },
-        { key: 'onePS', label: '1/PS', width: 40 }
+        { key: 'dep', label: 'Dep', width: 92 },
+        { key: 'y', label: 'Y', width: 48 },
+        { key: 'cplus', label: 'C+', width: 48 },
+        { key: 'onePS', label: '1/PS', width: 48 }
       ];
-      if (anyD1) cols.push({ key: 'd1', label: 'D1', width: 40 });
-      cols.push({ key: 'prev', label: 'Prev', width: 96 });
-      cols.push({ key: 'hrs', label: 'Hrs', width: 46 });
-      cols.push({ key: 'car', label: 'Car', width: 36 });
-      cols.push({ key: 'flt', label: 'Flight', width: 60 });
-      cols.push({ key: 'airc', label: 'Aircraft', width: 100 });
-      cols.push({ key: 'ignoreEdit', label: '', width: 60 });
-      cols.push({ key: 'pencil', label: '', width: 24 });
+      if (anyD1) cols.push({ key: 'd1', label: 'D1', width: 48 });
+      // Hrs sits right next to the seat-input columns (the current
+      // reading), with Prev pushed past a small gap - his call, so the
+      // "what I'm about to log" block reads as one unit.
+      cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
+      cols.push({ key: 'gap', label: '', width: 22 });
+      cols.push({ key: 'prev', label: 'Prev', width: 130 });
+      cols.push({ key: 'flt', label: 'Flight', width: 76 });
+      cols.push({ key: 'flag', label: 'Flag', width: 140 });
+      // Car and Aircraft dropped from view - Car has no edit affordance so
+      // it's just gone; Aircraft stays in the DOM (visibility:collapse,
+      // width 0) purely so the pencil-edit's aircraft input still exists
+      // to write back to FlightSchedule - just never seen or scrolled to.
+      cols.push({ key: 'airc', label: 'Aircraft', width: 0, hidden: true });
+      cols.push({ key: 'ignoreEdit', label: '', width: 76 });
+      cols.push({ key: 'pencil', label: '', width: 30 });
       return cols;
     }
 
@@ -215,7 +249,7 @@
       renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
       if (batch.settings) populateSettingsForm(batch.settings);
 
-      document.getElementById('dateSub').textContent = batch.dowDisplay + ' ' + batch.dateDisplay;
+      document.getElementById('dateSub').textContent = batch.dowDisplay + ', ' + batch.dateDisplay;
 
       var waitEl = document.getElementById('wait');
       var table = document.getElementById('flightTable');
@@ -223,7 +257,7 @@
 
       if (!batch.routeOrg) {
         document.getElementById('routeTitle').textContent = 'Nothing due right now';
-        document.getElementById('summary').textContent = '';
+        document.getElementById('summary').textContent = batch.summaryText || '';
         waitEl.style.display = 'block';
         waitEl.textContent = batch.waitMessage || 'Nothing left to check today.';
         table.style.display = 'none';
@@ -233,6 +267,7 @@
 
       document.getElementById('routeTitle').textContent = batch.routeOrg + ' \u2192 ' + batch.routeDest;
       document.getElementById('summary').textContent = batch.summaryText || '';
+      document.getElementById('routeFlagInput').value = batch.routeFlag || '';
       waitEl.style.display = 'none';
       table.style.display = '';
       btnRow.style.display = 'flex';
@@ -242,7 +277,7 @@
 
       var colgroup = document.getElementById('colgroup');
       colgroup.innerHTML = columns.map(function (c) {
-        return '<col style="width:' + c.width + 'px;">';
+        return '<col class="' + (c.hidden ? 'hiddenCol' : '') + '" style="width:' + c.width + 'px;">';
       }).join('');
 
       var headerRow = document.getElementById('headerRow');
@@ -267,10 +302,12 @@
           d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-">',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + row.hoursUntilDep.toFixed(1) + 'h</span>',
-          car: '<span class="car">' + row.car + '</span>',
+          gap: '',
           flt:
             '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber + '</span>' +
             '<input class="fltEdit" data-i="' + i + '" id="fltEdit' + i + '" value="' + row.flightNumber + '">',
+          flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +
+            '" value="' + (row.flag || '').replace(/"/g, '&quot;') + '" placeholder="\u2014"></span>',
           airc:
             '<span class="airc" data-i="' + i + '" id="aircDisplay' + i + '">' + row.aircraftConfig + '</span>' +
             '<input class="aircEdit" list="aircraftOptions" data-i="' + i + '" id="aircEdit' + i + '" value="' + row.aircraftConfig + '">',
@@ -284,6 +321,13 @@
           return '<td>' + (cellHtml[c.key] || '') + '</td>';
         }).join('');
         tbody.appendChild(tr);
+
+        var flagInput = tr.querySelector('#flagInput' + i);
+        if (flagInput) {
+          flagInput.addEventListener('blur', function () {
+            saveFlightDayFlag(row, flagInput.value);
+          });
+        }
       });
 
       tbody.removeEventListener('keydown', handleArrowNav);
@@ -386,13 +430,31 @@
           scheduleRow: row.scheduleRow, org: row.org, dest: row.dest, car: row.car,
           dep: dep, aircraftConfig: aircraftConfig, flightNumber: flightNumber,
           scheduleEdited: scheduleEdited, ignore: ignoreChk ? ignoreChk.checked : false,
-          y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1')
+          y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
+          hoursUntilDep: row.hoursUntilDep
         };
       });
 
       var hasAnyData = entries.some(function (e) {
         return e.scheduleEdited || e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
       });
+
+      var loggedEntries = entries.filter(function (e) {
+        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
+      });
+      function recordRecentlyLogged() {
+        loggedEntries.forEach(function (e) {
+          var parts = [e.y, e.cplus, e.onePS];
+          if (e.d1 !== '') parts.push(e.d1);
+          var values = parts.map(function (v) { return v === '' ? '-' : v; }).join(' ');
+          recentlyLogged.push({
+            route: e.org + '\u2192' + e.dest, flightNumber: e.flightNumber,
+            hrs: e.hoursUntilDep, values: values
+          });
+        });
+        if (recentlyLogged.length > 3) recentlyLogged = recentlyLogged.slice(-3);
+        renderRecentPanel();
+      }
 
       if (!hasAnyData) {
         var key = batch.routeOrg + '|' + batch.routeDest;
@@ -430,6 +492,7 @@
           if (result.error) throw new Error(result.error);
           btn.disabled = false;
           status.textContent = 'Blank rows aren\u2019t logged.';
+          recordRecentlyLogged();
           renderBatch(result.next);
         })
         .catch(function (err) {
@@ -437,6 +500,37 @@
           status.textContent = 'Error: ' + err.message;
         });
     }
+
+    function saveFlightDayFlag(row, flagText) {
+      fetch('/api/saveFlightDayFlag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          carrier: row.car, flightNumber: row.flightNumber, org: row.org, dest: row.dest,
+          flightDate: batch.flightDate, flag: flagText
+        })
+      }).then(function (res) { return res.json(); })
+        .then(function (result) { if (result.error) console.error(result.error); })
+        .catch(function (err) { console.error(err); });
+    }
+
+    function saveRouteDayFlag(flagText) {
+      if (!batch || !batch.routeOrg) return;
+      fetch('/api/saveRouteDayFlag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          carrier: batch.carrier, org: batch.routeOrg, dest: batch.routeDest,
+          flightDate: batch.flightDate, flag: flagText
+        })
+      }).then(function (res) { return res.json(); })
+        .then(function (result) { if (result.error) console.error(result.error); })
+        .catch(function (err) { console.error(err); });
+    }
+
+    document.getElementById('routeFlagInput').addEventListener('blur', function (e) {
+      saveRouteDayFlag(e.target.value);
+    });
 
     loadBatch();
   </script>

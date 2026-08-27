@@ -118,6 +118,48 @@ def previous_readings_for(conn, carrier, flight_number, flight_date):
     ]
 
 
+def get_flight_day_flag(conn, carrier, flight_number, org, dest, flight_date):
+    row = conn.execute(
+        """SELECT flag FROM flightDayFlag
+           WHERE carrier=? AND flightNumber=? AND org=? AND dest=? AND flightDate=?""",
+        (carrier, flight_number, org, dest, flight_date),
+    ).fetchone()
+    return row[0] if row else ''
+
+
+def get_route_day_flag(conn, carrier, org, dest, flight_date):
+    row = conn.execute(
+        """SELECT flag FROM routeDayFlag
+           WHERE carrier=? AND org=? AND dest=? AND flightDate=?""",
+        (carrier, org, dest, flight_date),
+    ).fetchone()
+    return row[0] if row else ''
+
+
+def save_flight_day_flag(conn, carrier, flight_number, org, dest, flight_date, flag_text):
+    conn.execute(
+        """INSERT INTO flightDayFlag (carrier, flightNumber, org, dest, flightDate, flag)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(carrier, flightNumber, org, dest, flightDate)
+           DO UPDATE SET flag=excluded.flag""",
+        (carrier, flight_number, org, dest, flight_date, flag_text),
+    )
+    conn.commit()
+    return {'saved': True}
+
+
+def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
+    conn.execute(
+        """INSERT INTO routeDayFlag (carrier, org, dest, flightDate, flag)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(carrier, org, dest, flightDate)
+           DO UPDATE SET flag=excluded.flag""",
+        (carrier, org, dest, flight_date, flag_text),
+    )
+    conn.commit()
+    return {'saved': True}
+
+
 def get_next_batch(conn, skip_route_keys=None):
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
@@ -131,6 +173,7 @@ def get_next_batch(conn, skip_route_keys=None):
 
     candidates = []
     unconfirmed_codes = set()
+    departed_count = 0  # whole-day total across every route, not just the one about to be shown
     for schedule_date in schedule_days:
         dow = schedule_date.strftime('%a')
         flight_date_str = schedule_date.isoformat()
@@ -150,6 +193,12 @@ def get_next_batch(conn, skip_route_keys=None):
 
             hours_until_dep = (dep_dt - now).total_seconds() / 3600
             if hours_until_dep * 60 <= DEP_CUTOFF_MINUTES:
+                # Departed (or within the no-longer-offered window). This is
+                # the only place that's actually true - a candidate that
+                # makes it past this line can never trip this same test
+                # again later, so counting it anywhere downstream (as the
+                # old per-route loop tried to) can never find anything.
+                departed_count += 1
                 continue
 
             if settings['logEverything']:
@@ -185,6 +234,11 @@ def get_next_batch(conn, skip_route_keys=None):
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
+    summary_text = (
+        f"{departed_count} flight{'s' if departed_count != 1 else ''} already left, not shown"
+        if departed_count > 0 else ''
+    )
+
     # Skip-key format stays org|dest (no date) to match the client's
     # existing session-skip list - skipping a route mid-session skips it
     # regardless of which calendar day it's currently grouped under,
@@ -204,16 +258,15 @@ def get_next_batch(conn, skip_route_keys=None):
             if wait_minutes is not None else "Nothing left to check today."
         )
         return {
-            'dowDisplay': now.strftime('%a'), 'dateDisplay': now.strftime('%-m/%-d'),
+            'dowDisplay': now.strftime('%a'), 'dateDisplay': now.strftime('%b %-d'),
             'flightDate': now.date().isoformat(),
-            'routeOrg': None, 'routeDest': None, 'summaryText': '',
+            'routeOrg': None, 'routeDest': None, 'summaryText': summary_text,
             'waitMinutes': wait_minutes, 'waitMessage': wait_message, 'rows': [],
             'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
         }
 
     d1_map = load_d1_map(conn)
     route_rows = []
-    route_departed_count = 0
     for c in candidates:
         # Same route AND same schedule date - two different calendar
         # days' worth of the same org/dest must never be shown together
@@ -221,9 +274,10 @@ def get_next_batch(conn, skip_route_keys=None):
         if (c['org'] != next_candidate['org'] or c['dest'] != next_candidate['dest']
                 or c['flightDate'] != next_candidate['flightDate']):
             continue
-        if c['hoursUntilDep'] * 60 <= DEP_CUTOFF_MINUTES:
-            route_departed_count += 1
-            continue
+        # Note: a candidate reaching this loop already cleared the
+        # DEP_CUTOFF_MINUTES check above, by construction - nothing here
+        # can still be departed. (departed_count, computed above, is the
+        # one and only place that count is real.)
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
             'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
@@ -232,18 +286,19 @@ def get_next_batch(conn, skip_route_keys=None):
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['flightDate']),
+            'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
         })
 
-    summary_text = (
-        f"{route_departed_count} flight{'s' if route_departed_count != 1 else ''} already left, not shown"
-        if route_departed_count > 0 else ''
+    route_flag = get_route_day_flag(
+        conn, next_candidate['car'], next_candidate['org'], next_candidate['dest'], next_candidate['flightDate'],
     )
 
     next_date = datetime.strptime(next_candidate['flightDate'], '%Y-%m-%d').date()
     return {
-        'dowDisplay': next_candidate['dow'], 'dateDisplay': f"{next_date.month}/{next_date.day}",
+        'dowDisplay': next_candidate['dow'], 'dateDisplay': next_date.strftime('%b %-d'),
         'flightDate': next_candidate['flightDate'],
         'routeOrg': next_candidate['org'], 'routeDest': next_candidate['dest'],
+        'carrier': next_candidate['car'], 'routeFlag': route_flag,
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
         'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
     }

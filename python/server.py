@@ -174,6 +174,35 @@ def api_delete_observations():
         conn.close()
 
 
+@app.route('/api/saveFlightDayFlag', methods=['POST'])
+def api_save_flight_day_flag():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(SeatLoggingDialog.save_flight_day_flag(
+            conn, body['carrier'], body['flightNumber'], body['org'], body['dest'],
+            body['flightDate'], body.get('flag', ''),
+        ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveRouteDayFlag', methods=['POST'])
+def api_save_route_day_flag():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(SeatLoggingDialog.save_route_day_flag(
+            conn, body['carrier'], body['org'], body['dest'], body['flightDate'], body.get('flag', ''),
+        ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
 if __name__ == '__main__':
     print(f"SeatLoggingDialog running at http://localhost:{PORT}")
     app.run(host='localhost', port=PORT, debug=True)
