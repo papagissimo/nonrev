@@ -14,7 +14,6 @@
     td { padding: 5px 5px; vertical-align: middle; overflow: hidden; }
     tr.next { background: #e6f4ea; }
     .dep { font-weight: bold; font-size: 17px; }
-    .airc { font-size: 13px; color: #666; }
     .hrs { font-size: 15px; color: #666; }
     .hrs.soon { color: #c5221f; font-weight: bold; }
     input.seat { width: 38px; font-size: 16px; text-align: center; box-sizing: border-box; }
@@ -26,8 +25,9 @@
     .prev .row { white-space: nowrap; }
     .prevHrsInline { display: inline-block; width: 38px; color: #666; }
     .prevHrsInline.mostRecent { color: #c5221f; }
-    col.hiddenCol { visibility: collapse; }
-    .flagCell input { font-size: 13px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 3px 5px; }
+    td.col-flt { padding-right: 2px; }
+    td.col-flag { padding-left: 2px; }
+    .flagCell input { font-size: 15px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 5px 7px; }
     #routeFlagRow { margin: 4px 0 8px; }
     #routeFlagRow input { font-size: 14px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; padding: 5px 8px; color: #555; }
     #routeFlagRow input::placeholder { color: #aaa; }
@@ -43,9 +43,9 @@
     #settingsPanel input[type=number] { width: 46px; text-align: center; }
     #settingsPanel label { display: block; margin-bottom: 4px; }
     #saveSettingsBtn { margin-top: 10px; background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
-    #recentPanel { font-size: 12px; color: #888; margin-top: 10px; }
+    #recentPanel { font-size: 15px; color: #888; margin-top: 10px; }
     .recentTable { border-collapse: collapse; }
-    .recentTable td { text-align: left; padding: 2px 10px 2px 0; }
+    .recentTable td { text-align: left; padding: 0px 10px 0px 0; line-height: 1.15; }
     .recentTable tr.cur td { color: #333; }
   </style>
 </head>
@@ -123,7 +123,7 @@
     function renderRecentPanel() {
       var el = document.getElementById('recentPanel');
       if (recentlyLogged.length === 0) { el.innerHTML = ''; return; }
-      var toShow = recentlyLogged.slice(-3).reverse(); // most recent first
+      var toShow = recentlyLogged.slice(-9).reverse(); // most recent first
       function fmt(v) {
         return (v === '' || v === null || v === undefined) ? '-' : v;
       }
@@ -150,17 +150,19 @@
       if (anyD1) cols.push({ key: 'd1', label: 'D1', width: 48 });
       // Hrs sits right next to the seat-input columns (the current
       // reading), with Prev pushed past a small gap - his call, so the
-      // "what I'm about to log" block reads as one unit.
+      // "what I'm about to log" block reads as one unit. Hrs/Prev
+      // columns themselves stay put - only the padding/gap around them
+      // shrank, to give the Flag column (below) more room.
       cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
-      cols.push({ key: 'gap', label: '', width: 40 });
-      cols.push({ key: 'prev', label: 'Prev', width: 130 });
-      cols.push({ key: 'flt', label: 'Flight', width: 76 });
-      cols.push({ key: 'flag', label: 'Flag', width: 140 });
-      // Car and Aircraft dropped from view - Car has no edit affordance so
-      // it's just gone; Aircraft stays in the DOM (visibility:collapse,
-      // width 0) purely so the pencil-edit's aircraft input still exists
-      // to write back to FlightSchedule - just never seen or scrolled to.
-      cols.push({ key: 'airc', label: 'Aircraft', width: 0, hidden: true });
+      cols.push({ key: 'gap', label: '', width: 16 });
+      cols.push({ key: 'prev', label: 'Prev', width: 112 });
+      cols.push({ key: 'flt', label: 'Flight', width: 70 });
+      cols.push({ key: 'flag', label: 'Flag', width: 280 });
+      // Car dropped from view entirely (no edit affordance). Aircraft
+      // stays hidden UNTIL a row is toggled into edit mode via the
+      // pencil - unlike Car, it's a real editable field (see toggleEdit),
+      // just never shown as a read-only display the rest of the time.
+      cols.push({ key: 'airc', label: '', width: 70 });
       cols.push({ key: 'ignoreEdit', label: '', width: 76 });
       cols.push({ key: 'pencil', label: '', width: 30 });
       return cols;
@@ -320,7 +322,7 @@
 
       var colgroup = document.getElementById('colgroup');
       colgroup.innerHTML = columns.map(function (c) {
-        return '<col class="' + (c.hidden ? 'hiddenCol' : '') + '" style="width:' + c.width + 'px;">';
+        return '<col style="width:' + c.width + 'px;">';
       }).join('');
 
       var headerRow = document.getElementById('headerRow');
@@ -352,16 +354,15 @@
           flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +
             '" value="' + (row.flag || '').replace(/"/g, '&quot;') + '" placeholder="\u2014"></span>',
           airc:
-            '<span class="airc" data-i="' + i + '" id="aircDisplay' + i + '">' + row.aircraftConfig + '</span>' +
             '<input class="aircEdit" list="aircraftOptions" data-i="' + i + '" id="aircEdit' + i + '" value="' + row.aircraftConfig + '">',
           ignoreEdit:
             '<label class="ignoreEdit" data-i="' + i + '" id="ignoreEdit' + i + '">' +
-              '<input type="checkbox" id="ignoreChk' + i + '"> never log</label>',
+              '<input type="checkbox" id="ignoreChk' + i + '"> ignore</label>',
           pencil: '<span class="pencil" data-i="' + i + '" onclick="toggleEdit(' + i + ')" title="edit schedule">\u270e</span>'
         };
 
         tr.innerHTML = columns.map(function (c) {
-          return '<td>' + (cellHtml[c.key] || '') + '</td>';
+          return '<td class="col-' + c.key + '">' + (cellHtml[c.key] || '') + '</td>';
         }).join('');
         tbody.appendChild(tr);
 
@@ -426,7 +427,6 @@
     function toggleEdit(i) {
       var display = document.getElementById('depDisplay' + i);
       var edit = document.getElementById('depEdit' + i);
-      var aDisplay = document.getElementById('aircDisplay' + i);
       var aEdit = document.getElementById('aircEdit' + i);
       var fDisplay = document.getElementById('fltDisplay' + i);
       var fEdit = document.getElementById('fltEdit' + i);
@@ -434,7 +434,6 @@
       var editing = edit.style.display === 'inline-block';
       display.style.display = editing ? 'inline' : 'none';
       edit.style.display = editing ? 'none' : 'inline-block';
-      aDisplay.style.display = editing ? 'inline' : 'none';
       aEdit.style.display = editing ? 'none' : 'inline-block';
       fDisplay.style.display = editing ? 'inline' : 'none';
       fEdit.style.display = editing ? 'none' : 'inline-block';
@@ -504,7 +503,7 @@
             y: e.y, cplus: e.cplus, onePS: e.onePS, d1: e.d1
           });
         });
-        if (recentlyLogged.length > 3) recentlyLogged = recentlyLogged.slice(-3);
+        if (recentlyLogged.length > 9) recentlyLogged = recentlyLogged.slice(-9);
         renderRecentPanel();
       }
 

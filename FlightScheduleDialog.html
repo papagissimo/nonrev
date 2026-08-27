@@ -102,6 +102,18 @@
     var aircraftOptionsRendered = false;
     var DOW_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
+    // Tracks unsaved edits so we can confirm before they'd be silently
+    // lost - either by loading a different route/day (see loadSchedule)
+    // or by closing/navigating away from the tab (see beforeunload below).
+    var isDirty = false;
+
+    window.addEventListener('beforeunload', function (e) {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    });
+
     // "Today" here is a convenience default for the day picker, not part
     // of any cadence logic - the browser's own local day is fine for that,
     // unlike SeatLoggingDialog's Eastern-time math for eligibility.
@@ -122,6 +134,34 @@
       }
     }
     populateDowSelect();
+
+    // Delegated - the tbody element persists across renderRows() calls
+    // even though its innerHTML is replaced each time, so this only
+    // needs attaching once. Covers every editable field in the table:
+    // car/flight/dep/aircraft (input) and ignore (checkbox, via change).
+    var rowsBody = document.getElementById('rows');
+    rowsBody.addEventListener('input', function (e) {
+      if (e.target.matches('input.car, input.flt, input.dep, input.airc')) isDirty = true;
+    });
+    rowsBody.addEventListener('change', function (e) {
+      if (e.target.matches('input.ignore')) isDirty = true;
+    });
+    // Click-to-select-all on the dep-time field, same trick used by the
+    // seat-logging dialogue's fields: focus alone isn't enough, since the
+    // mouseup that follows a click normally re-collapses the selection
+    // to wherever the cursor landed - preventing that default is what
+    // makes a single click (not a careful double-click/drag across the
+    // hour/minute/AM-PM text) select the whole field for typing over
+    // with the existing 0615a/1815p shorthand.
+    rowsBody.addEventListener('focusin', function (e) {
+      if (e.target.matches('input.dep')) e.target.select();
+    });
+    rowsBody.addEventListener('mouseup', function (e) {
+      if (e.target.matches('input.dep')) e.preventDefault();
+    });
+    document.getElementById('durationInput').addEventListener('input', function () {
+      isDirty = true;
+    });
 
     function swapOrgDest() {
       var orgEl = document.getElementById('orgInput');
@@ -157,6 +197,9 @@
         alert('Enter both a from and a to airport code.');
         return;
       }
+      if (isDirty && !confirm('You have unsaved changes for the currently loaded route/day. Discard them and load this instead?')) {
+        return;
+      }
       var dow = document.getElementById('dowSelect').value;
       var btn = document.getElementById('loadBtn');
       btn.disabled = true;
@@ -176,6 +219,7 @@
           renderAircraftOptions(current.aircraftOptions);
           renderRows();
           renderDuration();
+          isDirty = false;
         })
         .catch(function (err) {
           btn.disabled = false;
@@ -253,6 +297,7 @@
         deleted: false
       });
       current.nextBogusNumber++;
+      isDirty = true;
       renderRows();
     }
 
@@ -263,6 +308,7 @@
       } else {
         current.rows.splice(idx, 1); // never-saved row - just drop it
       }
+      isDirty = true;
       renderRows();
     }
 
@@ -359,8 +405,8 @@
           if (result.error) throw new Error(result.error);
           document.getElementById('status').textContent = 'Saved.';
           if (result.offerCopy) {
-            var doCopy = confirm('This is the only day you\'ve entered for ' +
-                result.org + '-' + result.dest + '. Copy these flights to the other 6 days too?');
+            var doCopy = confirm('Copy this schedule to the other 6 days for ' +
+                result.org + '-' + result.dest + '? This replaces whatever\'s currently on those days.');
             if (doCopy) {
               fetch('/api/copyToOtherDays', {
                 method: 'POST',

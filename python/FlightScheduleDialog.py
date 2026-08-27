@@ -226,10 +226,6 @@ def save_schedule_for_route_day(conn, payload):
     dest = str(payload['dest']).strip().lower()
     dow = normalize_dow(payload['dow'])
 
-    # Snapshot BEFORE any writes - the copy-to-other-days offer must only
-    # ever fire for a route with genuinely zero rows anywhere else.
-    is_new_route = get_schedule_for_route_day(conn, org, dest, dow)['isNewRoute']
-
     for entry in payload['rows']:
         if not entry.get('scheduleRow') or entry.get('deleted'):
             continue
@@ -289,33 +285,52 @@ def save_schedule_for_route_day(conn, payload):
 
     conn.commit()
 
+    remaining_rows = [e for e in payload['rows'] if not e.get('deleted')]
+
     return {
         'savedCount': len(payload['rows']),
-        'offerCopy': is_new_route and len(new_rows) > 0,
+        # Offered on every save now, not just for a brand-new route - he's
+        # using this daily to push a corrected day's schedule out to the
+        # other 6 (see copy_to_other_days: this is a blanket overwrite of
+        # those days, not a fill-only-if-empty operation).
+        'offerCopy': len(remaining_rows) > 0,
         'org': org, 'dest': dest, 'dow': dow,
     }
 
 
 def copy_to_other_days(conn, org, dest, source_dow):
+    """
+    Blanket overwrite: replaces whatever's currently on the other 6 days
+    for this route with a fresh copy of source_dow's flights. Deliberately
+    no per-day picker or merge - he'd rather wipe and redo than try to
+    reason about which of 6 days is still correct from memory.
+    """
     org = str(org).strip().lower()
     dest = str(dest).strip().lower()
     source_dow = normalize_dow(source_dow)
 
     source_rows = conn.execute(
-        """SELECT carrier, flightNumber, depTime, aircraftConfig
+        """SELECT carrier, flightNumber, depTime, aircraftConfig, ignore
            FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek=?""",
         (org, dest, source_dow),
     ).fetchall()
 
     target_days = [d for d in DOW_ORDER if d != source_dow]
+
+    conn.execute(
+        """DELETE FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek IN (%s)"""
+        % ','.join('?' for _ in target_days),
+        (org, dest, *target_days),
+    )
+
     copied_count = 0
     for day in target_days:
-        for carrier, flight_number, dep_time, aircraft_config in source_rows:
+        for carrier, flight_number, dep_time, aircraft_config, ignore in source_rows:
             conn.execute(
                 """INSERT INTO flightSchedule
-                   (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed, classification)
-                   VALUES (?,?,?,?,?,?,?,0,NULL)""",
-                (carrier, flight_number, org, dest, day, dep_time, aircraft_config),
+                   (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed, classification, ignore)
+                   VALUES (?,?,?,?,?,?,?,0,NULL,?)""",
+                (carrier, flight_number, org, dest, day, dep_time, aircraft_config, ignore),
             )
             copied_count += 1
 

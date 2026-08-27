@@ -98,19 +98,25 @@ def load_d1_map(conn):
     }
 
 
-def previous_readings_for(conn, carrier, flight_number, flight_date):
+def previous_readings_for(conn, carrier, flight_number, org, dest, flight_date):
     """
     Every reading logged today for this exact flight, sorted
     most-recent-check first (ascending hoursBeforeDep, since it counts
     down as departure approaches) - same as getPreviousReadingsForRow_.
     flight_date is the flight's own schedule date, not necessarily
     "today" in ET (see module docstring).
+
+    Scoped to org/dest as well as carrier/flightNumber - a flight number
+    is sometimes reused between the two directions of a route pair (same
+    tail, there-and-back) on the same calendar date, and without org/dest
+    in the filter this would silently pull the OTHER direction's readings
+    in as if they were this flight's own history.
     """
     rows = conn.execute(
         """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1 FROM observations
-           WHERE readingType='avail' AND carrier=? AND flightNumber=? AND flightDate=?
+           WHERE readingType='avail' AND carrier=? AND flightNumber=? AND org=? AND dest=? AND flightDate=?
            ORDER BY hoursBeforeDep ASC""",
-        (carrier, flight_number, flight_date),
+        (carrier, flight_number, org, dest, flight_date),
     ).fetchall()
     return [
         {'hrs': r[0], 'y': r[1], 'cplus': r[2], 'onePS': r[3], 'd1': r[4]}
@@ -118,7 +124,7 @@ def previous_readings_for(conn, carrier, flight_number, flight_date):
     ]
 
 
-def recent_observations(conn, limit=3):
+def recent_observations(conn, limit=9):
     """
     The last N real logged observations, globally (any route/flight),
     for seeding the recent-readings panel on page load - it otherwise
@@ -233,9 +239,9 @@ def get_next_batch(conn, skip_route_keys=None):
                 todays_hrs = [
                     r[0] for r in conn.execute(
                         """SELECT hoursBeforeDep FROM observations
-                           WHERE readingType='avail' AND carrier=? AND flightNumber=? AND flightDate=?
+                           WHERE readingType='avail' AND carrier=? AND flightNumber=? AND org=? AND dest=? AND flightDate=?
                            AND hoursBeforeDep IS NOT NULL""",
-                        (carrier, flight_number, flight_date_str),
+                        (carrier, flight_number, org, dest, flight_date_str),
                     ).fetchall()
                 ]
                 eligible_now, minutes_until_eligible = evaluate_eligibility(
@@ -312,7 +318,7 @@ def get_next_batch(conn, skip_route_keys=None):
             'hasD1': d1_map.get(str(c['aircraftConfig']).lower(), False),
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
-            'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['flightDate']),
+            'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
             'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
         })
 
