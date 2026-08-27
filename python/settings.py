@@ -19,6 +19,11 @@ DEFAULT_SETTINGS = {
          'doneToleranceHours': 0.3, 'recheckGapHours': 1},
     ],
     'logEverything': False,
+    # "Golden ticket" - his term for a reading close enough to departure
+    # to trust as the real go/no-go signal. Configurable rather than
+    # hardcoded since he expects to tune it, but tuning it never touches
+    # already-logged data - see goldenTicketHours usage in get_launcher_summary.
+    'goldenTicketHours': 1.5,
 }
 
 
@@ -38,11 +43,18 @@ def load_settings(conn):
         "SELECT value FROM settings WHERE key = ?", (SETTINGS_KEY,)
     ).fetchone()
     if row is None:
-        return DEFAULT_SETTINGS
+        return dict(DEFAULT_SETTINGS)
     try:
-        return json.loads(row[0])
+        loaded = json.loads(row[0])
     except (json.JSONDecodeError, TypeError):
-        return DEFAULT_SETTINGS
+        return dict(DEFAULT_SETTINGS)
+    # Backfill any top-level key an older saved blob predates (e.g.
+    # goldenTicketHours, added after settings had already been saved
+    # once) rather than replacing the whole thing - his real tier/
+    # logEverything choices stay intact.
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update(loaded)
+    return merged
 
 
 def save_settings(conn, settings):

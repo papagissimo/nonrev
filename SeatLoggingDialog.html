@@ -8,6 +8,10 @@
     .routeTitle { font-size: 27px; font-weight: bold; color: #222; }
     .dateSub { font-size: 16px; color: #666; margin-left: 10px; }
     .summary { color: #888; font-size: 13px; margin-left: 10px; }
+    .eyeToggle { cursor: pointer; margin-left: 8px; font-size: 14px; opacity: 0.35; }
+    .eyeToggle.active { opacity: 1; }
+    tr.departedRow { color: #999; }
+    tr.departedRow input.seat { background: #f2f2f2; }
     .wait { color: #1a73e8; font-size: 17px; margin: 14px 0; }
     table { border-collapse: collapse; width: 100%; table-layout: fixed; }
     th { text-align: left; font-size: 13px; color: #888; padding: 3px 5px; overflow: hidden; }
@@ -43,8 +47,8 @@
     #settingsPanel input[type=number] { width: 46px; text-align: center; }
     #settingsPanel label { display: block; margin-bottom: 4px; }
     #saveSettingsBtn { margin-top: 10px; background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
-    #recentPanel { font-size: 15px; color: #888; margin-top: 10px; }
-    .recentRow { line-height: 1.3; white-space: pre; font-family: 'Courier New', monospace; }
+    #recentPanel { font-size: 18px; color: #888; margin-top: 10px; }
+    .recentRow { line-height: 1.3; white-space: pre; font-family: 'Courier New', monospace; font-weight: bold; }
     .recentRow.cur { color: #333; }
   </style>
 </head>
@@ -69,11 +73,15 @@
         done once within <input type="number" step="0.1" id="setFarTol"> h of target &middot;
         else recheck every <input type="number" step="0.1" id="setFarGap"> h
       </div>
+      <div class="tierRow">
+        <b>Golden ticket</b> - counted on the launcher as "caught" once any reading today lands at or under<br>
+        <input type="number" step="0.1" id="setGoldenTicket"> h before departure
+      </div>
       <button id="saveSettingsBtn" onclick="saveSettings()">Save Settings</button>
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span>
     </div>
     <div id="routeFlagRow">
       <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
@@ -98,6 +106,7 @@
     var SEAT_FIELDS = ['y', 'cplus', 'onePS', 'd1'];
     var aircraftOptionsRendered = false;
     var skippedRouteKeys = [];
+    var showDeparted = false;
 
     // Session-scoped only (resets on page reload) - just-logged entries,
     // most recent last. Rendered as a plain static "current + last 2"
@@ -143,7 +152,8 @@
         // within the seat-count tuple either).
         var tuple = [fmt(r.y), fmt(r.cplus), fmt(r.onePS)];
         if (anyD1) tuple.push(fmt(r.d1));
-        var line = padRight(r.org, 4) + padRight(r.dest, 4) +
+        var line = padRight(r.org, 4) + padRight(r.dest, 4) + ' ' +
+          padRight(r.depDisplay || '--', 8) + '  ' +
           padRight(formatHours(r.hrs), 6) + tuple.join(' ');
         return '<div class="recentRow ' + cls + '">' + line + '</div>';
       }).join('');
@@ -226,11 +236,13 @@
       document.getElementById('setFarTarget').value = far.targetHours;
       document.getElementById('setFarTol').value = far.doneToleranceHours;
       document.getElementById('setFarGap').value = far.recheckGapHours;
+      document.getElementById('setGoldenTicket').value = settings.goldenTicketHours;
     }
 
     function saveSettings() {
       var settings = {
         logEverything: document.getElementById('setLogEverything').checked,
+        goldenTicketHours: parseFloat(document.getElementById('setGoldenTicket').value),
         tiers: [
           {
             minHours: 0,
@@ -264,6 +276,13 @@
         });
     }
 
+    function toggleShowDeparted() {
+      showDeparted = !showDeparted;
+      document.getElementById('showDepartedToggle').className =
+        'eyeToggle' + (showDeparted ? ' active' : '');
+      if (batch && batch.routeOrg) loadBatch();
+    }
+
     function loadBatch() {
       var btn = document.getElementById('getNextBtn');
       btn.disabled = true;
@@ -271,7 +290,7 @@
       fetch('/api/getNextBatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skipRouteKeys: skippedRouteKeys })
+        body: JSON.stringify({ skipRouteKeys: skippedRouteKeys, includeDeparted: showDeparted })
       })
         .then(function (res) { return res.json(); })
         .then(function (result) {
@@ -346,16 +365,18 @@
       batch.rows.forEach(function (row, i) {
         var tr = document.createElement('tr');
         if (row.isNext) tr.className = 'next';
+        if (row.departed) tr.className = (tr.className ? tr.className + ' ' : '') + 'departedRow';
         var hrsClass = 'hrs' + (row.hoursUntilDep <= 2 ? ' soon' : '');
+        var seatDisabled = row.departed ? ' disabled' : '';
 
         var cellHtml = {
           dep:
             '<span class="dep" data-i="' + i + '" id="depDisplay' + i + '">' + row.depDisplay + '</span>' +
             '<input class="timeEdit" data-i="' + i + '" id="depEdit' + i + '" value="' + row.depDisplay + '">',
-          y: '<input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric">',
-          cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric">',
-          onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric">',
-          d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric">',
+          y: '<input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
+          cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
+          onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
+          d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
@@ -496,7 +517,11 @@
           dep: dep, aircraftConfig: aircraftConfig, flightNumber: flightNumber,
           scheduleEdited: scheduleEdited, ignore: ignoreChk ? ignoreChk.checked : false,
           y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
-          hoursUntilDep: row.hoursUntilDep
+          hoursUntilDep: row.hoursUntilDep,
+          // Row's own display text, not recomputed from a possibly-just-
+          // edited dep - fine for the recent-panel's purposes, a purely
+          // session-local convenience list.
+          depDisplay: row.depDisplay
         };
       });
 
@@ -510,7 +535,7 @@
       function recordRecentlyLogged() {
         loggedEntries.forEach(function (e) {
           recentlyLogged.push({
-            org: e.org, dest: e.dest, hrs: e.hoursUntilDep,
+            org: e.org, dest: e.dest, depDisplay: e.depDisplay, hrs: e.hoursUntilDep,
             y: e.y, cplus: e.cplus, onePS: e.onePS, d1: e.d1
           });
         });
@@ -525,7 +550,7 @@
         fetch('/api/getNextBatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skipRouteKeys: skippedRouteKeys })
+          body: JSON.stringify({ skipRouteKeys: skippedRouteKeys, includeDeparted: showDeparted })
         })
           .then(function (res) { return res.json(); })
           .then(function (nextResult) {
@@ -546,7 +571,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           payload: { flightDate: batch.flightDate, entries: entries },
-          skipRouteKeys: skippedRouteKeys
+          skipRouteKeys: skippedRouteKeys,
+          includeDeparted: showDeparted
         })
       })
         .then(function (res) { return res.json(); })

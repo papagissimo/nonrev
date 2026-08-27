@@ -12,14 +12,33 @@
       text-decoration: none; border-radius: 4px; font-size: 14px; text-align: center;
     }
     a.tool:hover { background: #1558b0; }
+    #summary { font-size: 14px; color: #444; margin-bottom: 20px; }
+    #summary .num { font-weight: bold; color: #222; }
   </style>
 </head>
 <body>
   <h1>nonrev tools</h1>
+  <div id="summary">Loading today's tally&hellip;</div>
   <div class="tools">
     <a class="tool" href="/log">Log Observations</a>
     <a class="tool" href="/schedule">Edit Schedule</a>
     <a class="tool" href="/observations">Browse Observations</a>
   </div>
+  <script>
+    fetch('/api/getLauncherSummary')
+      .then(function (res) { return res.json(); })
+      .then(function (r) {
+        var el = document.getElementById('summary');
+        if (r.error) { el.textContent = ''; return; }
+        el.innerHTML =
+          '<span class="num">' + r.remaining + '</span> flight' + (r.remaining === 1 ? '' : 's') +
+          ' left today &middot; <span class="num">' + r.departed + '</span> already left &middot; ' +
+          '<span class="num">' + r.goldenTickets + '</span> golden ticket' + (r.goldenTickets === 1 ? '' : 's') +
+          ' (\u2264' + r.goldenTicketHours + 'h)';
+      })
+      .catch(function () {
+        document.getElementById('summary').textContent = '';
+      });
+  </script>
 </body>
 </html>

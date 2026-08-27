@@ -130,20 +130,98 @@ def recent_observations(conn, limit=9):
     for seeding the recent-readings panel on page load - it otherwise
     has no memory of anything before the current browser session.
     Returned oldest-of-the-batch first / most-recent last, matching the
-    client's own recentlyLogged accumulation order. Deliberately doesn't
-    carry flightNumber - his call, not wanted in this particular view.
+    client's own recentlyLogged accumulation order.
+
+    Includes each flight's scheduled departure time (via a FlightSchedule
+    lookup, since observations itself doesn't store one) - blank if no
+    matching schedule row exists (e.g. flight number since renamed).
     """
+    from FlightScheduleDialog import normalize_dow
+
     rows = conn.execute(
-        """SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1
+        """SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1, carrier, flightNumber, flightDate
            FROM observations WHERE readingType='avail'
            ORDER BY checkTimestamp DESC LIMIT ?""",
         (limit,),
     ).fetchall()
-    result = [
-        {'org': org, 'dest': dest, 'hrs': hrs, 'y': y, 'cplus': cplus, 'onePS': ps, 'd1': d1}
-        for org, dest, hrs, y, cplus, ps, d1 in rows
-    ]
+
+    result = []
+    for org, dest, hrs, y, cplus, ps, d1, carrier, flight_number, flight_date_str in rows:
+        dep_display = ''
+        if flight_number:
+            flight_date = datetime.strptime(flight_date_str, '%Y-%m-%d').date()
+            dow = normalize_dow(flight_date.strftime('%a'))
+            dep_row = conn.execute(
+                """SELECT depTime FROM flightSchedule
+                   WHERE carrier=? AND flightNumber=? AND org=? AND dest=? AND dayOfWeek=?""",
+                (carrier, flight_number, org, dest, dow),
+            ).fetchone()
+            if dep_row is not None:
+                dep_display = minutes_to_12h(dep_row[0])
+        result.append({
+            'org': org, 'dest': dest, 'depDisplay': dep_display,
+            'hrs': hrs, 'y': y, 'cplus': cplus, 'onePS': ps, 'd1': d1,
+        })
     return list(reversed(result))
+
+
+def get_launcher_summary(conn):
+    """
+    Whole-day, all-routes tally for the launcher page: how many scheduled
+    flights are left to check, how many have already departed, and how
+    many have already caught a "golden ticket" reading (a real logged
+    hoursBeforeDep at or under the configurable threshold in settings) -
+    a glance-at-once view of where the day's logging stands, distinct
+    from get_next_batch's per-route walk.
+    """
+    settings = load_settings(conn)
+    threshold = settings.get('goldenTicketHours', 1.5)
+    now = eastern_now()
+    schedule_days = [now.date(), now.date() - timedelta(days=1)]
+
+    total = 0
+    departed = 0
+    golden = 0
+
+    for schedule_date in schedule_days:
+        dow = schedule_date.strftime('%a')
+        flight_date_str = schedule_date.isoformat()
+
+        sched_rows = conn.execute(
+            """SELECT carrier, flightNumber, org, dest, depTime
+               FROM flightSchedule WHERE dayOfWeek = ? AND ignore = 0""",
+            (dow,),
+        ).fetchall()
+
+        for carrier, flight_number, org, dest, dep_time in sched_rows:
+            try:
+                dep_dt = et_equivalent_datetime(conn, dep_time, org, schedule_date)
+            except UnconfirmedAirportError:
+                continue
+
+            hours_until_dep = (dep_dt - now).total_seconds() / 3600
+            total += 1
+            if hours_until_dep * 60 <= DEP_CUTOFF_MINUTES:
+                departed += 1
+                continue
+
+            best_hrs = conn.execute(
+                """SELECT MIN(hoursBeforeDep) FROM observations
+                   WHERE readingType='avail' AND carrier=? AND flightNumber=?
+                   AND org=? AND dest=? AND flightDate=?
+                   AND hoursBeforeDep IS NOT NULL""",
+                (carrier, flight_number, org, dest, flight_date_str),
+            ).fetchone()[0]
+            if best_hrs is not None and best_hrs <= threshold:
+                golden += 1
+
+    return {
+        'totalScheduled': total,
+        'departed': departed,
+        'remaining': total - departed,
+        'goldenTickets': golden,
+        'goldenTicketHours': threshold,
+    }
 
 
 def get_flight_day_flag(conn, carrier, flight_number, org, dest, flight_date):
@@ -188,7 +266,7 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
     return {'saved': True}
 
 
-def get_next_batch(conn, skip_route_keys=None):
+def get_next_batch(conn, skip_route_keys=None, include_departed=False):
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
     now = eastern_now()
@@ -200,6 +278,7 @@ def get_next_batch(conn, skip_route_keys=None):
     schedule_days = [now.date(), now.date() - timedelta(days=1)]
 
     candidates = []
+    departed_candidates = []  # only populated for rendering when include_departed - see below
     unconfirmed_codes = set()
     departed_by_route = {}  # (org, dest, flightDate) -> count - see summary_text below
     for schedule_date in schedule_days:
@@ -231,6 +310,13 @@ def get_next_batch(conn, skip_route_keys=None):
                 # so it's still counted at the only place it's real.
                 route_key = (org, dest, flight_date_str)
                 departed_by_route[route_key] = departed_by_route.get(route_key, 0) + 1
+                if include_departed:
+                    departed_candidates.append({
+                        'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
+                        'dep': dep_time, 'flightDate': flight_date_str,
+                        'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
+                        'hoursUntilDep': hours_until_dep,
+                    })
                 continue
 
             if settings['logEverything']:
@@ -280,7 +366,7 @@ def get_next_batch(conn, skip_route_keys=None):
     if next_candidate is None:
         total_departed = sum(departed_by_route.values())
         summary_text = (
-            f"{total_departed} flight{'s' if total_departed != 1 else ''} already left, not shown"
+            f"{total_departed} flight{'s' if total_departed != 1 else ''} already left"
             if total_departed > 0 else ''
         )
         future_waits = [c['minutesUntilEligible'] for c in candidates if c['minutesUntilEligible'] is not None]
@@ -318,9 +404,32 @@ def get_next_batch(conn, skip_route_keys=None):
             'hasD1': d1_map.get(str(c['aircraftConfig']).lower(), False),
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
+            'departed': False,
             'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
             'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
         })
+
+    if include_departed:
+        for c in departed_candidates:
+            if c['org'] != next_candidate['org'] or c['dest'] != next_candidate['dest'] \
+                    or c['flightDate'] != next_candidate['flightDate']:
+                continue
+            route_rows.append({
+                'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
+                'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
+                'flightNumber': c['flightNumber'], 'aircraftConfig': c['aircraftConfig'],
+                'hasD1': d1_map.get(str(c['aircraftConfig']).lower(), False),
+                'hoursUntilDep': round(c['hoursUntilDep'], 1),
+                'isNext': False,
+                'departed': True,
+                'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
+                'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
+            })
+        # Chronological, same order Delta's own site lists a route's day -
+        # departed flights (earlier dep times, by construction) end up
+        # first, active ones after, without needing a separate "departed"
+        # section of the table.
+        route_rows.sort(key=lambda r: r['dep'])
 
     route_flag = get_route_day_flag(
         conn, next_candidate['car'], next_candidate['org'], next_candidate['dest'], next_candidate['flightDate'],
@@ -329,7 +438,7 @@ def get_next_batch(conn, skip_route_keys=None):
     route_key = (next_candidate['org'], next_candidate['dest'], next_candidate['flightDate'])
     route_departed_count = departed_by_route.get(route_key, 0)
     summary_text = (
-        f"{route_departed_count} flight{'s' if route_departed_count != 1 else ''} already left, not shown"
+        f"{route_departed_count} flight{'s' if route_departed_count != 1 else ''} already left"
         if route_departed_count > 0 else ''
     )
 
@@ -443,7 +552,7 @@ def save_entry_dialog(conn, payload):
     return {'logged': len(to_write)}
 
 
-def save_and_get_next_batch(conn, payload, skip_route_keys=None):
+def save_and_get_next_batch(conn, payload, skip_route_keys=None, include_departed=False):
     save_result = save_entry_dialog(conn, payload)
-    next_result = get_next_batch(conn, skip_route_keys)
+    next_result = get_next_batch(conn, skip_route_keys, include_departed)
     return {'logged': save_result['logged'], 'next': next_result}

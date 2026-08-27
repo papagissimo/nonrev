@@ -105,11 +105,11 @@
     var aircraftOptionsRendered = false;
     var DOW_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
-    // Tracks unsaved edits so we can warn before they'd be silently lost
-    // by closing/navigating away from the tab (see beforeunload below).
-    // Deliberately NOT used to guard switching route/day within the page -
-    // he saves often while working one route/day and that's normal, not
-    // a "leaving" event.
+    // Tracks unsaved edits so we can confirm before they'd be silently
+    // lost - either by loading a different route/day (see loadSchedule)
+    // or by closing/navigating away from the tab (see beforeunload below).
+    // Save clears this BEFORE its own internal reload runs, so a normal
+    // save-then-refresh cycle never spuriously trips this guard.
     var isDirty = false;
 
     window.addEventListener('beforeunload', function (e) {
@@ -200,6 +200,9 @@
       var dest = document.getElementById('destInput').value.trim().toLowerCase();
       if (!org || !dest) {
         alert('Enter both a from and a to airport code.');
+        return;
+      }
+      if (isDirty && !confirm('You have unsaved changes for the currently loaded route/day. Discard them and load this instead?')) {
         return;
       }
       var dow = document.getElementById('dowSelect').value;

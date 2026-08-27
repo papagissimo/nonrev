@@ -54,12 +54,25 @@ def observations():
     return send_from_directory(STATIC_DIR, 'ObservationsBrowser.html')
 
 
-@app.route('/api/getNextBatch', methods=['POST'])
-def api_get_next_batch():
-    skip_route_keys = (request.get_json(silent=True) or {}).get('skipRouteKeys', [])
+@app.route('/api/getLauncherSummary', methods=['GET'])
+def api_get_launcher_summary():
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_keys))
+        return jsonify(SeatLoggingDialog.get_launcher_summary(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getNextBatch', methods=['POST'])
+def api_get_next_batch():
+    body = request.get_json(silent=True) or {}
+    skip_route_keys = body.get('skipRouteKeys', [])
+    include_departed = body.get('includeDeparted', False)
+    conn = get_conn()
+    try:
+        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_keys, include_departed))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -71,9 +84,10 @@ def api_save_and_get_next_batch():
     body = request.get_json(force=True)
     payload = body['payload']
     skip_route_keys = body.get('skipRouteKeys', [])
+    include_departed = body.get('includeDeparted', False)
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, skip_route_keys))
+        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, skip_route_keys, include_departed))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
