@@ -30,6 +30,8 @@
     #status { color: #666; font-size: 12px; }
     #saveBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
     #saveBtn:disabled { background: #a9c6f2; }
+    #copyBtn { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 8px 12px; cursor: pointer; margin-right: 6px; font-size: 12px; color: #444; }
+    #copyBtn:disabled { color: #aaa; }
     #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; display: none; }
   </style>
 </head>
@@ -93,6 +95,7 @@
   <div class="btnRow" style="display:none;" id="btnRow">
     <span id="status"></span>
     <span>
+      <button id="copyBtn" onclick="copyToOtherDays()" title="Overwrites the other 6 days with what's currently saved for this route/day">Copy to other days</button>
       <button id="saveBtn" onclick="saveSchedule()">save</button>
     </span>
   </div>
@@ -102,9 +105,11 @@
     var aircraftOptionsRendered = false;
     var DOW_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
-    // Tracks unsaved edits so we can confirm before they'd be silently
-    // lost - either by loading a different route/day (see loadSchedule)
-    // or by closing/navigating away from the tab (see beforeunload below).
+    // Tracks unsaved edits so we can warn before they'd be silently lost
+    // by closing/navigating away from the tab (see beforeunload below).
+    // Deliberately NOT used to guard switching route/day within the page -
+    // he saves often while working one route/day and that's normal, not
+    // a "leaving" event.
     var isDirty = false;
 
     window.addEventListener('beforeunload', function (e) {
@@ -195,9 +200,6 @@
       var dest = document.getElementById('destInput').value.trim().toLowerCase();
       if (!org || !dest) {
         alert('Enter both a from and a to airport code.');
-        return;
-      }
-      if (isDirty && !confirm('You have unsaved changes for the currently loaded route/day. Discard them and load this instead?')) {
         return;
       }
       var dow = document.getElementById('dowSelect').value;
@@ -341,6 +343,29 @@
       return h * 60 + m;
     }
 
+    function copyToOtherDays() {
+      if (!current || !current.org) return;
+      var btn = document.getElementById('copyBtn');
+      btn.disabled = true;
+      document.getElementById('status').textContent = 'Copying\u2026';
+      fetch('/api/copyToOtherDays', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org: current.org, dest: current.dest, sourceDow: current.dow })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          btn.disabled = false;
+          if (result.error) throw new Error(result.error);
+          document.getElementById('status').textContent =
+              'Copied to ' + result.copiedCount + ' row(s) across the other days.';
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          document.getElementById('status').textContent = 'Copy failed: ' + err.message;
+        });
+    }
+
     function saveSchedule() {
       var cars = document.querySelectorAll('input.car');
       var flts = document.querySelectorAll('input.flt');
@@ -404,26 +429,7 @@
           btn.disabled = false;
           if (result.error) throw new Error(result.error);
           document.getElementById('status').textContent = 'Saved.';
-          if (result.offerCopy) {
-            var doCopy = confirm('Copy this schedule to the other 6 days for ' +
-                result.org + '-' + result.dest + '? This replaces whatever\'s currently on those days.');
-            if (doCopy) {
-              fetch('/api/copyToOtherDays', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ org: result.org, dest: result.dest, sourceDow: result.dow })
-              })
-                .then(function (res) { return res.json(); })
-                .then(function (copyResult) {
-                  if (copyResult.error) throw new Error(copyResult.error);
-                  document.getElementById('status').textContent =
-                      'Saved. Copied to ' + copyResult.copiedCount + ' row(s) across the other days.';
-                })
-                .catch(function (err) {
-                  document.getElementById('status').textContent = 'Saved, but copy failed: ' + err.message;
-                });
-            }
-          }
+          isDirty = false;
           // Reload this route/day fresh, so confirmed icons and any
           // server-assigned bogus numbers reflect what actually got saved.
           loadSchedule();

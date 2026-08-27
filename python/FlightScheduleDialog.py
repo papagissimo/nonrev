@@ -285,15 +285,8 @@ def save_schedule_for_route_day(conn, payload):
 
     conn.commit()
 
-    remaining_rows = [e for e in payload['rows'] if not e.get('deleted')]
-
     return {
         'savedCount': len(payload['rows']),
-        # Offered on every save now, not just for a brand-new route - he's
-        # using this daily to push a corrected day's schedule out to the
-        # other 6 (see copy_to_other_days: this is a blanket overwrite of
-        # those days, not a fill-only-if-empty operation).
-        'offerCopy': len(remaining_rows) > 0,
         'org': org, 'dest': dest, 'dow': dow,
     }
 

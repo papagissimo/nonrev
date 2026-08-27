@@ -46,6 +46,7 @@
     #recentPanel { font-size: 15px; color: #888; margin-top: 10px; }
     .recentTable { border-collapse: collapse; }
     .recentTable td { text-align: left; padding: 0px 10px 0px 0; line-height: 1.15; }
+    .recentTable td.seat { padding: 0px 6px 0px 0; }
     .recentTable tr.cur td { color: #333; }
   </style>
 </head>
@@ -133,8 +134,8 @@
       var rowsHtml = toShow.map(function (r, idx) {
         var cls = idx === 0 ? 'cur' : '';
         var cells = '<td>' + r.org + '</td><td>' + r.dest + '</td><td>' + formatHours(r.hrs) + '</td>' +
-          '<td>' + fmt(r.y) + '</td><td>' + fmt(r.cplus) + '</td><td>' + fmt(r.onePS) + '</td>';
-        if (anyD1) cells += '<td>' + fmt(r.d1) + '</td>';
+          '<td class="seat">' + fmt(r.y) + '</td><td class="seat">' + fmt(r.cplus) + '</td><td class="seat">' + fmt(r.onePS) + '</td>';
+        if (anyD1) cells += '<td class="seat">' + fmt(r.d1) + '</td>';
         return '<tr class="' + cls + '">' + cells + '</tr>';
       }).join('');
       el.innerHTML = '<table class="recentTable">' + rowsHtml + '</table>';
@@ -152,12 +153,13 @@
       // reading), with Prev pushed past a small gap - his call, so the
       // "what I'm about to log" block reads as one unit. Hrs/Prev
       // columns themselves stay put - only the padding/gap around them
-      // shrank, to give the Flag column (below) more room.
+      // shrank (twice now, per his feedback), to give the Flag column
+      // (below) more room.
       cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
-      cols.push({ key: 'gap', label: '', width: 16 });
-      cols.push({ key: 'prev', label: 'Prev', width: 112 });
+      cols.push({ key: 'gap', label: '', width: 8 });
+      cols.push({ key: 'prev', label: 'Prev', width: 104 });
       cols.push({ key: 'flt', label: 'Flight', width: 70 });
-      cols.push({ key: 'flag', label: 'Flag', width: 280 });
+      cols.push({ key: 'flag', label: 'Flag', width: 296 });
       // Car dropped from view entirely (no edit affordance). Aircraft
       // stays hidden UNTIL a row is toggled into edit mode via the
       // pencil - unlike Car, it's a real editable field (see toggleEdit),
