@@ -68,6 +68,16 @@ def compute_bucket_estimate(readings, target_hours, golden_ticket_hours):
     readings: list of dicts with 'hrs' (hoursBeforeDep) and 'ttl'
     (summed seats). No ceiling exclusion - every reading is eligible.
 
+    When readings straddle the target, uses the nearest reading on
+    each side (true interpolation). When every reading is on the same
+    side of the target - the common case, since the T-45min-to-T-60min
+    window is rarely actually hit - uses the two NEAREST readings on
+    that side rather than nearest+farthest: extrapolating off the full
+    span pulled the estimate toward a stale, distant reading even
+    after the trend had since flattened (confirmed against a real bug
+    where two flat readings both summing to 5 got dragged down to 2.4
+    by a lone 8-seat reading several hours further out).
+
     Special case: exactly one reading total only counts as an estimate
     if it's within the golden-ticket threshold (his call) - otherwise a
     single distant reading implies no trend at all and isn't shown as
@@ -93,6 +103,13 @@ def compute_bucket_estimate(readings, target_hours, golden_ticket_hours):
                 best = cur
         return best
 
+    def two_nearest(lst):
+        # Two readings closest to the target, by absolute distance.
+        # Same-side list, so this sorts the same as sorting by hrs
+        # itself - naturally the two readings adjacent in time.
+        ordered = sorted(lst, key=lambda r: abs(r['hrs'] - target_hours))
+        return ordered[0], ordered[1]
+
     if before and after:
         b = nearest_of(before, True)   # smallest hrs among before-side
         a = nearest_of(after, False)   # largest hrs among after-side
@@ -103,22 +120,20 @@ def compute_bucket_estimate(readings, target_hours, golden_ticket_hours):
     if before:
         # Reaching here guarantees len(readings) >= 2 (top check above)
         # and after == [] (or we'd have taken the bracket branch), so
-        # before necessarily holds >= 2 readings - no separate single-
-        # item fallback needed here, unlike the port this replaced.
-        b2 = nearest_of(before, True)
-        far = nearest_of(before, False)
-        if far['hrs'] == b2['hrs']:
-            return b2['ttl']
-        slope = (far['ttl'] - b2['ttl']) / (far['hrs'] - b2['hrs'])
-        return b2['ttl'] + slope * (target_hours - b2['hrs'])
+        # before necessarily holds >= 2 readings - two_nearest always
+        # has something to return.
+        nearer, second = two_nearest(before)
+        if second['hrs'] == nearer['hrs']:
+            return nearer['ttl']
+        slope = (second['ttl'] - nearer['ttl']) / (second['hrs'] - nearer['hrs'])
+        return nearer['ttl'] + slope * (target_hours - nearer['hrs'])
 
     if after:
-        a2 = nearest_of(after, False)
-        far2 = nearest_of(after, True)
-        if far2['hrs'] == a2['hrs']:
-            return a2['ttl']
-        slope2 = (far2['ttl'] - a2['ttl']) / (far2['hrs'] - a2['hrs'])
-        return a2['ttl'] + slope2 * (target_hours - a2['hrs'])
+        nearer2, second2 = two_nearest(after)
+        if second2['hrs'] == nearer2['hrs']:
+            return nearer2['ttl']
+        slope2 = (second2['ttl'] - nearer2['ttl']) / (second2['hrs'] - nearer2['hrs'])
+        return nearer2['ttl'] + slope2 * (target_hours - nearer2['hrs'])
 
     return None
 
