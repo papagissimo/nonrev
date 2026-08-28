@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    .pickerRow { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px; flex-wrap: wrap; }
+    .pickerField label { display: block; font-size: 11px; color: #888; margin-bottom: 2px; }
+    .pickerField input, .pickerField select { font-size: 13px; padding: 4px; }
+    #orgInput, #destInput { width: 60px; text-transform: lowercase; text-align: center; }
+    #swapBtn { background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 14px; padding: 5px 8px; align-self: flex-end; margin-bottom: 1px; }
+    #swapBtn:hover { background: #f1f1f1; }
+    #loadBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
+    #loadBtn:disabled { background: #a9c6f2; }
+    .durationRow { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: #666; }
+    #durationInput { width: 50px; text-align: center; font-size: 12px; padding: 3px; }
+    table { border-collapse: collapse; width: 100%; table-layout: fixed; margin-top: 6px; }
+    th { text-align: left; font-size: 11px; color: #888; padding: 2px 4px; }
+    td { padding: 3px 4px; vertical-align: middle; }
+    input.car { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; text-transform: lowercase; }
+    input.dep { font-weight: bold; font-size: 14px; width: 100%; box-sizing: border-box; }
+    input.flt, input.airc { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; }
+    .status-icon { font-size: 14px; }
+    .status-icon.confirmed { color: #1a8a3d; }
+    .status-icon.unconfirmed { color: #b06000; font-weight: bold; }
+    .delBtn { cursor: pointer; color: #888; font-size: 14px; background: none; border: none; }
+    .delBtn:hover { color: #c5221f; }
+    #addBtn { margin-top: 8px; font-size: 12px; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+    .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; border-top: 1px solid #eee; padding-top: 10px; }
+    #status { color: #666; font-size: 12px; }
+    #saveBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    #saveBtn:disabled { background: #a9c6f2; }
+    #copyBtn { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 8px 12px; cursor: pointer; margin-right: 6px; font-size: 12px; color: #444; }
+    #copyBtn:disabled { color: #aaa; }
+    #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; display: none; }
+    .verdictCell { display: flex; align-items: center; gap: 4px; }
+    .verdictTypeBtn { cursor: pointer; font-size: 22px; font-weight: bold; flex: 0 0 auto; user-select: none; }
+    .verdictTypeBtn.info { color: #e0a815; }
+    .verdictTypeBtn.warning { color: #e8590c; }
+    .verdictTypeBtn.axed { color: #e6002e; }
+    .verdictTypeBtn.starred { color: #ffc700; }
+    .verdictCell input { flex: 1 1 auto; min-width: 0; }
+  </style>
+</head>
+<body>
+  <div class="pickerRow">
+    <div class="pickerField">
+      <label for="orgInput">from</label>
+      <input type="text" id="orgInput" placeholder="slc">
+    </div>
+    <button id="swapBtn" onclick="swapOrgDest()" title="swap origin/destination">&#8646;</button>
+    <div class="pickerField">
+      <label for="destInput">to</label>
+      <input type="text" id="destInput" placeholder="lax">
+    </div>
+    <div class="pickerField">
+      <label for="dowSelect">day</label>
+      <div style="display:flex; gap:2px;">
+        <button id="prevDayBtn" onclick="shiftDay(-1)" title="previous day" style="padding:4px 7px; cursor:pointer;">&#8592;</button>
+        <select id="dowSelect"></select>
+        <button id="nextDayBtn" onclick="shiftDay(1)" title="next day" style="padding:4px 7px; cursor:pointer;">&#8594;</button>
+      </div>
+    </div>
+    <button id="loadBtn" onclick="loadSchedule()">Load</button>
+  </div>
+
+  <div class="durationRow" id="durationRow" style="display:none;">
+    <span class="status-icon" id="durationIcon"></span>
+    <label for="durationInput" style="margin:0;">flight time (hhmm, route-wide)</label>
+    <input type="text" id="durationInput" placeholder="0215">
+  </div>
+
+  <div id="emptyMsg">No flights logged for this route/day yet - add one below.</div>
+
+  <table id="schedTable" style="display:none;">
+    <colgroup>
+      <col style="width:24px;">
+      <col style="width:44px;">
+      <col style="width:90px;">
+      <col style="width:100px;">
+      <col style="width:110px;">
+      <col style="width:170px;">
+      <col style="width:28px;">
+      <col style="width:28px;">
+    </colgroup>
+    <thead>
+      <tr>
+        <th></th>
+        <th>car</th>
+        <th>flight</th>
+        <th>dep time</th>
+        <th>aircraft</th>
+        <th>verdict</th>
+        <th>ignore</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <datalist id="aircraftOptions"></datalist>
+
+  <button id="addBtn" style="display:none;" onclick="addRow()">+ add flight</button>
+
+  <div class="btnRow" style="display:none;" id="btnRow">
+    <span id="status"></span>
+    <span>
+      <button id="copyBtn" onclick="copyToOtherDays()" title="Overwrites the other 6 days with what's currently saved for this route/day">Copy to other days</button>
+      <button id="saveBtn" onclick="saveSchedule()">save</button>
+    </span>
+  </div>
+
+  <script>
+    var current = null; // { org, dest, dow, rows: [...] }
+    var aircraftOptionsRendered = false;
+    var DOW_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+    // Tracks unsaved edits so we can confirm before they'd be silently
+    // lost - either by loading a different route/day (see loadSchedule)
+    // or by closing/navigating away from the tab (see beforeunload below).
+    // Save clears this BEFORE its own internal reload runs, so a normal
+    // save-then-refresh cycle never spuriously trips this guard.
+    var isDirty = false;
+
+    window.addEventListener('beforeunload', function (e) {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    });
+
+    // "Today" here is a convenience default for the day picker, not part
+    // of any cadence logic - the browser's own local day is fine for that,
+    // unlike SeatLoggingDialog's Eastern-time math for eligibility.
+    function todayDowAbbrev() {
+      return DOW_ORDER[new Date().getDay()];
+    }
+
+    function populateDowSelect() {
+      var sel = document.getElementById('dowSelect');
+      var today = todayDowAbbrev();
+      var todayIdx = DOW_ORDER.indexOf(today);
+      for (var i = 0; i < 7; i++) {
+        var day = DOW_ORDER[(todayIdx + i) % 7];
+        var opt = document.createElement('option');
+        opt.value = day;
+        opt.textContent = day + (day === today ? ' (today)' : '');
+        sel.appendChild(opt);
+      }
+    }
+    populateDowSelect();
+
+    // Delegated - the tbody element persists across renderRows() calls
+    // even though its innerHTML is replaced each time, so this only
+    // needs attaching once. Covers every editable field in the table:
+    // car/flight/dep/aircraft (input) and ignore (checkbox, via change).
+    var rowsBody = document.getElementById('rows');
+    rowsBody.addEventListener('input', function (e) {
+      if (e.target.matches('input.car, input.flt, input.dep, input.airc, input.verdict')) isDirty = true;
+    });
+    rowsBody.addEventListener('change', function (e) {
+      if (e.target.matches('input.ignore')) isDirty = true;
+    });
+    // Click-to-select-all on the dep-time field, same trick used by the
+    // seat-logging dialogue's fields: focus alone isn't enough, since the
+    // mouseup that follows a click normally re-collapses the selection
+    // to wherever the cursor landed - preventing that default is what
+    // makes a single click (not a careful double-click/drag across the
+    // hour/minute/AM-PM text) select the whole field for typing over
+    // with the existing 0615a/1815p shorthand.
+    rowsBody.addEventListener('focusin', function (e) {
+      if (e.target.matches('input.dep')) e.target.select();
+    });
+    rowsBody.addEventListener('mouseup', function (e) {
+      if (e.target.matches('input.dep')) e.preventDefault();
+    });
+    document.getElementById('durationInput').addEventListener('input', function () {
+      isDirty = true;
+    });
+
+    function swapOrgDest() {
+      var orgEl = document.getElementById('orgInput');
+      var destEl = document.getElementById('destInput');
+      var tmp = orgEl.value;
+      orgEl.value = destEl.value;
+      destEl.value = tmp;
+    }
+
+    function shiftDay(delta) {
+      var sel = document.getElementById('dowSelect');
+      sel.selectedIndex = (sel.selectedIndex + delta + sel.options.length) % sel.options.length;
+      var org = document.getElementById('orgInput').value.trim();
+      var dest = document.getElementById('destInput').value.trim();
+      if (org && dest) loadSchedule();
+    }
+
+    function renderAircraftOptions(options) {
+      if (aircraftOptionsRendered) return;
+      var dl = document.getElementById('aircraftOptions');
+      (options || []).forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt;
+        dl.appendChild(o);
+      });
+      aircraftOptionsRendered = true;
+    }
+
+    function loadSchedule() {
+      var org = document.getElementById('orgInput').value.trim().toLowerCase();
+      var dest = document.getElementById('destInput').value.trim().toLowerCase();
+      if (!org || !dest) {
+        alert('Enter both a from and a to airport code.');
+        return;
+      }
+      if (isDirty && !confirm('You have unsaved changes for the currently loaded route/day. Discard them and load this instead?')) {
+        return;
+      }
+      var dow = document.getElementById('dowSelect').value;
+      var btn = document.getElementById('loadBtn');
+      btn.disabled = true;
+      btn.textContent = 'Loading\u2026';
+      fetch('/api/getScheduleForRouteDay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org: org, dest: dest, dow: dow })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          btn.disabled = false;
+          btn.textContent = 'Load';
+          if (result.error) throw new Error(result.error);
+          current = result;
+          current.rows.forEach(function (r) { r.deleted = false; });
+          renderAircraftOptions(current.aircraftOptions);
+          renderRows();
+          renderDuration();
+          isDirty = false;
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          btn.textContent = 'Load';
+          alert('Error: ' + err.message);
+        });
+    }
+
+    function minutesToHHMM(totalMinutes) {
+      if (totalMinutes === '' || totalMinutes === null || totalMinutes === undefined) return '';
+      var h = Math.floor(totalMinutes / 60), m = totalMinutes % 60;
+      return ('0' + h).slice(-2) + ('0' + m).slice(-2);
+    }
+
+    function parseDurationHHMM(text) {
+      var raw = text.trim();
+      if (raw === '') return '';
+      var m = raw.match(/^(\d{1,3})(\d{2})$/);
+      if (!m) return null;
+      var hh = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+      if (mm > 59) return null;
+      return hh * 60 + mm;
+    }
+
+    function renderDuration() {
+      var row = document.getElementById('durationRow');
+      var icon = document.getElementById('durationIcon');
+      var input = document.getElementById('durationInput');
+      row.style.display = 'flex';
+      input.value = minutesToHHMM(current.durationMinutes);
+      icon.className = 'status-icon ' + (current.durationConfirmed ? 'confirmed' : 'unconfirmed');
+      icon.textContent = current.durationConfirmed ? '\u2713' : '?';
+      icon.title = current.durationConfirmed ? 'confirmed' : 'unconfirmed';
+    }
+
+    function renderRows() {
+      var tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+      var visibleRows = current.rows.filter(function (r) { return !r.deleted; });
+
+      visibleRows.forEach(function (row) {
+        var idx = current.rows.indexOf(row);
+        var tr = document.createElement('tr');
+        var iconClass = row.confirmed ? 'confirmed' : 'unconfirmed';
+        var iconChar = row.confirmed ? '\u2713' : '?';
+        tr.innerHTML =
+          '<td><span class="status-icon ' + iconClass + '" title="' +
+            (row.confirmed ? 'confirmed' : 'unconfirmed') + '">' + iconChar + '</span></td>' +
+          '<td><input class="car" data-i="' + idx + '" value="' + (row.carrier || 'dl') + '"></td>' +
+          '<td><input class="flt" data-i="' + idx + '" value="' + (row.flightNumber || '') + '"></td>' +
+          '<td><input class="dep" data-i="' + idx + '" value="' + (row.depDisplay || '') + '"></td>' +
+          '<td><input class="airc" list="aircraftOptions" data-i="' + idx + '" value="' + (row.aircraftConfig || '') + '"></td>' +
+          '<td><span class="verdictCell">' +
+            '<span class="verdictTypeBtn ' + (row.verdictType || 'info') + '" data-i="' + idx +
+              '" onclick="toggleVerdictType(' + idx + ')" title="click to cycle info / warning / axed / starred">' +
+              verdictGlyph(row.verdictType) + '</span>' +
+            '<input class="verdict" data-i="' + idx + '" placeholder="e.g. usually fills in the last hr" value="' +
+            (row.verdict || '').replace(/"/g, '&quot;') + '"></span></td>' +
+          '<td><input type="checkbox" class="ignore" data-i="' + idx + '" title="Never offer this flight for logging"' +
+            (row.ignore ? ' checked' : '') + '></td>' +
+          '<td><button class="delBtn" data-i="' + idx + '" onclick="deleteRow(' + idx + ')" title="delete row">\u2716</button></td>';
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('schedTable').style.display = visibleRows.length > 0 ? '' : 'none';
+      document.getElementById('emptyMsg').style.display = visibleRows.length === 0 ? 'block' : 'none';
+      document.getElementById('addBtn').style.display = '';
+      document.getElementById('btnRow').style.display = 'flex';
+      document.getElementById('status').textContent = '';
+    }
+
+    function addRow() {
+      current.rows.push({
+        scheduleRow: null,
+        carrier: 'dl',
+        flightNumber: 'bogus' + String(current.nextBogusNumber).padStart(3, '0'),
+        dep: null, depDisplay: '',
+        aircraftConfig: '',
+        verdict: '', verdictType: 'info',
+        confirmed: false,
+        ignore: false,
+        deleted: false
+      });
+      current.nextBogusNumber++;
+      isDirty = true;
+      renderRows();
+    }
+
+    function toggleVerdictType(idx) {
+      var row = current.rows[idx];
+      // Sync the verdict text field first - it's only otherwise synced
+      // at save time, so re-rendering (below) would silently drop any
+      // typed-but-unblurred text in that row's verdict input.
+      var textInput = document.querySelector('input.verdict[data-i="' + idx + '"]');
+      if (textInput) row.verdict = textInput.value.trim();
+      // Three-way cycle: info -> warning -> axed -> info. 'axed' isn't
+      // just a third color - it tells SeatLoggingDialog's cadence to
+      // never offer this flight as "next" (still shown, never picked).
+      var order = ['info', 'warning', 'axed', 'starred'];
+      var curIdx = order.indexOf(row.verdictType || 'info');
+      row.verdictType = order[(curIdx + 1) % order.length];
+      isDirty = true;
+      renderRows();
+    }
+
+    function verdictGlyph(verdictType) {
+      if (verdictType === 'warning') return '\u26a0';
+      if (verdictType === 'axed') return '\u2612';
+      if (verdictType === 'starred') return '\u2605';
+      return '\u24d8';
+    }
+
+    function deleteRow(idx) {
+      var row = current.rows[idx];
+      if (row.scheduleRow) {
+        row.deleted = true; // existing row - server needs to delete it on save
+      } else {
+        current.rows.splice(idx, 1); // never-saved row - just drop it
+      }
+      isDirty = true;
+      renderRows();
+    }
+
+    // Accepts either "h:mm am/pm" or the faster shorthand with no colon
+    // or "m" - 4 digits plus a/p, e.g. "0927a" for 9:27 am, "1815p" for
+    // 6:15 pm. Returns minutes-since-midnight (matching flightSchedule's
+    // depTime storage), not a 24h HHMM int.
+    function parseDepTime(text) {
+      var raw = text.trim().toUpperCase();
+
+      var parts = raw.match(/^(\d{1,2}):(\d{2})\s*(A|AM|P|PM)?$/);
+      if (!parts) {
+        // Bare digits, no colon, no leading zero required: "522" (3
+        // digits, defaults AM same as an unmarked colon time always has),
+        // "522p"/"522P"/"522PM" (PM), "0522" (leading zero still fine).
+        var bare = raw.match(/^(\d{3,4})\s*(A|AM|P|PM)?$/);
+        if (bare) {
+          var digits = bare[1];
+          var hh = digits.length === 3 ? digits.slice(0, 1) : digits.slice(0, 2);
+          var mm = digits.slice(-2);
+          parts = [null, hh, mm, bare[2]];
+        }
+      }
+      if (!parts) return null;
+      var h = parseInt(parts[1], 10), m = parseInt(parts[2], 10), period = parts[3];
+      if (m > 59) return null;
+      if (period && period[0] === 'P' && h !== 12) h += 12;
+      if (period && period[0] === 'A' && h === 12) h = 0;
+      if (h > 23) return null;
+      return h * 60 + m;
+    }
+
+    function copyToOtherDays() {
+      if (!current || !current.org) return;
+      var btn = document.getElementById('copyBtn');
+      btn.disabled = true;
+      document.getElementById('status').textContent = 'Copying\u2026';
+      fetch('/api/copyToOtherDays', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org: current.org, dest: current.dest, sourceDow: current.dow })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          btn.disabled = false;
+          if (result.error) throw new Error(result.error);
+          document.getElementById('status').textContent =
+              'Copied to ' + result.copiedCount + ' row(s) across the other days.';
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          document.getElementById('status').textContent = 'Copy failed: ' + err.message;
+        });
+    }
+
+    function saveSchedule() {
+      var cars = document.querySelectorAll('input.car');
+      var flts = document.querySelectorAll('input.flt');
+      var deps = document.querySelectorAll('input.dep');
+      var aircs = document.querySelectorAll('input.airc');
+
+      var badTime = null;
+      deps.forEach(function (el) {
+        if (parseDepTime(el.value) === null) badTime = el;
+      });
+      if (badTime) {
+        document.getElementById('status').textContent = 'Enter a departure time like 6:15 am or 0615a.';
+        badTime.focus();
+        return;
+      }
+
+      cars.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].carrier = el.value.trim().toLowerCase() || 'dl';
+      });
+      flts.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].flightNumber = el.value.trim();
+      });
+      deps.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].dep = parseDepTime(el.value);
+      });
+      aircs.forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].aircraftConfig = el.value.trim();
+      });
+      document.querySelectorAll('input.verdict').forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].verdict = el.value.trim();
+      });
+      // verdictType itself is kept in sync live by toggleVerdictType (no
+      // DOM input to read here - it's a click-toggle, not a text field).
+      document.querySelectorAll('input.ignore').forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].ignore = el.checked;
+      });
+
+      var durationRaw = document.getElementById('durationInput').value.trim();
+      var durationMinutes = parseDurationHHMM(durationRaw);
+      if (durationMinutes === null) {
+        document.getElementById('status').textContent = 'Enter flight time as hhmm (e.g. 0215 for 2h 15m), or leave blank.';
+        document.getElementById('durationInput').focus();
+        return;
+      }
+
+      var btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      document.getElementById('status').textContent = 'Saving\u2026';
+
+      fetch('/api/saveScheduleForRouteDay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          org: current.org, dest: current.dest, dow: current.dow,
+          rows: current.rows,
+          durationMinutes: durationMinutes
+        })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          btn.disabled = false;
+          if (result.error) throw new Error(result.error);
+          document.getElementById('status').textContent = 'Saved.';
+          isDirty = false;
+          // Reload this route/day fresh, so confirmed icons and any
+          // server-assigned bogus numbers reflect what actually got saved.
+          loadSchedule();
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          document.getElementById('status').textContent = 'Error: ' + err.message;
+        });
+    }
+  </script>
+</body>
+</html>
