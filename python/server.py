@@ -19,6 +19,7 @@ from flask import Flask, jsonify, request, send_from_directory
 import SeatLoggingDialog
 import FlightScheduleDialog
 import ObservationsBrowser
+import GraphObservations
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -52,6 +53,11 @@ def schedule():
 @app.route('/observations')
 def observations():
     return send_from_directory(STATIC_DIR, 'ObservationsBrowser.html')
+
+
+@app.route('/graph')
+def graph():
+    return send_from_directory(STATIC_DIR, 'GraphObservations.html')
 
 
 @app.route('/api/getLauncherSummary', methods=['GET'])
@@ -210,6 +216,32 @@ def api_save_route_day_flag():
     try:
         return jsonify(SeatLoggingDialog.save_route_day_flag(
             conn, body['carrier'], body['org'], body['dest'], body['flightDate'], body.get('flag', ''),
+        ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getRouteOptions', methods=['GET'])
+def api_get_route_options():
+    conn = get_conn()
+    try:
+        return jsonify({'routes': GraphObservations.get_route_options(conn)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getGraphData', methods=['POST'])
+def api_get_graph_data():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(GraphObservations.get_graph_data(
+            conn, body['org'], body['dest'], body.get('daysOfWeek'),
+            body.get('dateFrom'), body.get('dateTo'),
         ))
     except Exception as e:
         return jsonify({'error': str(e)}), 500

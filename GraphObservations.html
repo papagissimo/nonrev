@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<title>Graph Observations</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+  h1 { font-size: 18px; margin: 0 0 10px 0; }
+  a.back { color: #1a73e8; text-decoration: none; font-size: 12px; }
+  .filterBar { display: flex; align-items: center; gap: 16px; margin: 10px 0 16px 0; flex-wrap: wrap; }
+  .filterBar label { color: #444; }
+  .filterBar select, .filterBar input { font-size: 13px; padding: 3px 5px; }
+  #dowBoxes { display: flex; gap: 6px; }
+  #dowBoxes label { display: flex; align-items: center; gap: 2px; color: #444; font-size: 12px; }
+  #status { color: #666; font-size: 12px; }
+  .chartRow { display: flex; flex-direction: column; gap: 24px; }
+  .chartBlock h2 { font-size: 14px; margin: 0 0 6px 0; color: #333; }
+  .chartOpts { font-size: 12px; color: #444; margin-bottom: 6px; }
+  svg { border: 1px solid #ddd; background: #fff; }
+  .gridLine { stroke: #eee; stroke-width: 1; }
+  .axisLabel { fill: #888; font-size: 10px; }
+  .dot { stroke: #333; stroke-width: 0.5; cursor: pointer; }
+  .confBar { stroke: #999; stroke-width: 1.5; opacity: 0.55; }
+  .curve { fill: none; stroke-width: 1.3; opacity: 0.55; }
+  .curve:hover { opacity: 1; stroke-width: 2.2; }
+  #tooltip {
+    position: fixed; display: none; background: #222; color: #fff; font-size: 11px;
+    padding: 5px 8px; border-radius: 4px; pointer-events: none; z-index: 10; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<a class="back" href="/">&larr; Launcher</a>
+<h1>Graph Observations</h1>
+
+<div class="filterBar">
+  <label>Route
+    <select id="routeSelect"><option value="">Loading routes&hellip;</option></select>
+  </label>
+  <div id="dowBoxes"></div>
+  <label>From <input type="date" id="dateFrom"></label>
+  <label>To <input type="date" id="dateTo"></label>
+  <span id="status"></span>
+</div>
+
+<div class="chartRow">
+  <div class="chartBlock">
+    <h2>Heat map &mdash; color = T1 estimate</h2>
+    <div id="heatMap"></div>
+  </div>
+  <div class="chartBlock">
+    <h2>Per-date curves</h2>
+    <div class="chartOpts">
+      <label><input type="checkbox" id="showDots" checked> dots</label>
+      <label style="margin-left:10px"><input type="checkbox" id="showSpline" checked> spline</label>
+      <label style="margin-left:10px"><input type="checkbox" id="showConf" checked> confidence bars</label>
+    </div>
+    <div id="curveChart"></div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+var DOW_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+var W = 900, H = 320, MARGIN = { top: 10, right: 20, bottom: 30, left: 46 };
+var currentData = null;
+
+function minutesTo12h(m) {
+  var h = Math.floor(m / 60), mm = Math.round(m % 60);
+  var period = h >= 12 ? 'pm' : 'am';
+  var h12 = h % 12; if (h12 === 0) h12 = 12;
+  return h12 + ':' + (mm < 10 ? '0' : '') + mm + ' ' + period;
+}
+
+// Continuous red(<=2) -> yellow -> green(>=8) gradient, off the existing
+// full/open classification thresholds - no bucketing, a straight blend.
+function t1Color(t1) {
+  var lo = 2, hi = 8;
+  var frac = (t1 - lo) / (hi - lo);
+  frac = Math.max(0, Math.min(1, frac));
+  var r, g;
+  if (frac < 0.5) {
+    r = 214;
+    g = Math.round(60 + (214 - 60) * (frac / 0.5));
+  } else {
+    r = Math.round(214 - (214 - 30) * ((frac - 0.5) / 0.5));
+    g = 214;
+  }
+  return 'rgb(' + r + ',' + g + ',60)';
+}
+
+function svgEl(tag, attrs) {
+  var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (var k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+function showTip(evt, html) {
+  var tip = document.getElementById('tooltip');
+  tip.innerHTML = html;
+  tip.style.left = (evt.clientX + 12) + 'px';
+  tip.style.top = (evt.clientY + 12) + 'px';
+  tip.style.display = 'block';
+}
+function hideTip() { document.getElementById('tooltip').style.display = 'none'; }
+
+function xScale(depMinutes) {
+  var innerW = W - MARGIN.left - MARGIN.right;
+  return MARGIN.left + (depMinutes / 1440) * innerW;
+}
+
+function buildAxes(svg, yLabelFn, yTickCount, yScale) {
+  var innerW = W - MARGIN.left - MARGIN.right;
+  var innerH = H - MARGIN.top - MARGIN.bottom;
+  // x gridlines every 3 hours
+  for (var hr = 0; hr <= 24; hr += 3) {
+    var x = xScale(hr * 60);
+    svg.appendChild(svgEl('line', { class: 'gridLine', x1: x, x2: x, y1: MARGIN.top, y2: H - MARGIN.bottom }));
+    var lbl = svgEl('text', { class: 'axisLabel', x: x, y: H - MARGIN.bottom + 14, 'text-anchor': 'middle' });
+    lbl.textContent = (hr === 0 ? '12a' : hr === 12 ? '12p' : hr < 12 ? hr + 'a' : (hr - 12) + 'p');
+    svg.appendChild(lbl);
+  }
+  if (yScale) {
+    for (var i = 0; i <= yTickCount; i++) {
+      var frac = i / yTickCount;
+      var y = MARGIN.top + innerH - frac * innerH;
+      svg.appendChild(svgEl('line', { class: 'gridLine', x1: MARGIN.left, x2: W - MARGIN.right, y1: y, y2: y }));
+      var ylbl = svgEl('text', { class: 'axisLabel', x: MARGIN.left - 6, y: y + 3, 'text-anchor': 'end' });
+      ylbl.textContent = yLabelFn(frac);
+      svg.appendChild(ylbl);
+    }
+  }
+}
+
+function renderHeatMap(data) {
+  var container = document.getElementById('heatMap');
+  container.innerHTML = '';
+  var dates = data.dates;
+  if (!dates.length) { container.textContent = 'No observations match these filters.'; return; }
+
+  var rowH = Math.max(14, Math.min(28, Math.floor((H - MARGIN.top - MARGIN.bottom) / dates.length)));
+  var chartH = MARGIN.top + MARGIN.bottom + rowH * dates.length;
+  var svg = svgEl('svg', { width: W, height: chartH, viewBox: '0 0 ' + W + ' ' + chartH });
+
+  for (var hr = 0; hr <= 24; hr += 3) {
+    var x = xScale(hr * 60);
+    svg.appendChild(svgEl('line', { class: 'gridLine', x1: x, x2: x, y1: MARGIN.top, y2: chartH - MARGIN.bottom }));
+    var lbl = svgEl('text', { class: 'axisLabel', x: x, y: chartH - MARGIN.bottom + 14, 'text-anchor': 'middle' });
+    lbl.textContent = (hr === 0 ? '12a' : hr === 12 ? '12p' : hr < 12 ? hr + 'a' : (hr - 12) + 'p');
+    svg.appendChild(lbl);
+  }
+
+  var dateIndex = {};
+  dates.forEach(function (d, i) { dateIndex[d] = i; });
+
+  dates.forEach(function (d, i) {
+    var y = MARGIN.top + i * rowH + rowH / 2;
+    var lbl = svgEl('text', { class: 'axisLabel', x: MARGIN.left - 6, y: y + 3, 'text-anchor': 'end' });
+    lbl.textContent = d;
+    svg.appendChild(lbl);
+  });
+
+  data.points.forEach(function (p) {
+    var cx = xScale(p.depTimeMinutes);
+    var cy = MARGIN.top + dateIndex[p.flightDate] * rowH + rowH / 2;
+    var r = Math.max(3, Math.min(rowH / 2 - 1, 4 + p.numReadings));
+    var dot = svgEl('circle', {
+      class: 'dot', cx: cx, cy: cy, r: r, fill: t1Color(p.t1Estimate),
+    });
+    dot.addEventListener('mousemove', function (evt) {
+      showTip(evt, p.flightDate + ' (' + p.dow + ')<br>' + minutesTo12h(p.depTimeMinutes) +
+        ' &middot; T1 est ' + p.t1Estimate + ' &middot; ' + p.numReadings + ' reading' + (p.numReadings === 1 ? '' : 's'));
+    });
+    dot.addEventListener('mouseleave', hideTip);
+    svg.appendChild(dot);
+  });
+
+  container.appendChild(svg);
+}
+
+function catmullRomPath(pts) {
+  if (pts.length < 2) return pts.length === 1 ? ('M ' + pts[0][0] + ' ' + pts[0][1]) : '';
+  var d = 'M ' + pts[0][0] + ' ' + pts[0][1];
+  for (var i = 0; i < pts.length - 1; i++) {
+    var p0 = pts[i - 1] || pts[i];
+    var p1 = pts[i];
+    var p2 = pts[i + 1];
+    var p3 = pts[i + 2] || p2;
+    var c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    var c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    var c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    var c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ' C ' + c1x + ' ' + c1y + ' ' + c2x + ' ' + c2y + ' ' + p2[0] + ' ' + p2[1];
+  }
+  return d;
+}
+
+function renderCurveChart(data) {
+  var container = document.getElementById('curveChart');
+  container.innerHTML = '';
+  if (!data.points.length) { container.textContent = 'No observations match these filters.'; return; }
+
+  var showDots = document.getElementById('showDots').checked;
+  var showSpline = document.getElementById('showSpline').checked;
+  var showConf = document.getElementById('showConf').checked;
+
+  var maxT1 = 0;
+  data.points.forEach(function (p) { maxT1 = Math.max(maxT1, p.t1Estimate + p.confidenceHalfRange); });
+  maxT1 = Math.max(maxT1, 8);
+  var yMax = Math.ceil(maxT1 / 2) * 2;
+
+  var innerH = H - MARGIN.top - MARGIN.bottom;
+  function yScale(t1) { return MARGIN.top + innerH - (t1 / yMax) * innerH; }
+
+  var svg = svgEl('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H });
+  buildAxes(svg, function (frac) { return Math.round(frac * yMax); }, 4, true);
+
+  var byDate = {};
+  data.points.forEach(function (p) {
+    (byDate[p.flightDate] = byDate[p.flightDate] || []).push(p);
+  });
+  var dateList = Object.keys(byDate).sort();
+  var palette = ['#1a73e8', '#c5221f', '#188038', '#e37400', '#8430ce', '#12805c', '#a52714', '#5f6368'];
+
+  dateList.forEach(function (d, di) {
+    var pts = byDate[d].slice().sort(function (a, b) { return a.depTimeMinutes - b.depTimeMinutes; });
+    var color = palette[di % palette.length];
+    var coords = pts.map(function (p) { return [xScale(p.depTimeMinutes), yScale(p.t1Estimate)]; });
+
+    if (showConf) {
+      pts.forEach(function (p, i) {
+        var x = coords[i][0];
+        var yTop = yScale(p.t1Estimate + p.confidenceHalfRange);
+        var yBot = yScale(Math.max(0, p.t1Estimate - p.confidenceHalfRange));
+        svg.appendChild(svgEl('line', {
+          class: 'confBar', x1: x, x2: x, y1: yTop, y2: yBot, stroke: color,
+        }));
+      });
+    }
+
+    if (showSpline && coords.length >= 2) {
+      var path = svgEl('path', { class: 'curve', d: catmullRomPath(coords), stroke: color });
+      var titleEl = svgEl('title', {});
+      titleEl.textContent = d;
+      path.appendChild(titleEl);
+      svg.appendChild(path);
+    }
+
+    if (showDots) {
+      pts.forEach(function (p, i) {
+        var dot = svgEl('circle', {
+          class: 'dot', cx: coords[i][0], cy: coords[i][1],
+          r: showSpline ? 2.5 : 4, fill: color,
+          opacity: showSpline ? 0.55 : 0.9,
+        });
+        dot.addEventListener('mousemove', function (evt) {
+          showTip(evt, p.flightDate + ' (' + p.dow + ')<br>' + minutesTo12h(p.depTimeMinutes) +
+            ' &middot; T1 est ' + p.t1Estimate + ' &plusmn; ' + p.confidenceHalfRange.toFixed(1) +
+            ' &middot; ' + p.numReadings + ' reading' + (p.numReadings === 1 ? '' : 's'));
+        });
+        dot.addEventListener('mouseleave', hideTip);
+        svg.appendChild(dot);
+      });
+    }
+  });
+
+  container.appendChild(svg);
+}
+
+function render() {
+  if (!currentData) return;
+  renderHeatMap(currentData);
+  renderCurveChart(currentData);
+}
+
+function loadGraph() {
+  var sel = document.getElementById('routeSelect');
+  if (!sel.value) return;
+  var parts = sel.value.split('|');
+  var dow = Array.prototype.slice.call(document.querySelectorAll('#dowBoxes input:checked'))
+    .map(function (cb) { return cb.value; });
+  var status = document.getElementById('status');
+  status.textContent = 'Loading\u2026';
+  fetch('/api/getGraphData', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      org: parts[0], dest: parts[1], daysOfWeek: dow,
+      dateFrom: document.getElementById('dateFrom').value || null,
+      dateTo: document.getElementById('dateTo').value || null,
+    }),
+  })
+    .then(function (res) { return res.json(); })
+    .then(function (r) {
+      if (r.error) { status.textContent = r.error; return; }
+      currentData = r;
+      status.textContent = r.points.length + ' flight-instance' + (r.points.length === 1 ? '' : 's') +
+        ' across ' + r.dates.length + ' date' + (r.dates.length === 1 ? '' : 's');
+      render();
+    })
+    .catch(function () { status.textContent = 'Failed to load.'; });
+}
+
+DOW_ORDER.forEach(function (d) {
+  var label = document.createElement('label');
+  var cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.value = d; cb.checked = true;
+  cb.addEventListener('change', loadGraph);
+  label.appendChild(cb);
+  label.appendChild(document.createTextNode(d));
+  document.getElementById('dowBoxes').appendChild(label);
+});
+
+document.getElementById('routeSelect').addEventListener('change', loadGraph);
+document.getElementById('dateFrom').addEventListener('change', loadGraph);
+document.getElementById('dateTo').addEventListener('change', loadGraph);
+['showDots', 'showSpline', 'showConf'].forEach(function (id) {
+  document.getElementById(id).addEventListener('change', render);
+});
+
+fetch('/api/getRouteOptions')
+  .then(function (res) { return res.json(); })
+  .then(function (r) {
+    var sel = document.getElementById('routeSelect');
+    sel.innerHTML = '';
+    if (!r.routes || !r.routes.length) {
+      sel.innerHTML = '<option value="">No routes with observations yet</option>';
+      return;
+    }
+    r.routes.forEach(function (rt) {
+      var opt = document.createElement('option');
+      opt.value = rt.org + '|' + rt.dest;
+      opt.textContent = rt.org + ' \u2192 ' + rt.dest;
+      sel.appendChild(opt);
+    });
+    loadGraph();
+  })
+  .catch(function () {
+    document.getElementById('routeSelect').innerHTML = '<option value="">Failed to load routes</option>';
+  });
+</script>
+</body>
+</html>
