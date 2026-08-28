@@ -321,6 +321,9 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 continue
 
             if settings['logEverything']:
+                # "Everything" means everything - axed flights included.
+                # This is the one override that punches through axed's
+                # normal cadence suppression (below).
                 eligible_now, minutes_until_eligible = True, 0
             else:
                 todays_hrs = [
@@ -334,6 +337,18 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 eligible_now, minutes_until_eligible = evaluate_eligibility(
                     hours_until_dep, todays_hrs, settings['tiers']
                 )
+
+                # 'axed' is a settled judgment call ("full too often to
+                # bother checking"), suppressed from normal cadence
+                # selection - but logEverything (above) overrides it, same
+                # as it overrides ordinary cadence timing. Deliberately NOT
+                # filtered out of sched_rows the way `ignore` is: an axed
+                # flight still needs to appear in route_rows below (same
+                # route, still shown) so a day's schedule never looks like
+                # it's silently missing a flight - only its eligibility for
+                # being picked as "next" is suppressed here.
+                if verdict_type == 'axed':
+                    eligible_now, minutes_until_eligible = False, None
 
             candidates.append({
                 'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,

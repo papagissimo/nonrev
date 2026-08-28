@@ -27,6 +27,7 @@
     .verdictNote { cursor: help; }
     .verdictNote.info { color: #b8860b; }
     .verdictNote.warning { color: #c0392b; }
+    .verdictNote.axed { color: #b00020; }
     .pencil { cursor: pointer; color: #888; font-size: 16px; }
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; }
@@ -514,9 +515,9 @@
           gap: '',
           flt:
             '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber +
-            (row.verdict ? '<span class="verdictNote ' + (row.verdictType === 'warning' ? 'warning' : 'info') +
+            (row.verdict ? '<span class="verdictNote ' + (row.verdictType || 'info') +
               '" title="' + row.verdict.replace(/"/g, '&quot;') + '">\u00a0' +
-              (row.verdictType === 'warning' ? '\u26a0' : '\u24d8') + '</span>' : '') +
+              (row.verdictType === 'warning' ? '\u26a0' : row.verdictType === 'axed' ? '\u2612' : '\u24d8') + '</span>' : '') +
             '</span>' +
             '<input class="fltEdit" data-i="' + i + '" id="fltEdit' + i + '" value="' + row.flightNumber + '">',
           flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +

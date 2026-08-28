@@ -37,6 +37,7 @@
     .verdictTypeBtn { cursor: pointer; font-size: 16px; flex: 0 0 auto; user-select: none; }
     .verdictTypeBtn.info { color: #b8860b; }
     .verdictTypeBtn.warning { color: #c0392b; }
+    .verdictTypeBtn.axed { color: #b00020; }
     .verdictCell input { flex: 1 1 auto; min-width: 0; }
   </style>
 </head>
@@ -286,9 +287,9 @@
           '<td><input class="dep" data-i="' + idx + '" value="' + (row.depDisplay || '') + '"></td>' +
           '<td><input class="airc" list="aircraftOptions" data-i="' + idx + '" value="' + (row.aircraftConfig || '') + '"></td>' +
           '<td><span class="verdictCell">' +
-            '<span class="verdictTypeBtn ' + (row.verdictType === 'warning' ? 'warning' : 'info') + '" data-i="' + idx +
-              '" onclick="toggleVerdictType(' + idx + ')" title="click to switch info/warning icon">' +
-              (row.verdictType === 'warning' ? '\u26a0' : '\u24d8') + '</span>' +
+            '<span class="verdictTypeBtn ' + (row.verdictType || 'info') + '" data-i="' + idx +
+              '" onclick="toggleVerdictType(' + idx + ')" title="click to cycle info / warning / axed">' +
+              verdictGlyph(row.verdictType) + '</span>' +
             '<input class="verdict" data-i="' + idx + '" placeholder="e.g. usually fills in the last hr" value="' +
             (row.verdict || '').replace(/"/g, '&quot;') + '"></span></td>' +
           '<td><input type="checkbox" class="ignore" data-i="' + idx + '" title="Never offer this flight for logging"' +
@@ -328,9 +329,20 @@
       // typed-but-unblurred text in that row's verdict input.
       var textInput = document.querySelector('input.verdict[data-i="' + idx + '"]');
       if (textInput) row.verdict = textInput.value.trim();
-      row.verdictType = (row.verdictType === 'warning') ? 'info' : 'warning';
+      // Three-way cycle: info -> warning -> axed -> info. 'axed' isn't
+      // just a third color - it tells SeatLoggingDialog's cadence to
+      // never offer this flight as "next" (still shown, never picked).
+      var order = ['info', 'warning', 'axed'];
+      var curIdx = order.indexOf(row.verdictType || 'info');
+      row.verdictType = order[(curIdx + 1) % order.length];
       isDirty = true;
       renderRows();
+    }
+
+    function verdictGlyph(verdictType) {
+      if (verdictType === 'warning') return '\u26a0';
+      if (verdictType === 'axed') return '\u2612';
+      return '\u24d8';
     }
 
     function deleteRow(idx) {
