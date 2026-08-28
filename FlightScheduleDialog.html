@@ -33,6 +33,11 @@
     #copyBtn { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 8px 12px; cursor: pointer; margin-right: 6px; font-size: 12px; color: #444; }
     #copyBtn:disabled { color: #aaa; }
     #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; display: none; }
+    .verdictCell { display: flex; align-items: center; gap: 4px; }
+    .verdictTypeBtn { cursor: pointer; font-size: 16px; flex: 0 0 auto; user-select: none; }
+    .verdictTypeBtn.info { color: #b8860b; }
+    .verdictTypeBtn.warning { color: #c0392b; }
+    .verdictCell input { flex: 1 1 auto; min-width: 0; }
   </style>
 </head>
 <body>
@@ -71,7 +76,9 @@
       <col style="width:44px;">
       <col style="width:90px;">
       <col style="width:100px;">
-      <col>
+      <col style="width:110px;">
+      <col style="width:170px;">
+      <col style="width:28px;">
       <col style="width:28px;">
     </colgroup>
     <thead>
@@ -81,6 +88,7 @@
         <th>flight</th>
         <th>dep time</th>
         <th>aircraft</th>
+        <th>verdict</th>
         <th>ignore</th>
         <th></th>
       </tr>
@@ -146,7 +154,7 @@
     // car/flight/dep/aircraft (input) and ignore (checkbox, via change).
     var rowsBody = document.getElementById('rows');
     rowsBody.addEventListener('input', function (e) {
-      if (e.target.matches('input.car, input.flt, input.dep, input.airc')) isDirty = true;
+      if (e.target.matches('input.car, input.flt, input.dep, input.airc, input.verdict')) isDirty = true;
     });
     rowsBody.addEventListener('change', function (e) {
       if (e.target.matches('input.ignore')) isDirty = true;
@@ -277,6 +285,12 @@
           '<td><input class="flt" data-i="' + idx + '" value="' + (row.flightNumber || '') + '"></td>' +
           '<td><input class="dep" data-i="' + idx + '" value="' + (row.depDisplay || '') + '"></td>' +
           '<td><input class="airc" list="aircraftOptions" data-i="' + idx + '" value="' + (row.aircraftConfig || '') + '"></td>' +
+          '<td><span class="verdictCell">' +
+            '<span class="verdictTypeBtn ' + (row.verdictType === 'warning' ? 'warning' : 'info') + '" data-i="' + idx +
+              '" onclick="toggleVerdictType(' + idx + ')" title="click to switch info/warning icon">' +
+              (row.verdictType === 'warning' ? '\u26a0' : '\u24d8') + '</span>' +
+            '<input class="verdict" data-i="' + idx + '" placeholder="e.g. usually fills in the last hr" value="' +
+            (row.verdict || '').replace(/"/g, '&quot;') + '"></span></td>' +
           '<td><input type="checkbox" class="ignore" data-i="' + idx + '" title="Never offer this flight for logging"' +
             (row.ignore ? ' checked' : '') + '></td>' +
           '<td><button class="delBtn" data-i="' + idx + '" onclick="deleteRow(' + idx + ')" title="delete row">\u2716</button></td>';
@@ -297,11 +311,24 @@
         flightNumber: 'bogus' + String(current.nextBogusNumber).padStart(3, '0'),
         dep: null, depDisplay: '',
         aircraftConfig: '',
+        verdict: '', verdictType: 'info',
         confirmed: false,
         ignore: false,
         deleted: false
       });
       current.nextBogusNumber++;
+      isDirty = true;
+      renderRows();
+    }
+
+    function toggleVerdictType(idx) {
+      var row = current.rows[idx];
+      // Sync the verdict text field first - it's only otherwise synced
+      // at save time, so re-rendering (below) would silently drop any
+      // typed-but-unblurred text in that row's verdict input.
+      var textInput = document.querySelector('input.verdict[data-i="' + idx + '"]');
+      if (textInput) row.verdict = textInput.value.trim();
+      row.verdictType = (row.verdictType === 'warning') ? 'info' : 'warning';
       isDirty = true;
       renderRows();
     }
@@ -401,6 +428,12 @@
         var i = parseInt(el.getAttribute('data-i'), 10);
         current.rows[i].aircraftConfig = el.value.trim();
       });
+      document.querySelectorAll('input.verdict').forEach(function (el) {
+        var i = parseInt(el.getAttribute('data-i'), 10);
+        current.rows[i].verdict = el.value.trim();
+      });
+      // verdictType itself is kept in sync live by toggleVerdictType (no
+      // DOM input to read here - it's a click-toggle, not a text field).
       document.querySelectorAll('input.ignore').forEach(function (el) {
         var i = parseInt(el.getAttribute('data-i'), 10);
         current.rows[i].ignore = el.checked;

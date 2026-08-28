@@ -24,6 +24,9 @@
     input.timeEdit, input.aircEdit, input.fltEdit { font-size: 14px; display: none; width: 100%; box-sizing: border-box; }
     label.ignoreEdit { font-size: 12px; color: #666; display: none; white-space: nowrap; }
     .flt { font-size: 14px; color: #666; }
+    .verdictNote { cursor: help; }
+    .verdictNote.info { color: #b8860b; }
+    .verdictNote.warning { color: #c0392b; }
     .pencil { cursor: pointer; color: #888; font-size: 16px; }
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; }
@@ -510,7 +513,11 @@
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
           flt:
-            '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber + '</span>' +
+            '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber +
+            (row.verdict ? '<span class="verdictNote ' + (row.verdictType === 'warning' ? 'warning' : 'info') +
+              '" title="' + row.verdict.replace(/"/g, '&quot;') + '">\u00a0' +
+              (row.verdictType === 'warning' ? '\u26a0' : '\u24d8') + '</span>' : '') +
+            '</span>' +
             '<input class="fltEdit" data-i="' + i + '" id="fltEdit' + i + '" value="' + row.flightNumber + '">',
           flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +
             '" value="' + (row.flag || '').replace(/"/g, '&quot;') + '" placeholder="\u2014"></span>',
