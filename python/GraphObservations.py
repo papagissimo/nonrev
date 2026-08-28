@@ -15,18 +15,33 @@ this Wednesday" - each date's points stand on their own, placed by real
 clock time, which is exactly what sidesteps that whole problem for this
 graph (see project notes on the route-level view's design).
 
-T1 estimate math (computeBucketEstimate_ target T-61min) is a direct port
-of the old Apps Script version in Code.js - same interpolation/
-extrapolation rules, same "ceiling" (any of y/cPlus/firstOrPS == 9) handling,
-just computed here on the fly per flight-instance rather than stored.
+T1 estimate math (compute_bucket_estimate, target T-60min) started as a
+port of the old Apps Script computeBucketEstimate_, then was revised with
+him directly: dropped the T-61min oddity in favor of a clean T-60min, and
+dropped "ceiling" (a displayed 9) exclusion entirely - the two readings
+actually used are always the ones nearest the target, and a reading that
+close to departure is very unlikely to still be sitting at a real ceiling.
+Same bracket-nearest-target selection logic as the log dialogue's own JS
+version (SeatLoggingDialog.html's computeT1EstimateForPool) - kept in
+lockstep by hand since there's no shared module between Python and the
+browser here. Computed here on the fly per flight-instance rather than
+stored.
 """
 
 from collections import defaultdict
 from datetime import datetime
 
 from ObservationsBrowser import dep_time_minutes
+from settings import load_settings
 
-T1_TARGET_HOURS = 61 / 60
+# Locked design (agreed with him directly, not just a port default anymore):
+# T-60min exactly - the old T-61min was a leftover distinction from an
+# earlier conversation and never mattered on its own merits. No more
+# "ceiling" (a displayed 9) exclusion either - the two readings actually
+# used are always the ones closest to the target, and a reading that
+# close to departure is very unlikely to still be sitting at a real
+# ceiling, so the extra complexity wasn't earning its keep.
+T1_TARGET_HOURS = 1.0
 
 # Wild-ass-guess starting constant for the confidence bar's half-height, in
 # T1-estimate units (seats) per hour of gap between the nearest real reading
@@ -43,19 +58,29 @@ def _dow_abbrev(flight_date_str):
     return DOW_ABBREV[d.weekday()]
 
 
-def compute_bucket_estimate(readings, target_hours):
+def compute_bucket_estimate(readings, target_hours, golden_ticket_hours):
     """
-    Direct port of computeBucketEstimate_ (Code.js). readings: list of
-    dicts with 'hrs' (hoursBeforeDep), 'ttl' (summed seats), 'ceiling'
-    (bool). Returns a float, or None if there's nothing eligible at all.
+    Bracket-nearest-to-target estimate, shared logic with the log
+    dialogue's JS version (see SeatLoggingDialog.html's
+    computeT1EstimateForPool - keep the two in lockstep by hand, since
+    there's no shared module between Python and the browser here).
+
+    readings: list of dicts with 'hrs' (hoursBeforeDep) and 'ttl'
+    (summed seats). No ceiling exclusion - every reading is eligible.
+
+    Special case: exactly one reading total only counts as an estimate
+    if it's within the golden-ticket threshold (his call) - otherwise a
+    single distant reading implies no trend at all and isn't shown as
+    one. Returns None (no estimate) or a float.
     """
-    precise = [r for r in readings if not r['ceiling']]
-    eligible = precise if len(precise) >= 2 else readings
-    if not eligible:
+    if not readings:
         return None
 
-    before = [r for r in eligible if r['hrs'] >= target_hours]
-    after = [r for r in eligible if r['hrs'] <= target_hours]
+    if len(readings) == 1:
+        return readings[0]['ttl'] if readings[0]['hrs'] <= golden_ticket_hours else None
+
+    before = [r for r in readings if r['hrs'] >= target_hours]
+    after = [r for r in readings if r['hrs'] <= target_hours]
 
     def nearest_of(lst, want_min):
         best = None
@@ -76,24 +101,24 @@ def compute_bucket_estimate(readings, target_hours):
         return b['ttl'] + (a['ttl'] - b['ttl']) * (b['hrs'] - target_hours) / (b['hrs'] - a['hrs'])
 
     if before:
+        # Reaching here guarantees len(readings) >= 2 (top check above)
+        # and after == [] (or we'd have taken the bracket branch), so
+        # before necessarily holds >= 2 readings - no separate single-
+        # item fallback needed here, unlike the port this replaced.
         b2 = nearest_of(before, True)
-        if len(before) >= 2:
-            far = nearest_of(before, False)
-            if far['hrs'] == b2['hrs']:
-                return b2['ttl']
-            slope = (far['ttl'] - b2['ttl']) / (far['hrs'] - b2['hrs'])
-            return b2['ttl'] + slope * (target_hours - b2['hrs'])
-        return b2['ttl']
+        far = nearest_of(before, False)
+        if far['hrs'] == b2['hrs']:
+            return b2['ttl']
+        slope = (far['ttl'] - b2['ttl']) / (far['hrs'] - b2['hrs'])
+        return b2['ttl'] + slope * (target_hours - b2['hrs'])
 
     if after:
         a2 = nearest_of(after, False)
-        if len(after) >= 2:
-            far2 = nearest_of(after, True)
-            if far2['hrs'] == a2['hrs']:
-                return a2['ttl']
-            slope2 = (far2['ttl'] - a2['ttl']) / (far2['hrs'] - a2['hrs'])
-            return a2['ttl'] + slope2 * (target_hours - a2['hrs'])
-        return a2['ttl']
+        far2 = nearest_of(after, True)
+        if far2['hrs'] == a2['hrs']:
+            return a2['ttl']
+        slope2 = (far2['ttl'] - a2['ttl']) / (far2['hrs'] - a2['hrs'])
+        return a2['ttl'] + slope2 * (target_hours - a2['hrs'])
 
     return None
 
@@ -117,6 +142,8 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
     every reading in the group has a malformed hoursBeforeDep) are
     dropped - nothing to place them on the x-axis with.
     """
+    golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
+
     where = ["org = ?", "dest = ?"]
     params = [org, dest]
     if date_from:
@@ -173,15 +200,14 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
                                       as_int(obs['firstOrPS']), as_int(obs['d1']))
             parts = [y_i, cp_i, fp_i, d1_i]
             ttl = sum(p for p in parts if p is not None)
-            ceiling = any(p == 9 for p in (y_i, cp_i, fp_i))
-            readings.append({'hrs': hrs, 'ttl': ttl, 'ceiling': ceiling})
+            readings.append({'hrs': hrs, 'ttl': ttl})
             if dep_minutes is None:
                 dep_minutes = dep_time_minutes(conn, org, obs['checkTimestamp'], obs['hrs'])
 
         if not readings or dep_minutes is None:
             continue
 
-        t1_estimate = compute_bucket_estimate(readings, T1_TARGET_HOURS)
+        t1_estimate = compute_bucket_estimate(readings, T1_TARGET_HOURS, golden_ticket_hours)
         if t1_estimate is None:
             continue
 

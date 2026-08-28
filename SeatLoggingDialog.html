@@ -29,10 +29,7 @@
     .prev .row { white-space: nowrap; }
     .prevHrsInline { display: inline-block; width: 38px; color: #666; }
     .prevHrsInline.mostRecent { color: #c5221f; }
-    .t1est { font-style: italic; }
-    .t1est.high { color: #1a7a3c; }
-    .t1est.medium { color: #999; }
-    .t1est.low { color: #ccc; }
+    .t1cell { font-style: italic; color: #555; }
     td.col-flt { padding-right: 2px; }
     td.col-flag { padding-left: 2px; }
     .flagCell input { font-size: 15px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 5px 7px; }
@@ -181,8 +178,14 @@
       cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
       cols.push({ key: 'gap', label: '', width: 8 });
       cols.push({ key: 'prev', label: 'Prev', width: 104 });
-      cols.push({ key: 'flt', label: 'Flight', width: 70 });
-      cols.push({ key: 'flag', label: 'Flag', width: 296 });
+      // Real column now, not text crammed inline onto the Prev column's
+      // top line (which was blowing the whole table out sideways - a
+      // fixed-width nowrap cell forced to hold far more text than it
+      // had room for doesn't wrap, it just overflows the table). Narrow
+      // on purpose - a short number, nothing else lives here.
+      cols.push({ key: 't1', label: 'T\u20111', width: 50 });
+      cols.push({ key: 'flt', label: 'Flight', width: 56 });
+      cols.push({ key: 'flag', label: 'Flag', width: 230 });
       // Car dropped from view entirely (no edit affordance). Aircraft
       // stays hidden UNTIL a row is toggled into edit mode via the
       // pencil - unlike Car, it's a real editable field (see toggleEdit),
@@ -193,50 +196,76 @@
       return cols;
     }
 
-    function computeT1Estimate(readings) {
-      // Locked design: fewer than 2 readings -> no estimate at all (a
-      // single point implies no trend, near or far). 2+ readings -> take
-      // only the two most recent (readings[0] and [1], since the array's
-      // already sorted most-recent-first) and draw the line through
-      // exactly those two, evaluated at 1.0h before departure. Every
-      // older reading today is deliberately excluded - his call, since
-      // overnight/far-out readings don't share whatever process governs
-      // the close-in numbers, and folding them in just adds noise rather
-      // than signal. This is the one and only estimate; no second method
-      // shown alongside it.
-      if (!readings || readings.length < 2) return null;
-      function seatSum(rd) {
-        return ['y', 'cplus', 'onePS', 'd1'].reduce(function (acc, f) {
-          var v = rd[f];
-          return acc + ((v === '' || v === null || v === undefined) ? 0 : Number(v));
-        }, 0);
+    var T1_TARGET_HOURS = 1.0;
+
+    function t1SeatSum(rd) {
+      return ['y', 'cplus', 'onePS', 'd1'].reduce(function (acc, f) {
+        var v = rd[f];
+        return acc + ((v === '' || v === null || v === undefined) ? 0 : Number(v));
+      }, 0);
+    }
+
+    function t1NearestOf(list, wantMin) {
+      var best = null;
+      list.forEach(function (cur) {
+        if (best === null) { best = cur; return; }
+        if (wantMin && cur.hrs < best.hrs) best = cur;
+        else if (!wantMin && cur.hrs > best.hrs) best = cur;
+      });
+      return best;
+    }
+
+    function computeT1EstimateForPool(readings, goldenTicketHours) {
+      // Shared logic with GraphObservations.py's compute_bucket_estimate -
+      // the two are kept in lockstep by hand, no shared module between
+      // Python and the browser. Bracket the two readings nearest T-60min
+      // (one on each side, when available) rather than simply "the two
+      // most recent" - a real interpolation is preferred over discarding
+      // an available bracket just because a more recent same-side
+      // reading exists. Exactly one reading total only counts as an
+      // estimate if it's within the golden-ticket range - his call, a
+      // single close-in reading is trustworthy on its own, a single
+      // distant one implies no trend at all.
+      if (!readings || readings.length === 0) return null;
+
+      if (readings.length === 1) {
+        return (readings[0].hrs <= goldenTicketHours) ? t1SeatSum(readings[0]) : null;
       }
-      var x1 = readings[0].hrs, y1 = seatSum(readings[0]);
-      var x2 = readings[1].hrs, y2 = seatSum(readings[1]);
 
-      if (x1 === x2) {
-        // Two readings logged in the same instant - no usable slope.
-        // Flat average, lowest confidence tier.
-        return { value: (y1 + y2) / 2, confidence: 'low' };
-      }
+      var before = readings.filter(function (r) { return r.hrs >= T1_TARGET_HOURS; });
+      var after = readings.filter(function (r) { return r.hrs <= T1_TARGET_HOURS; });
 
-      var slope = (y2 - y1) / (x2 - x1);
-      var value = y1 + slope * (1.0 - x1);
-
-      // Confidence: interpolating between the two readings (T-1 falls
-      // between them) is trustworthy; extrapolating past them is shakier
-      // the further out it reaches, scaled against the gap between the
-      // two readings themselves - no separate model, just this ratio.
-      var hrsMin = Math.min(x1, x2), hrsMax = Math.max(x1, x2);
-      var confidence;
-      if (1.0 >= hrsMin && 1.0 <= hrsMax) {
-        confidence = 'high';
+      var b, a;
+      if (before.length && after.length) {
+        b = t1NearestOf(before, true);   // smallest hrs among before-side (nearest to target)
+        a = t1NearestOf(after, false);   // largest hrs among after-side (nearest to target)
+      } else if (before.length) {
+        b = t1NearestOf(before, true);   // nearest to target
+        a = t1NearestOf(before, false);  // farthest from target, same side
       } else {
-        var gap = hrsMax - hrsMin;
-        var extrapDist = (1.0 < hrsMin) ? (hrsMin - 1.0) : (1.0 - hrsMax);
-        confidence = (gap > 0 && extrapDist <= gap) ? 'medium' : 'low';
+        b = t1NearestOf(after, false);   // nearest to target
+        a = t1NearestOf(after, true);    // farthest from target, same side
       }
-      return { value: value, confidence: confidence };
+
+      var bSum = t1SeatSum(b), aSum = t1SeatSum(a);
+      if (b.hrs === a.hrs) return bSum;
+      return bSum + (aSum - bSum) * (b.hrs - T1_TARGET_HOURS) / (b.hrs - a.hrs);
+    }
+
+    function formatT1Column(readings, goldenTicketHours) {
+      // One value per reading, aligned row-for-row with the Prev
+      // column's own per-reading lines - each computed using ONLY that
+      // reading and everything older (readings.slice(idx)), i.e. exactly
+      // what the estimate would have shown at that point in time. Lets
+      // him watch the running estimate converge (or not) as the day's
+      // data comes in, top-to-bottom = newest-to-oldest.
+      if (!readings || readings.length === 0) return '';
+      return readings.map(function (rd, idx) {
+        var pool = readings.slice(idx);
+        var est = computeT1EstimateForPool(pool, goldenTicketHours);
+        var text = (est === null || est === undefined) ? '' : String(Math.round(est * 10) / 10);
+        return '<div class="row t1cell">' + text + '</div>';
+      }).join('');
     }
 
     function formatPreviousReadings(anyD1, readings) {
@@ -246,14 +275,8 @@
       // ambiguous which reading a given hours-before-dep belongs to.
       // The most recent one (index 0) is highlighted - his call, since
       // that's the number he's actually comparing the live Hrs column
-      // against, over and over, while working a route. The T-1 estimate
-      // (see computeT1Estimate) rides along on that same top line, offset
-      // further to the right - it's a live, ephemeral, never-saved
-      // computation, not a logged reading, so it's styled clearly
-      // distinct (italic, parenthesized, color-coded by confidence)
-      // rather than looking like a fifth real number in the tuple.
+      // against, over and over, while working a route.
       if (!readings || readings.length === 0) return '';
-      var est = computeT1Estimate(readings);
       return readings.map(function (rd, idx) {
         var parts = [rd.y, rd.cplus, rd.onePS];
         if (anyD1) parts.push(rd.d1);
@@ -262,12 +285,7 @@
         }).join(' ');
         var hrsText = formatHours(rd.hrs);
         var hrsClass = 'prevHrsInline' + (idx === 0 ? ' mostRecent' : '');
-        var estHtml = '';
-        if (idx === 0 && est) {
-          var displayVal = Math.round(est.value * 10) / 10;
-          estHtml = '<span class="t1est ' + est.confidence + '">&nbsp;&nbsp;&nbsp;(T\u20111 \u2248' + displayVal + ')</span>';
-        }
-        return '<div class="row"><span class="' + hrsClass + '">' + hrsText + '</span> ' + text + estHtml + '</div>';
+        return '<div class="row"><span class="' + hrsClass + '">' + hrsText + '</span> ' + text + '</div>';
       }).join('');
     }
 
@@ -341,10 +359,13 @@
       showDeparted = !showDeparted;
       document.getElementById('showDepartedToggle').className =
         'eyeToggle' + (showDeparted ? ' active' : '');
-      if (batch && batch.routeOrg) loadBatch();
+      // Only the toggle re-fetches the SAME route/day purely to reveal
+      // more rows - nothing here was submitted or discarded, so whatever
+      // he'd typed but not yet logged has to survive the rebuild.
+      if (batch && batch.routeOrg) loadBatch(captureUnsavedSeatValues());
     }
 
-    function loadBatch() {
+    function loadBatch(preserveMap) {
       var btn = document.getElementById('getNextBtn');
       btn.disabled = true;
       btn.textContent = 'Loading\u2026';
@@ -359,6 +380,7 @@
           document.getElementById('startState').style.display = 'none';
           document.getElementById('batchView').style.display = 'block';
           renderBatch(result);
+          if (preserveMap) restoreUnsavedSeatValues(preserveMap);
         })
         .catch(function (err) {
           btn.disabled = false;
@@ -368,11 +390,22 @@
     }
 
     function captureUnsavedSeatValues() {
-      // Called at the very top of renderBatch, before `batch` gets
-      // reassigned - `batch` here is still the OLD render. Keyed by
-      // scheduleRow, not array index i, since toggling the departed-
-      // flights view can shuffle index positions (departed rows get
-      // spliced in chronologically) even when the same flights persist.
+      // Snapshots whatever's currently typed into seat fields, keyed by
+      // scheduleRow (not array index i, since toggling the departed-
+      // flights view can shuffle row order even when the same flights
+      // persist). ONLY call this before a re-render that does NOT
+      // represent a completed save - i.e. the departed-flights toggle,
+      // nothing else. A row that was just successfully logged still has
+      // its old values sitting in the DOM for a moment before the next
+      // batch renders; if that next batch happens to offer the same
+      // flight again (a separate, long-tolerated cadence quirk - not
+      // this bug, and not something to fix here), those already-saved
+      // values must NOT be copied back in as if still pending - doing so
+      // makes a second, harmless "log this blank row to move on" click
+      // silently resave the same reading as a near-duplicate observation
+      // instead. That's exactly what calling this from every renderBatch
+      // used to cause; it's now scoped to the toggle alone, the only
+      // place values are genuinely still unsaved across a re-render.
       var map = {};
       if (!batch || !batch.rows) return map;
       batch.rows.forEach(function (row, i) {
@@ -401,11 +434,6 @@
     }
 
     function renderBatch(result) {
-      // Anything typed but not yet saved (e.g. mid-batch when the
-      // departed-flights toggle triggers a fresh fetch/re-render) must
-      // survive the rebuild - these are hard-won readings, never to be
-      // silently clobbered by a re-render.
-      var unsavedSeatValues = captureUnsavedSeatValues();
       batch = result;
       renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
       if (batch.settings) populateSettingsForm(batch.settings);
@@ -447,6 +475,7 @@
       btnRow.style.display = 'flex';
 
       var anyD1 = batch.rows.some(function (r) { return r.hasD1; });
+      var goldenTicketHours = (batch.settings && batch.settings.goldenTicketHours) || 1.5;
       var columns = buildColumns(anyD1);
 
       var colgroup = document.getElementById('colgroup');
@@ -477,6 +506,7 @@
           onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
+          t1: '<div class="prev">' + formatT1Column(row.previousReadings, goldenTicketHours) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
           flt:
@@ -509,8 +539,6 @@
       tbody.addEventListener('keydown', handleArrowNav);
       tbody.removeEventListener('input', sanitizeSeatInput);
       tbody.addEventListener('input', sanitizeSeatInput);
-
-      restoreUnsavedSeatValues(unsavedSeatValues);
     }
 
     function sanitizeSeatInput(e) {
