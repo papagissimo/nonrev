@@ -286,12 +286,12 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
         flight_date_str = schedule_date.isoformat()
 
         sched_rows = conn.execute(
-            """SELECT rowid, carrier, flightNumber, org, dest, depTime, aircraftConfig
+            """SELECT rowid, carrier, flightNumber, org, dest, depTime, aircraftConfig, verdict, verdictType
                FROM flightSchedule WHERE dayOfWeek = ? AND ignore = 0""",
             (dow,),
         ).fetchall()
 
-        for rowid, carrier, flight_number, org, dest, dep_time, aircraft_config in sched_rows:
+        for rowid, carrier, flight_number, org, dest, dep_time, aircraft_config, verdict, verdict_type in sched_rows:
             try:
                 dep_dt = et_equivalent_datetime(conn, dep_time, org, schedule_date)
             except UnconfirmedAirportError:
@@ -315,11 +315,15 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                         'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
                         'dep': dep_time, 'flightDate': flight_date_str,
                         'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
-                        'hoursUntilDep': hours_until_dep,
+                        'hoursUntilDep': hours_until_dep, 'verdict': verdict or '',
+                        'verdictType': verdict_type or 'info',
                     })
                 continue
 
             if settings['logEverything']:
+                # "Everything" means everything - axed flights included.
+                # This is the one override that punches through axed's
+                # normal cadence suppression (below).
                 eligible_now, minutes_until_eligible = True, 0
             else:
                 todays_hrs = [
@@ -334,6 +338,18 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                     hours_until_dep, todays_hrs, settings['tiers']
                 )
 
+                # 'axed' is a settled judgment call ("full too often to
+                # bother checking"), suppressed from normal cadence
+                # selection - but logEverything (above) overrides it, same
+                # as it overrides ordinary cadence timing. Deliberately NOT
+                # filtered out of sched_rows the way `ignore` is: an axed
+                # flight still needs to appear in route_rows below (same
+                # route, still shown) so a day's schedule never looks like
+                # it's silently missing a flight - only its eligibility for
+                # being picked as "next" is suppressed here.
+                if verdict_type == 'axed':
+                    eligible_now, minutes_until_eligible = False, None
+
             candidates.append({
                 'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
                 'dep': dep_time, 'depEtDatetime': dep_dt,
@@ -341,6 +357,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
                 'hoursUntilDep': hours_until_dep,
                 'eligibleNow': eligible_now, 'minutesUntilEligible': minutes_until_eligible,
+                'verdict': verdict or '', 'verdictType': verdict_type or 'info',
             })
 
     if unconfirmed_codes:
@@ -407,6 +424,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
             'departed': False,
             'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
             'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
+            'verdict': c['verdict'], 'verdictType': c['verdictType'],
         })
 
     if include_departed:
@@ -424,6 +442,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 'departed': True,
                 'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
                 'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
+                'verdict': c['verdict'], 'verdictType': c['verdictType'],
             })
         # Chronological, same order Delta's own site lists a route's day -
         # departed flights (earlier dep times, by construction) end up
