@@ -24,10 +24,11 @@
     input.timeEdit, input.aircEdit, input.fltEdit { font-size: 14px; display: none; width: 100%; box-sizing: border-box; }
     label.ignoreEdit { font-size: 12px; color: #666; display: none; white-space: nowrap; }
     .flt { font-size: 14px; color: #666; }
-    .verdictNote { cursor: help; }
-    .verdictNote.info { color: #b8860b; }
-    .verdictNote.warning { color: #c0392b; }
-    .verdictNote.axed { color: #b00020; }
+    .verdictNote { cursor: help; font-size: 18px; font-weight: bold; }
+    .verdictNote.info { color: #e0a815; }
+    .verdictNote.warning { color: #e8590c; }
+    .verdictNote.axed { color: #e6002e; }
+    .verdictNote.starred { color: #ffc700; }
     .pencil { cursor: pointer; color: #888; font-size: 16px; }
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; }
@@ -189,6 +190,7 @@
       // on purpose - a short number, nothing else lives here.
       cols.push({ key: 't1', label: 'T\u20111', width: 50 });
       cols.push({ key: 'flt', label: 'Flight', width: 56 });
+      cols.push({ key: 'gap2', label: '', width: 10 });
       cols.push({ key: 'flag', label: 'Flag', width: 230 });
       // Car dropped from view entirely (no edit affordance). Aircraft
       // stays hidden UNTIL a row is toggled into edit mode via the
@@ -513,11 +515,13 @@
           t1: '<div class="prev">' + formatT1Column(row.previousReadings, goldenTicketHours) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
+          gap2: '',
           flt:
             '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber +
             (row.verdict ? '<span class="verdictNote ' + (row.verdictType || 'info') +
               '" title="' + row.verdict.replace(/"/g, '&quot;') + '">\u00a0' +
-              (row.verdictType === 'warning' ? '\u26a0' : row.verdictType === 'axed' ? '\u2612' : '\u24d8') + '</span>' : '') +
+              (row.verdictType === 'warning' ? '\u26a0' : row.verdictType === 'axed' ? '\u2612' :
+               row.verdictType === 'starred' ? '\u2605' : '\u24d8') + '</span>' : '') +
             '</span>' +
             '<input class="fltEdit" data-i="' + i + '" id="fltEdit' + i + '" value="' + row.flightNumber + '">',
           flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +

@@ -338,16 +338,18 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                     hours_until_dep, todays_hrs, settings['tiers']
                 )
 
-                # 'axed' is a settled judgment call ("full too often to
-                # bother checking"), suppressed from normal cadence
-                # selection - but logEverything (above) overrides it, same
-                # as it overrides ordinary cadence timing. Deliberately NOT
-                # filtered out of sched_rows the way `ignore` is: an axed
-                # flight still needs to appear in route_rows below (same
-                # route, still shown) so a day's schedule never looks like
-                # it's silently missing a flight - only its eligibility for
-                # being picked as "next" is suppressed here.
-                if verdict_type == 'axed':
+                # 'axed' and 'starred' are both settled judgment calls
+                # ("full too often" / "reliably open, don't bother") rather
+                # than timing preferences - both suppressed from normal
+                # cadence selection, but logEverything (above) overrides
+                # both, same as it overrides ordinary cadence timing.
+                # Deliberately NOT filtered out of sched_rows the way
+                # `ignore` is: these flights still need to appear in
+                # route_rows below (same route, still shown) so a day's
+                # schedule never looks like it's silently missing a flight
+                # - only eligibility for being picked as "next" is
+                # suppressed here.
+                if verdict_type in ('axed', 'starred'):
                     eligible_now, minutes_until_eligible = False, None
 
             candidates.append({

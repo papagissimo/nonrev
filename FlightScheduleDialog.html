@@ -34,10 +34,11 @@
     #copyBtn:disabled { color: #aaa; }
     #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; display: none; }
     .verdictCell { display: flex; align-items: center; gap: 4px; }
-    .verdictTypeBtn { cursor: pointer; font-size: 16px; flex: 0 0 auto; user-select: none; }
-    .verdictTypeBtn.info { color: #b8860b; }
-    .verdictTypeBtn.warning { color: #c0392b; }
-    .verdictTypeBtn.axed { color: #b00020; }
+    .verdictTypeBtn { cursor: pointer; font-size: 22px; font-weight: bold; flex: 0 0 auto; user-select: none; }
+    .verdictTypeBtn.info { color: #e0a815; }
+    .verdictTypeBtn.warning { color: #e8590c; }
+    .verdictTypeBtn.axed { color: #e6002e; }
+    .verdictTypeBtn.starred { color: #ffc700; }
     .verdictCell input { flex: 1 1 auto; min-width: 0; }
   </style>
 </head>
@@ -288,7 +289,7 @@
           '<td><input class="airc" list="aircraftOptions" data-i="' + idx + '" value="' + (row.aircraftConfig || '') + '"></td>' +
           '<td><span class="verdictCell">' +
             '<span class="verdictTypeBtn ' + (row.verdictType || 'info') + '" data-i="' + idx +
-              '" onclick="toggleVerdictType(' + idx + ')" title="click to cycle info / warning / axed">' +
+              '" onclick="toggleVerdictType(' + idx + ')" title="click to cycle info / warning / axed / starred">' +
               verdictGlyph(row.verdictType) + '</span>' +
             '<input class="verdict" data-i="' + idx + '" placeholder="e.g. usually fills in the last hr" value="' +
             (row.verdict || '').replace(/"/g, '&quot;') + '"></span></td>' +
@@ -332,7 +333,7 @@
       // Three-way cycle: info -> warning -> axed -> info. 'axed' isn't
       // just a third color - it tells SeatLoggingDialog's cadence to
       // never offer this flight as "next" (still shown, never picked).
-      var order = ['info', 'warning', 'axed'];
+      var order = ['info', 'warning', 'axed', 'starred'];
       var curIdx = order.indexOf(row.verdictType || 'info');
       row.verdictType = order[(curIdx + 1) % order.length];
       isDirty = true;
@@ -342,6 +343,7 @@
     function verdictGlyph(verdictType) {
       if (verdictType === 'warning') return '\u26a0';
       if (verdictType === 'axed') return '\u2612';
+      if (verdictType === 'starred') return '\u2605';
       return '\u24d8';
     }
 
