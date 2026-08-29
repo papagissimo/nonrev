@@ -15,7 +15,7 @@ this Wednesday" - each date's points stand on their own, placed by real
 clock time, which is exactly what sidesteps that whole problem for this
 graph (see project notes on the route-level view's design).
 
-T1 estimate math (compute_bucket_estimate, target T-60min) started as a
+T1 estimate math (compute_t1_estimate, target T-60min) started as a
 port of the old Apps Script computeBucketEstimate_, then was revised with
 him directly: dropped the T-61min oddity in favor of a clean T-60min, and
 dropped "ceiling" (a displayed 9) exclusion entirely - the two readings
@@ -26,6 +26,25 @@ version (SeatLoggingDialog.html's computeT1EstimateForPool) - kept in
 lockstep by hand since there's no shared module between Python and the
 browser here. Computed here on the fly per flight-instance rather than
 stored.
+
+Two variants are computed per flight-instance, t1Old and t1New:
+- t1Old: actual (binary-search) cabin values only, missing = 0 - this is
+  the estimate exactly as it's always worked, unchanged.
+- t1New: same, but where an actual value is missing and a cheap-side
+  floor glance (cheapY/cheapCPlus/cheapFirstOrPS/cheapD1) is present and
+  nonzero, substitutes an expected resolved value (see
+  substitute_for_floor below) instead of treating the cabin as 0. A
+  cheap 9 or confirmed cheap 0 never reaches this path in well-formed
+  data, since the dialogue auto-fills and locks the matching actual
+  column in both those cases - the substitution only ever fires for a
+  genuine unresolved nonzero floor.
+Both are shown side by side rather than replacing one with the other -
+his call, to watch how far they diverge as real paired
+cheap-floor/same-day-resolve data accumulates. Same estimate feeds both
+the displayed value and any future full/open verdict logic - no separate
+treatment for the verdict path (his explicit call: a substituted cabin
+value carries real information and shouldn't be suppressed just because
+it makes a borderline case less comfortable).
 """
 
 from collections import defaultdict
@@ -50,7 +69,28 @@ T1_TARGET_HOURS = 1.0
 # for now) - meant to be eyeballed against a real chart and edited here.
 CONFIDENCE_HOURS_TO_SEATS = 0.75
 
+# Expected resolved value for a cheap-side floor reading of N, used only
+# when the actual (binary-search) value for that cabin is still missing.
+# His gut-feel seed, not yet fit to real data: floor + 1.7. Meant to be
+# overwritten once enough same-day cheap-floor/actual-resolve pairs pile
+# up to fit a real distribution (Beta over [floor, 8], mean/concentration
+# parameterized - tabled until there's data to fit against; this
+# constant is the mean only, and is all today's math needs).
+FLOOR_MEAN_OFFSET = 1.7
+
 DOW_ABBREV = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+
+def substitute_for_floor(cheap_floor):
+    """
+    Expected resolved value for a genuine nonzero cheap-side floor
+    reading, missing its actual value. Deliberately not called for a
+    cheap 9 or cheap 0 - those cases already have a real actual value
+    in well-formed data (auto-filled/locked by the dialogue), so they
+    never need a substitute; this is purely the "we glanced a floor but
+    haven't binary-searched it yet" case.
+    """
+    return cheap_floor + FLOOR_MEAN_OFFSET
 
 
 def _dow_abbrev(flight_date_str):
@@ -58,7 +98,7 @@ def _dow_abbrev(flight_date_str):
     return DOW_ABBREV[d.weekday()]
 
 
-def compute_bucket_estimate(readings, target_hours, golden_ticket_hours):
+def compute_t1_estimate(readings, target_hours, golden_ticket_hours):
     """
     Bracket-nearest-to-target estimate, shared logic with the log
     dialogue's JS version (see SeatLoggingDialog.html's
@@ -152,7 +192,12 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
     empty/None means all) and flightDate range (either end optional).
 
     Each point: {flightDate, dow, depTimeMinutes, depTimeDisplay,
-                 t1Estimate, confidenceHalfRange, numReadings}
+                 t1Old, t1New, confidenceHalfRange, numReadings}
+    t1Old is the estimate exactly as it's always worked (actual cabin
+    values only, missing = 0). t1New substitutes an expected resolved
+    value for a cabin whose actual value is missing but which has a
+    genuine nonzero cheap-side floor glance - see substitute_for_floor.
+    The two are shown side by side rather than one replacing the other.
     Points with no computable depTimeMinutes (unconfirmed airport, or
     every reading in the group has a malformed hoursBeforeDep) are
     dropped - nothing to place them on the x-axis with.
@@ -171,21 +216,54 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
 
     rows = conn.execute(
         f"""SELECT carrier, flightNumber, flightDate, checkTimestamp,
-                   hoursBeforeDep, y, cPlus, firstOrPS, d1
+                   hoursBeforeDep, y, cPlus, firstOrPS, d1,
+                   cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
             FROM observations
             WHERE {where_sql}""",
         params,
     ).fetchall()
 
     groups = defaultdict(list)
-    for carrier, flight_number, flight_date, check_ts, hrs, y, c_plus, first_ps, d1 in rows:
+    for (carrier, flight_number, flight_date, check_ts, hrs, y, c_plus, first_ps, d1,
+         cheap_y, cheap_c_plus, cheap_first_ps, cheap_d1) in rows:
         groups[(carrier, flight_number, flight_date)].append({
             'checkTimestamp': check_ts,
             'hrs': hrs,
             'y': y, 'cPlus': c_plus, 'firstOrPS': first_ps, 'd1': d1,
+            'cheapY': cheap_y, 'cheapCPlus': cheap_c_plus,
+            'cheapFirstOrPS': cheap_first_ps, 'cheapD1': cheap_d1,
         })
 
     dow_filter = set(days_of_week) if days_of_week else None
+
+    # A handful of legacy rows carry a stray non-numeric value in what
+    # should be an integer seat column - same tolerance ObservationsBrowser
+    # already applies elsewhere - skip just that value rather than
+    # dropping the whole reading.
+    def as_int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def resolve_cabin(actual, cheap):
+        """
+        One cabin's contribution to a reading's ttl, old and new.
+        old: actual value if present, else 0 (unchanged behavior).
+        new: actual value if present, else a floor-derived substitute if
+        a genuine nonzero cheap floor is present, else 0. A cheap 9 or
+        cheap 0 with no actual value shouldn't occur in well-formed data
+        (the dialogue auto-fills/locks actual in both cases) - if it
+        ever does, it's treated the same as any other missing actual
+        value here (falls through to the nonzero-floor check, which a 9
+        or 0 fails, so old and new agree and it's just 0/9 respectively
+        via whichever value IS present).
+        """
+        if actual is not None:
+            return actual, actual
+        if cheap is not None and cheap != 0 and cheap != 9:
+            return 0, substitute_for_floor(cheap)
+        return 0, (cheap if cheap is not None else 0)
 
     points = []
     for (carrier, flight_number, flight_date), obs_list in groups.items():
@@ -193,7 +271,8 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
         if dow_filter and dow not in dow_filter:
             continue
 
-        readings = []
+        readings_old = []
+        readings_new = []
         dep_minutes = None
         for obs in obs_list:
             if obs['hrs'] is None:
@@ -202,31 +281,26 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
                 hrs = float(obs['hrs'])
             except (TypeError, ValueError):
                 continue
-            # A handful of legacy rows carry a stray non-numeric value in
-            # what should be an integer seat column - same tolerance
-            # ObservationsBrowser already applies elsewhere - skip just
-            # that value rather than dropping the whole reading.
-            def as_int(v):
-                try:
-                    return int(v)
-                except (TypeError, ValueError):
-                    return None
-            y_i, cp_i, fp_i, d1_i = (as_int(obs['y']), as_int(obs['cPlus']),
-                                      as_int(obs['firstOrPS']), as_int(obs['d1']))
-            parts = [y_i, cp_i, fp_i, d1_i]
-            ttl = sum(p for p in parts if p is not None)
-            readings.append({'hrs': hrs, 'ttl': ttl})
+
+            y_old, y_new = resolve_cabin(as_int(obs['y']), as_int(obs['cheapY']))
+            cp_old, cp_new = resolve_cabin(as_int(obs['cPlus']), as_int(obs['cheapCPlus']))
+            fp_old, fp_new = resolve_cabin(as_int(obs['firstOrPS']), as_int(obs['cheapFirstOrPS']))
+            d1_old, d1_new = resolve_cabin(as_int(obs['d1']), as_int(obs['cheapD1']))
+
+            readings_old.append({'hrs': hrs, 'ttl': y_old + cp_old + fp_old + d1_old})
+            readings_new.append({'hrs': hrs, 'ttl': y_new + cp_new + fp_new + d1_new})
             if dep_minutes is None:
                 dep_minutes = dep_time_minutes(conn, org, obs['checkTimestamp'], obs['hrs'])
 
-        if not readings or dep_minutes is None:
+        if not readings_old or dep_minutes is None:
             continue
 
-        t1_estimate = compute_bucket_estimate(readings, T1_TARGET_HOURS, golden_ticket_hours)
-        if t1_estimate is None:
+        t1_old = compute_t1_estimate(readings_old, T1_TARGET_HOURS, golden_ticket_hours)
+        t1_new = compute_t1_estimate(readings_new, T1_TARGET_HOURS, golden_ticket_hours)
+        if t1_old is None:
             continue
 
-        nearest_gap = min(abs(r['hrs'] - T1_TARGET_HOURS) for r in readings)
+        nearest_gap = min(abs(r['hrs'] - T1_TARGET_HOURS) for r in readings_old)
         confidence_half_range = CONFIDENCE_HOURS_TO_SEATS * nearest_gap
 
         points.append({
@@ -235,9 +309,10 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
             'flightDate': flight_date,
             'dow': dow,
             'depTimeMinutes': dep_minutes,
-            't1Estimate': round(t1_estimate, 2),
+            't1Old': round(t1_old, 2),
+            't1New': round(t1_new, 2) if t1_new is not None else None,
             'confidenceHalfRange': round(confidence_half_range, 2),
-            'numReadings': len(readings),
+            'numReadings': len(readings_old),
         })
 
     points.sort(key=lambda p: (p['flightDate'], p['depTimeMinutes']))

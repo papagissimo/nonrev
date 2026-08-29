@@ -15,12 +15,16 @@
     .wait { color: #1a73e8; font-size: 17px; margin: 14px 0; }
     table { border-collapse: collapse; width: 100%; table-layout: fixed; }
     th { text-align: left; font-size: 13px; color: #888; padding: 3px 5px; overflow: hidden; }
+    th.groupHead { font-size: 11px; color: #aaa; text-align: center; font-weight: normal; padding: 0; }
     td { padding: 5px 5px; vertical-align: middle; overflow: hidden; }
     tr.next { background: #e6f4ea; }
     .dep { font-weight: bold; font-size: 17px; }
     .hrs { font-size: 15px; color: #666; }
     .hrs.soon { color: #c5221f; font-weight: bold; }
     input.seat { width: 38px; font-size: 16px; text-align: center; box-sizing: border-box; }
+    input.seat.cheapSeat { background: #fafbfe; }
+    input.seat.locked { background: #eee; color: #888; }
+    td.col-y { border-left: 2px solid #ddd; }
     input.timeEdit, input.aircEdit, input.fltEdit { font-size: 14px; display: none; width: 100%; box-sizing: border-box; }
     label.ignoreEdit { font-size: 12px; color: #666; display: none; white-space: nowrap; }
     .flt { font-size: 14px; color: #666; }
@@ -95,7 +99,7 @@
     <div class="wait" id="wait" style="display:none;"></div>
     <table id="flightTable" style="display:none;">
       <colgroup id="colgroup"></colgroup>
-      <thead><tr id="headerRow"></tr></thead>
+      <thead><tr id="groupHeaderRow"></tr><tr id="headerRow"></tr></thead>
       <tbody id="rows"></tbody>
     </table>
     <datalist id="aircraftOptions"></datalist>
@@ -109,7 +113,8 @@
   <script>
     var initData = {}; // aircraftOptions now arrives on the batch result itself, see renderAircraftOptions
     var batch = null;
-    var SEAT_FIELDS = ['y', 'cplus', 'onePS', 'd1'];
+    var SEAT_FIELDS = ['cheapY', 'cheapCplus', 'cheapOnePS', 'cheapD1', 'y', 'cplus', 'onePS', 'd1'];
+    var CHEAP_TO_ACTUAL = { cheapY: 'y', cheapCplus: 'cplus', cheapOnePS: 'onePS', cheapD1: 'd1' };
     var aircraftOptionsRendered = false;
     var skippedRouteKeys = [];
     var showDeparted = false;
@@ -169,10 +174,14 @@
     function buildColumns(anyD1) {
       var cols = [
         { key: 'dep', label: 'Dep', width: 92 },
-        { key: 'y', label: 'Y', width: 48 },
-        { key: 'cplus', label: 'C+', width: 48 },
-        { key: 'onePS', label: '1/PS', width: 48 }
+        { key: 'cheapY', label: 'Y', width: 40 },
+        { key: 'cheapCplus', label: 'C+', width: 40 },
+        { key: 'cheapOnePS', label: '1/PS', width: 40 }
       ];
+      if (anyD1) cols.push({ key: 'cheapD1', label: 'D1', width: 40 });
+      cols.push({ key: 'y', label: 'Y', width: 48 });
+      cols.push({ key: 'cplus', label: 'C+', width: 48 });
+      cols.push({ key: 'onePS', label: '1/PS', width: 48 });
       if (anyD1) cols.push({ key: 'd1', label: 'D1', width: 48 });
       // Hrs sits right next to the seat-input columns (the current
       // reading), with Prev pushed past a small gap - his call, so the
@@ -449,10 +458,13 @@
           var el = document.querySelector('input[data-field="' + field + '"][data-i="' + i + '"]');
           return el ? el.value : '';
         }
-        var vals = { y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1') };
-        if (vals.y || vals.cplus || vals.onePS || vals.d1) {
-          map[row.scheduleRow] = vals;
-        }
+        var vals = {
+          y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
+          cheapY: val('cheapY'), cheapCplus: val('cheapCplus'),
+          cheapOnePS: val('cheapOnePS'), cheapD1: val('cheapD1'),
+        };
+        var hasAny = SEAT_FIELDS.some(function (f) { return vals[f]; });
+        if (hasAny) map[row.scheduleRow] = vals;
       });
       return map;
     }
@@ -461,10 +473,20 @@
       batch.rows.forEach(function (row, i) {
         var vals = map[row.scheduleRow];
         if (!vals) return;
+        // Actual fields first (plain restore), then cheap fields -
+        // restoring a cheap value re-runs the lock logic, which is
+        // what puts a 9/0-locked actual field back into its correct
+        // locked state (overriding whatever raw value the actual
+        // restore above just set, same as it would if freshly typed).
         ['y', 'cplus', 'onePS', 'd1'].forEach(function (f) {
           if (!vals[f]) return;
           var el = document.querySelector('input[data-field="' + f + '"][data-i="' + i + '"]');
           if (el) el.value = vals[f];
+        });
+        ['cheapY', 'cheapCplus', 'cheapOnePS', 'cheapD1'].forEach(function (f) {
+          if (!vals[f]) return;
+          var el = document.querySelector('input[data-field="' + f + '"][data-i="' + i + '"]');
+          if (el) { el.value = vals[f]; applyCheapAutoFill(el); }
         });
       });
     }
@@ -524,6 +546,20 @@
         return '<th>' + c.label + '</th>';
       }).join('');
 
+      // Group-label row above the field labels, spanning the cheap
+      // (glance) columns and the actual (binary-search) columns
+      // separately - both groups reuse the same short labels (Y, C+,
+      // 1/PS[, D1]) so this is the only thing telling them apart at a
+      // glance besides the divider line (see td.col-y border-left).
+      var cheapCount = anyD1 ? 4 : 3;
+      var actualCount = anyD1 ? 4 : 3;
+      var restCount = columns.length - 1 - cheapCount - actualCount;
+      document.getElementById('groupHeaderRow').innerHTML =
+        '<th></th>' +
+        '<th class="groupHead" colspan="' + cheapCount + '">Glance</th>' +
+        '<th class="groupHead" colspan="' + actualCount + '">Actual</th>' +
+        '<th colspan="' + restCount + '"></th>';
+
       var tbody = document.getElementById('rows');
       tbody.innerHTML = '';
       batch.rows.forEach(function (row, i) {
@@ -537,6 +573,10 @@
           dep:
             '<span class="dep" data-i="' + i + '" id="depDisplay' + i + '">' + row.depDisplay + '</span>' +
             '<input class="timeEdit" data-i="' + i + '" id="depEdit' + i + '" value="' + row.depDisplay + '">',
+          cheapY: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapY" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
+          cheapCplus: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapCplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
+          cheapOnePS: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapOnePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
+          cheapD1: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapD1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           y: '<input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
@@ -591,6 +631,35 @@
       if (!el.classList || !el.classList.contains('seat')) return;
       var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, 1);
       if (cleaned !== el.value) el.value = cleaned;
+      if (el.classList.contains('cheapSeat')) applyCheapAutoFill(el);
+    }
+
+    function applyCheapAutoFill(cheapEl) {
+      // A cheap 9 (ceiling) or confirmed cheap 0 auto-fills and
+      // permanently locks the matching actual field - both are already
+      // certain, no binary search needed. A nonzero floor (1-8) never
+      // auto-fills - his explicit call, so the actual field must be
+      // retyped by hand to prove the binary search actually happened,
+      // rather than silently promoting a floor guess into a resolved
+      // value. Only ever clears/unlocks the actual field if THIS
+      // function was the one that locked it - a manually-typed actual
+      // value must never be clobbered just because the cheap field
+      // next to it changes afterward.
+      var i = cheapEl.getAttribute('data-i');
+      var actualField = CHEAP_TO_ACTUAL[cheapEl.getAttribute('data-field')];
+      if (!actualField) return;
+      var actualEl = document.querySelector('input[data-field="' + actualField + '"][data-i="' + i + '"]');
+      if (!actualEl) return;
+      var v = cheapEl.value;
+      if (v === '9' || v === '0') {
+        actualEl.value = v;
+        actualEl.disabled = true;
+        actualEl.classList.add('locked');
+      } else if (actualEl.classList.contains('locked')) {
+        actualEl.value = '';
+        actualEl.disabled = false;
+        actualEl.classList.remove('locked');
+      }
     }
 
     function handleArrowNav(e) {
@@ -688,6 +757,8 @@
           dep: dep, aircraftConfig: aircraftConfig, flightNumber: flightNumber,
           scheduleEdited: scheduleEdited, ignore: ignoreChk ? ignoreChk.checked : false,
           y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
+          cheapY: val('cheapY'), cheapCplus: val('cheapCplus'),
+          cheapOnePS: val('cheapOnePS'), cheapD1: val('cheapD1'),
           hoursUntilDep: row.hoursUntilDep,
           // Row's own display text, not recomputed from a possibly-just-
           // edited dep - fine for the recent-panel's purposes, a purely
@@ -697,11 +768,13 @@
       });
 
       var hasAnyData = entries.some(function (e) {
-        return e.scheduleEdited || e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
+        return e.scheduleEdited || e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '' ||
+          e.cheapY !== '' || e.cheapCplus !== '' || e.cheapOnePS !== '' || e.cheapD1 !== '';
       });
 
       var loggedEntries = entries.filter(function (e) {
-        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
+        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '' ||
+          e.cheapY !== '' || e.cheapCplus !== '' || e.cheapOnePS !== '' || e.cheapD1 !== '';
       });
       function recordRecentlyLogged() {
         loggedEntries.forEach(function (e) {

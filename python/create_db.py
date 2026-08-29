@@ -39,6 +39,16 @@ CREATE TABLE routeDurations (
     PRIMARY KEY (org, dest)
 );
 
+-- y/cPlus/firstOrPS/d1 are the actual/resolved cabin values (unchanged
+-- meaning - a real binary-search result, or a locked-in 9/0 auto-filled
+-- from the matching cheap* column). cheapY/cheapCPlus/cheapFirstOrPS/
+-- cheapD1 hold whatever was free to glance off Delta's all-flights page
+-- before the binary search: a 9 (ceiling - industry-wide hard cap, Delta
+-- never displays past 9) or a confirmed floor (0, or a genuine "at least
+-- N" for N up to 5 in practice, sometimes higher). NULL in a cheap*
+-- column means no glance was taken that reading, not "floor of zero" -
+-- a genuine confirmed zero is written directly as 0, same in both the
+-- cheap and actual column for that cabin, never left implicit.
 CREATE TABLE observations (
     observationId   INTEGER PRIMARY KEY AUTOINCREMENT,
     carrier         TEXT NOT NULL,
@@ -53,6 +63,10 @@ CREATE TABLE observations (
     cPlus           INTEGER,
     firstOrPS       INTEGER,
     d1              INTEGER,
+    cheapY          INTEGER,
+    cheapCPlus      INTEGER,
+    cheapFirstOrPS  INTEGER,
+    cheapD1         INTEGER,
     nextDesiredLog  TEXT
 );
 

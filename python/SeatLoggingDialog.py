@@ -484,7 +484,10 @@ def save_entry_dialog(conn, payload):
       entries: [{ scheduleRow, org, dest, car, dep (HHMM string),
                   aircraftConfig, flightNumber, scheduleEdited (bool),
                   ignore (bool),
-                  y, cplus, onePS, d1 (each '' or a value as typed) }]
+                  y, cplus, onePS, d1 (each '' or a value as typed),
+                  cheapY, cheapCplus, cheapOnePS, cheapD1 (each '' or a
+                  free-glanced ceiling/floor value - a 9, or a confirmed
+                  floor 0-8) }]
     }
     """
     flight_date = payload['flightDate']
@@ -532,9 +535,10 @@ def save_entry_dialog(conn, payload):
                         entry['org'], entry['dest'], dow, entry['dep'],
                     )
 
+    SEAT_KEYS = ('y', 'cplus', 'onePS', 'd1', 'cheapY', 'cheapCplus', 'cheapOnePS', 'cheapD1')
     to_write = [
         e for e in payload['entries']
-        if any(e.get(f, '') not in ('', None) for f in ('y', 'cplus', 'onePS', 'd1'))
+        if any(e.get(f, '') not in ('', None) for f in SEAT_KEYS)
     ]
     if not to_write:
         conn.commit()
@@ -562,11 +566,13 @@ def save_entry_dialog(conn, payload):
         conn.execute(
             """INSERT INTO observations
                (carrier, flightNumber, org, dest, flightDate, checkTimestamp,
-                hoursBeforeDep, readingType, y, cPlus, firstOrPS, d1)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                hoursBeforeDep, readingType, y, cPlus, firstOrPS, d1,
+                cheapY, cheapCPlus, cheapFirstOrPS, cheapD1)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (entry['car'], entry['flightNumber'], entry['org'], entry['dest'],
              flight_date, check_timestamp, hours_before_dep, 'avail',
-             num('y'), num('cplus'), num('onePS'), num('d1')),
+             num('y'), num('cplus'), num('onePS'), num('d1'),
+             num('cheapY'), num('cheapCplus'), num('cheapOnePS'), num('cheapD1')),
         )
 
     conn.commit()
