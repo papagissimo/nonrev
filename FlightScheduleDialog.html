@@ -12,8 +12,11 @@
     #swapBtn:hover { background: #f1f1f1; }
     #loadBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
     #loadBtn:disabled { background: #a9c6f2; }
-    .durationRow { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: #666; }
+    .durationRow { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #666; }
     #durationInput { width: 50px; text-align: center; font-size: 12px; padding: 3px; }
+    #dayGroupingRow { margin-bottom: 12px; }
+    #dayGroupingInput { width: 120px; font-size: 12px; padding: 3px; }
+    .ofCell { font-size: 11px; color: #555; line-height: 1.35; }
     table { border-collapse: collapse; width: 100%; table-layout: fixed; margin-top: 6px; }
     th { text-align: left; font-size: 11px; color: #888; padding: 2px 4px; }
     td { padding: 3px 4px; vertical-align: middle; }
@@ -70,6 +73,13 @@
     <input type="text" id="durationInput" placeholder="0215">
   </div>
 
+  <div class="durationRow" id="dayGroupingRow" style="display:none;">
+    <span class="status-icon" id="dayGroupingIcon"></span>
+    <label for="dayGroupingInput" style="margin:0;">day grouping (this day)</label>
+    <input type="text" id="dayGroupingInput" list="dayGroupingOptions" placeholder="e.g. weekday">
+  </div>
+  <datalist id="dayGroupingOptions"></datalist>
+
   <div id="emptyMsg">No flights logged for this route/day yet - add one below.</div>
 
   <table id="schedTable" style="display:none;">
@@ -80,6 +90,7 @@
       <col style="width:100px;">
       <col style="width:110px;">
       <col style="width:170px;">
+      <col style="width:78px;">
       <col style="width:28px;">
       <col style="width:28px;">
     </colgroup>
@@ -91,6 +102,7 @@
         <th>dep time</th>
         <th>aircraft</th>
         <th>verdict</th>
+        <th title="Real counts pooled across this service's grouped days (see day grouping above) - not a percentage, since the sample size matters as much as the rate">open/full</th>
         <th>ignore</th>
         <th></th>
       </tr>
@@ -177,6 +189,9 @@
     document.getElementById('durationInput').addEventListener('input', function () {
       isDirty = true;
     });
+    document.getElementById('dayGroupingInput').addEventListener('input', function () {
+      isDirty = true;
+    });
 
     function swapOrgDest() {
       var orgEl = document.getElementById('orgInput');
@@ -234,6 +249,8 @@
           renderAircraftOptions(current.aircraftOptions);
           renderRows();
           renderDuration();
+          renderDayGrouping();
+          renderDayGroupingOptions(current.knownDayGroupings);
           isDirty = false;
         })
         .catch(function (err) {
@@ -270,6 +287,35 @@
       icon.title = current.durationConfirmed ? 'confirmed' : 'unconfirmed';
     }
 
+    // Free text - no fixed vocabulary. dayGroupingOptions is just a
+    // "here's what's already been used elsewhere" list pulled fresh from
+    // the server each load (unlike aircraftOptions, which only ever
+    // grows from a small fixed set and so is rendered once) - it exists
+    // purely so re-typing the same label on a new route is a pick, not a
+    // retype, keeping "weekday" from drifting into "wkdy" by accident.
+    function renderDayGroupingOptions(options) {
+      var dl = document.getElementById('dayGroupingOptions');
+      dl.innerHTML = '';
+      (options || []).forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt;
+        dl.appendChild(o);
+      });
+    }
+
+    function renderDayGrouping() {
+      var row = document.getElementById('dayGroupingRow');
+      var icon = document.getElementById('dayGroupingIcon');
+      var input = document.getElementById('dayGroupingInput');
+      row.style.display = 'flex';
+      input.value = current.dayGrouping || '';
+      icon.className = 'status-icon ' + (current.dayGroupingConfirmed ? 'confirmed' : 'unconfirmed');
+      icon.textContent = current.dayGroupingConfirmed ? '\u2713' : '?';
+      icon.title = current.dayGroupingConfirmed
+          ? 'confirmed - pooled with any other day sharing this label'
+          : 'unconfirmed - stands alone until reviewed and saved';
+    }
+
     function renderRows() {
       var tbody = document.getElementById('rows');
       tbody.innerHTML = '';
@@ -293,6 +339,8 @@
               verdictGlyph(row.verdictType) + '</span>' +
             '<input class="verdict" data-i="' + idx + '" placeholder="e.g. usually fills in the last hr" value="' +
             (row.verdict || '').replace(/"/g, '&quot;') + '"></span></td>' +
+          '<td class="ofCell">open ' + (row.openFull ? row.openFull.openDisplay : '\u2014') +
+            '<br>full ' + (row.openFull ? row.openFull.fullDisplay : '\u2014') + '</td>' +
           '<td><input type="checkbox" class="ignore" data-i="' + idx + '" title="Never offer this flight for logging"' +
             (row.ignore ? ' checked' : '') + '></td>' +
           '<td><button class="delBtn" data-i="' + idx + '" onclick="deleteRow(' + idx + ')" title="delete row">\u2716</button></td>';
@@ -316,7 +364,10 @@
         verdict: '', verdictType: 'info',
         confirmed: false,
         ignore: false,
-        deleted: false
+        deleted: false,
+        // A never-yet-saved row has no observation history to pool -
+        // real counts start existing once it's saved and reloaded.
+        openFull: { measured: 0, openDisplay: '\u2014', fullDisplay: '\u2014' }
       });
       current.nextBogusNumber++;
       isDirty = true;
@@ -465,13 +516,16 @@
       btn.disabled = true;
       document.getElementById('status').textContent = 'Saving\u2026';
 
+      var dayGrouping = document.getElementById('dayGroupingInput').value.trim();
+
       fetch('/api/saveScheduleForRouteDay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           org: current.org, dest: current.dest, dow: current.dow,
           rows: current.rows,
-          durationMinutes: durationMinutes
+          durationMinutes: durationMinutes,
+          dayGrouping: dayGrouping
         })
       })
         .then(function (res) { return res.json(); })

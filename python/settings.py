@@ -4,6 +4,12 @@ what used to live in Apps Script's PropertiesService. Local equivalent is
 a tiny key/value table inside nonrev.db itself, so there's still exactly
 one file holding everything about this project, not a second settings
 file living alongside it.
+
+load_settings/save_settings take an optional `key`/`defaults` pair so
+other modules can store their own settings blob in this same table
+(e.g. ServiceGrouping's open/full thresholds) without a second table or
+file - existing callers that pass neither keep working exactly as before,
+reading/writing the 'nextUpSettings' blob.
 """
 
 import json
@@ -37,31 +43,31 @@ def ensure_table(conn):
     conn.commit()
 
 
-def load_settings(conn):
+def load_settings(conn, key=SETTINGS_KEY, defaults=None):
+    if defaults is None:
+        defaults = DEFAULT_SETTINGS
     ensure_table(conn)
     row = conn.execute(
-        "SELECT value FROM settings WHERE key = ?", (SETTINGS_KEY,)
+        "SELECT value FROM settings WHERE key = ?", (key,)
     ).fetchone()
     if row is None:
-        return dict(DEFAULT_SETTINGS)
+        return dict(defaults)
     try:
         loaded = json.loads(row[0])
     except (json.JSONDecodeError, TypeError):
-        return dict(DEFAULT_SETTINGS)
-    # Backfill any top-level key an older saved blob predates (e.g.
-    # goldenTicketHours, added after settings had already been saved
-    # once) rather than replacing the whole thing - his real tier/
-    # logEverything choices stay intact.
-    merged = dict(DEFAULT_SETTINGS)
+        return dict(defaults)
+    # Backfill any top-level key an older saved blob predates rather than
+    # replacing the whole thing - his real choices stay intact.
+    merged = dict(defaults)
     merged.update(loaded)
     return merged
 
 
-def save_settings(conn, settings):
+def save_settings(conn, settings, key=SETTINGS_KEY):
     ensure_table(conn)
     conn.execute(
         """INSERT INTO settings (key, value) VALUES (?, ?)
            ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
-        (SETTINGS_KEY, json.dumps(settings)),
+        (key, json.dumps(settings)),
     )
     conn.commit()

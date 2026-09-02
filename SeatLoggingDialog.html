@@ -33,6 +33,7 @@
     .verdictNote.warning { color: #e8590c; }
     .verdictNote.axed { color: #e6002e; }
     .verdictNote.starred { color: #ffc700; }
+    .ofCell { font-size: 11px; color: #555; line-height: 1.35; white-space: nowrap; }
     .pencil { cursor: pointer; color: #888; font-size: 16px; }
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; }
@@ -187,8 +188,7 @@
       // reading), with Prev pushed past a small gap - his call, so the
       // "what I'm about to log" block reads as one unit. Hrs/Prev
       // columns themselves stay put - only the padding/gap around them
-      // shrank (twice now, per his feedback), to give the Flag column
-      // (below) more room.
+      // shrank, to give other columns more room.
       cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
       cols.push({ key: 'gap', label: '', width: 8 });
       cols.push({ key: 'prev', label: 'Prev', width: 104 });
@@ -198,9 +198,10 @@
       // had room for doesn't wrap, it just overflows the table). Narrow
       // on purpose - a short number, nothing else lives here.
       cols.push({ key: 't1', label: 'T\u20111', width: 50 });
-      cols.push({ key: 'flt', label: 'Flight', width: 56 });
+      cols.push({ key: 'openFull', label: 'O/F', width: 66 });
+      cols.push({ key: 'flt', label: 'Flight', width: 68 });
       cols.push({ key: 'gap2', label: '', width: 10 });
-      cols.push({ key: 'flag', label: 'Flag', width: 230 });
+      cols.push({ key: 'flag', label: 'Flag', width: 115 });
       // Car dropped from view entirely (no edit affordance). Aircraft
       // stays hidden UNTIL a row is toggled into edit mode via the
       // pencil - unlike Car, it's a real editable field (see toggleEdit),
@@ -586,6 +587,8 @@
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
           gap2: '',
+          openFull: '<span class="ofCell">open ' + (row.openFull ? row.openFull.openDisplay : '\u2014') +
+            '<br>full ' + (row.openFull ? row.openFull.fullDisplay : '\u2014') + '</span>',
           flt:
             '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber +
             (row.verdict ? '<span class="verdictNote ' + (row.verdictType || 'info') +

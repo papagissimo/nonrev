@@ -33,6 +33,11 @@ from zoneinfo import ZoneInfo
 
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from settings import load_settings
+# Deliberately NOT imported at module level - ServiceGrouping pulls in
+# GraphObservations -> ObservationsBrowser, which itself imports from
+# THIS module (eastern_now/ET_ZONE/minutes_to_12h) - a module-level
+# import here would be circular. Imported lazily inside get_next_batch
+# instead, by which point this module has already finished loading.
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -267,6 +272,8 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
 
 
 def get_next_batch(conn, skip_route_keys=None, include_departed=False):
+    from ServiceGrouping import get_open_full_counts, format_open_full
+
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
     now = eastern_now()
@@ -313,7 +320,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 if include_departed:
                     departed_candidates.append({
                         'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
-                        'dep': dep_time, 'flightDate': flight_date_str,
+                        'dep': dep_time, 'flightDate': flight_date_str, 'dow': dow,
                         'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
                         'hoursUntilDep': hours_until_dep, 'verdict': verdict or '',
                         'verdictType': verdict_type or 'info',
@@ -427,6 +434,9 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
             'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
             'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
             'verdict': c['verdict'], 'verdictType': c['verdictType'],
+            'openFull': format_open_full(
+                get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['car'], c['flightNumber'])
+            ),
         })
 
     if include_departed:
@@ -445,6 +455,9 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
                 'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
                 'verdict': c['verdict'], 'verdictType': c['verdictType'],
+                'openFull': format_open_full(
+                    get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['car'], c['flightNumber'])
+                ),
             })
         # Chronological, same order Delta's own site lists a route's day -
         # departed flights (earlier dep times, by construction) end up

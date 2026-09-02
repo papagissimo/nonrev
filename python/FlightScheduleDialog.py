@@ -24,6 +24,10 @@ from datetime import datetime
 
 from SeatLoggingDialog import minutes_to_12h, ET_ZONE
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
+from ServiceGrouping import (
+    get_day_grouping_row, save_day_grouping, get_known_day_groupings,
+    get_open_full_counts, format_open_full,
+)
 
 BOGUS_RE = re.compile(r'^bogus(\d+)$', re.IGNORECASE)
 DOW_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -100,11 +104,15 @@ def get_schedule_for_route_day(conn, org, dest, dow):
             'depDisplay': minutes_to_12h(dep_time), 'aircraftConfig': aircraft_config or '',
             'confirmed': bool(confirmed), 'ignore': bool(ignore),
             'verdict': verdict or '', 'verdictType': verdict_type or 'info',
+            'openFull': format_open_full(
+                get_open_full_counts(conn, org, dest, dow, carrier or 'dl', flight_number or '')
+            ),
         }
         for rowid, carrier, flight_number, dep_time, aircraft_config, confirmed, ignore, verdict, verdict_type in rows
     ]
 
     duration = get_route_duration(conn, org, dest)
+    day_grouping = get_day_grouping_row(conn, org, dest, dow)
 
     return {
         'org': org, 'dest': dest, 'dow': dow,
@@ -114,6 +122,9 @@ def get_schedule_for_route_day(conn, org, dest, dow):
         'aircraftOptions': load_aircraft_options(conn),
         'durationMinutes': duration['durationMinutes'] if duration else '',
         'durationConfirmed': duration['confirmed'] if duration else False,
+        'dayGrouping': day_grouping['dayGrouping'],
+        'dayGroupingConfirmed': day_grouping['confirmed'],
+        'knownDayGroupings': get_known_day_groupings(conn),
     }
 
 
@@ -220,7 +231,8 @@ def save_schedule_for_route_day(conn, payload):
       rows: [{ scheduleRow (existing rowid, or null for a new row),
                carrier, flightNumber, dep (minutes-since-midnight int),
                aircraftConfig, ignore (bool), deleted (bool) }],
-      durationMinutes: '' or a number
+      durationMinutes: '' or a number,
+      dayGrouping: '' or a string (see ServiceGrouping.save_day_grouping)
     }
     """
     org = str(payload['org']).strip().lower()
@@ -287,6 +299,10 @@ def save_schedule_for_route_day(conn, payload):
     duration_minutes = payload.get('durationMinutes')
     if duration_minutes not in ('', None):
         save_route_duration(conn, org, dest, int(duration_minutes))
+
+    day_grouping = payload.get('dayGrouping')
+    if day_grouping not in ('', None):
+        save_day_grouping(conn, org, dest, dow, str(day_grouping).strip())
 
     conn.commit()
 
