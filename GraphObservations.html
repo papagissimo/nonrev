@@ -16,6 +16,9 @@
   .chartRow { display: flex; flex-direction: column; gap: 24px; }
   .chartBlock h2 { font-size: 14px; margin: 0 0 6px 0; color: #333; }
   .chartOpts { font-size: 12px; color: #444; margin-bottom: 6px; }
+  .chartToggles { display: flex; gap: 16px; margin: 0 0 14px 0; padding: 8px 10px; background: #f6f6f6; border-radius: 4px; font-size: 12px; color: #333; }
+  .chartToggles label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .chartBlock.hidden { display: none; }
   svg { border: 1px solid #ddd; background: #fff; }
   .gridLine { stroke: #eee; stroke-width: 1; }
   .axisLabel { fill: #888; font-size: 10px; }
@@ -23,6 +26,8 @@
   .confBar { stroke: #999; stroke-width: 1.5; opacity: 0.55; }
   .curve { fill: none; stroke-width: 1.3; opacity: 0.55; }
   .curve:hover { opacity: 1; stroke-width: 2.2; }
+  .trajLine { stroke-width: 1.3; stroke-dasharray: 4 3; opacity: 0.7; }
+  .trajDot { stroke: #333; stroke-width: 0.5; cursor: pointer; }
   #tooltip {
     position: fixed; display: none; background: #222; color: #fff; font-size: 11px;
     padding: 5px 8px; border-radius: 4px; pointer-events: none; z-index: 10; white-space: nowrap;
@@ -43,12 +48,19 @@
   <span id="status"></span>
 </div>
 
+<div class="chartToggles">
+  <span>Show:</span>
+  <label><input type="checkbox" id="toggleHeatMap" checked> Heat map</label>
+  <label><input type="checkbox" id="toggleCurveChart" checked> Per-date curves</label>
+  <label><input type="checkbox" id="toggleSeatsChart" checked> Seats vs hours-to-departure</label>
+</div>
+
 <div class="chartRow">
-  <div class="chartBlock">
+  <div class="chartBlock" id="blockHeatMap">
     <h2>Heat map &mdash; color = T1 estimate</h2>
     <div id="heatMap"></div>
   </div>
-  <div class="chartBlock">
+  <div class="chartBlock" id="blockCurveChart">
     <h2>Per-date curves</h2>
     <div class="chartOpts">
       <label><input type="checkbox" id="showDots" checked> dots</label>
@@ -56,6 +68,14 @@
       <label style="margin-left:10px"><input type="checkbox" id="showConf" checked> confidence bars</label>
     </div>
     <div id="curveChart"></div>
+  </div>
+  <div class="chartBlock" id="blockSeatsChart">
+    <h2>Seats vs hours-to-departure</h2>
+    <div class="chartOpts">
+      One curve per flight-instance (date + flight). Solid = actual readings (precise, no uncertainty).
+      Dashed = trajectory to the 1-hour-before-departure estimate, with confidence bar.
+    </div>
+    <div id="seatsChart"></div>
   </div>
 </div>
 
@@ -270,11 +290,139 @@ function renderCurveChart(data) {
   container.appendChild(svg);
 }
 
+// Hours-before-departure x-scale for the seats chart: DECREASING left to
+// right (large hrs on the left, 0 - departure - on the right), so the
+// chart reads chronologically the same direction time actually passes.
+function xScaleHrs(hrs, maxHrs) {
+  var innerW = W - MARGIN.left - MARGIN.right;
+  var frac = maxHrs <= 0 ? 0 : (hrs / maxHrs);
+  return MARGIN.left + (1 - frac) * innerW;
+}
+
+function renderSeatsChart(data) {
+  var container = document.getElementById('seatsChart');
+  container.innerHTML = '';
+  if (!data.points.length) { container.textContent = 'No observations match these filters.'; return; }
+
+  // Domain: 0 (departure) out to the furthest hrs actually seen, across
+  // every point's readings, anchors, and target - same auto-scale
+  // approach as the other charts, no hardcoded window.
+  var maxHrs = 0, maxTtl = 0;
+  data.points.forEach(function (p) {
+    p.readings.forEach(function (r) { maxHrs = Math.max(maxHrs, r.hrs); maxTtl = Math.max(maxTtl, r.ttl); });
+    if (p.trajectory) {
+      p.trajectory.anchors.forEach(function (a) { maxHrs = Math.max(maxHrs, a.hrs); maxTtl = Math.max(maxTtl, a.ttl); });
+      maxHrs = Math.max(maxHrs, p.trajectory.targetHrs);
+      maxTtl = Math.max(maxTtl, p.trajectory.targetTtl + p.trajectory.confidenceHalfRange);
+    }
+  });
+  maxHrs = Math.max(maxHrs, 1);
+  maxTtl = Math.max(maxTtl, 8);
+  var yMax = Math.ceil(maxTtl / 2) * 2;
+
+  var innerH = H - MARGIN.top - MARGIN.bottom;
+  function yScale(ttl) { return MARGIN.top + innerH - (Math.max(0, ttl) / yMax) * innerH; }
+
+  var svg = svgEl('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H });
+
+  // x gridlines every 2 hours, y gridlines shared with buildAxes' scheme
+  var innerW = W - MARGIN.left - MARGIN.right;
+  var step = maxHrs > 12 ? 4 : 2;
+  for (var hr = 0; hr <= maxHrs; hr += step) {
+    var gx = xScaleHrs(hr, maxHrs);
+    svg.appendChild(svgEl('line', { class: 'gridLine', x1: gx, x2: gx, y1: MARGIN.top, y2: H - MARGIN.bottom }));
+    var glbl = svgEl('text', { class: 'axisLabel', x: gx, y: H - MARGIN.bottom + 14, 'text-anchor': 'middle' });
+    glbl.textContent = hr + 'h';
+    svg.appendChild(glbl);
+  }
+  for (var i = 0; i <= 4; i++) {
+    var frac = i / 4;
+    var gy = MARGIN.top + innerH - frac * innerH;
+    svg.appendChild(svgEl('line', { class: 'gridLine', x1: MARGIN.left, x2: W - MARGIN.right, y1: gy, y2: gy }));
+    var yl = svgEl('text', { class: 'axisLabel', x: MARGIN.left - 6, y: gy + 3, 'text-anchor': 'end' });
+    yl.textContent = Math.round(frac * yMax);
+    svg.appendChild(yl);
+  }
+
+  var byDate = {};
+  data.points.forEach(function (p) { (byDate[p.flightDate] = byDate[p.flightDate] || []).push(p); });
+  var dateList = Object.keys(byDate).sort();
+  var palette = ['#1a73e8', '#c5221f', '#188038', '#e37400', '#8430ce', '#12805c', '#a52714', '#5f6368'];
+  var dateColor = {};
+  dateList.forEach(function (d, di) { dateColor[d] = palette[di % palette.length]; });
+
+  data.points.forEach(function (p) {
+    var color = dateColor[p.flightDate];
+    var coords = p.readings.map(function (r) { return [xScaleHrs(r.hrs, maxHrs), yScale(r.ttl)]; });
+
+    // Actual readings: solid line + dots, no uncertainty - these are
+    // precise (his explicit call).
+    if (coords.length >= 2) {
+      var d0 = 'M ' + coords[0][0] + ' ' + coords[0][1];
+      for (var ci = 1; ci < coords.length; ci++) d0 += ' L ' + coords[ci][0] + ' ' + coords[ci][1];
+      var line = svgEl('path', { class: 'curve', d: d0, stroke: color, opacity: 0.75 });
+      var t0 = svgEl('title', {}); t0.textContent = p.flightDate + ' fl' + p.flightNumber;
+      line.appendChild(t0);
+      svg.appendChild(line);
+    }
+    p.readings.forEach(function (r, i) {
+      var dot = svgEl('circle', { class: 'dot', cx: coords[i][0], cy: coords[i][1], r: 3, fill: color });
+      dot.addEventListener('mousemove', function (evt) {
+        showTip(evt, p.flightDate + ' (' + p.dow + ') fl' + p.flightNumber + '<br>' +
+          r.hrs.toFixed(1) + 'h before dep &middot; ' + r.ttl + ' seats');
+      });
+      dot.addEventListener('mouseleave', hideTip);
+      svg.appendChild(dot);
+    });
+
+    // Trajectory: dashed connector from the anchor reading(s) through
+    // to the target point at 1h-before-departure - a straight line by
+    // construction of today's linear estimator (see
+    // compute_trajectory's docstring in GraphObservations.py). Anchors
+    // are already sorted furthest-out first by the backend.
+    if (p.trajectory && p.trajectory.anchors.length) {
+      var anchors = p.trajectory.anchors;
+      var tx = xScaleHrs(p.trajectory.targetHrs, maxHrs), ty = yScale(p.trajectory.targetTtl);
+      var trajPts = anchors.map(function (a) { return [xScaleHrs(a.hrs, maxHrs), yScale(a.ttl)]; });
+      trajPts.push([tx, ty]);
+      var dt = 'M ' + trajPts[0][0] + ' ' + trajPts[0][1];
+      for (var ti = 1; ti < trajPts.length; ti++) dt += ' L ' + trajPts[ti][0] + ' ' + trajPts[ti][1];
+      svg.appendChild(svgEl('path', { class: 'trajLine', d: dt, stroke: color, fill: 'none' }));
+
+      var half = p.trajectory.confidenceHalfRange;
+      var yTop = yScale(p.trajectory.targetTtl + half);
+      var yBot = yScale(Math.max(0, p.trajectory.targetTtl - half));
+      svg.appendChild(svgEl('line', { class: 'confBar', x1: tx, x2: tx, y1: yTop, y2: yBot, stroke: color }));
+
+      var tdot = svgEl('circle', { class: 'trajDot', cx: tx, cy: ty, r: 4, fill: color, opacity: 0.9 });
+      tdot.addEventListener('mousemove', function (evt) {
+        showTip(evt, p.flightDate + ' (' + p.dow + ') fl' + p.flightNumber + '<br>T1 estimate: ' +
+          p.trajectory.targetTtl + ' &plusmn; ' + half.toFixed(1) + ' seats at 1h before dep');
+      });
+      tdot.addEventListener('mouseleave', hideTip);
+      svg.appendChild(tdot);
+    }
+  });
+
+  container.appendChild(svg);
+}
+
 function render() {
   if (!currentData) return;
   renderHeatMap(currentData);
   renderCurveChart(currentData);
+  renderSeatsChart(currentData);
 }
+
+function applyChartToggles() {
+  document.getElementById('blockHeatMap').classList.toggle('hidden', !document.getElementById('toggleHeatMap').checked);
+  document.getElementById('blockCurveChart').classList.toggle('hidden', !document.getElementById('toggleCurveChart').checked);
+  document.getElementById('blockSeatsChart').classList.toggle('hidden', !document.getElementById('toggleSeatsChart').checked);
+}
+['toggleHeatMap', 'toggleCurveChart', 'toggleSeatsChart'].forEach(function (id) {
+  document.getElementById(id).addEventListener('change', applyChartToggles);
+});
+applyChartToggles();
 
 function loadGraph() {
   var sel = document.getElementById('routeSelect');

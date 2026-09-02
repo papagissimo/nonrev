@@ -1,7 +1,9 @@
 """
-GraphObservations backend: the fourth launcher tool. Two linked views over
-one route - a heat map and overlaid per-date curves - sharing one filter
-set (route, day-of-week multi-select, flight-date range).
+GraphObservations backend: the fourth launcher tool. Three linked views
+over one route - a heat map, overlaid per-date T1-estimate curves, and a
+per-service-instance actual-seats-vs-hours-to-departure view - sharing one
+filter set (route, day-of-week multi-select, flight-date range) and
+independently toggleable on the frontend.
 
 Each plotted point is one FLIGHT INSTANCE on one calendar date (not one raw
 observation) - e.g. "the 11:37am SLC-LAX flight on 2026-08-19" - positioned
@@ -98,12 +100,28 @@ def _dow_abbrev(flight_date_str):
     return DOW_ABBREV[d.weekday()]
 
 
-def compute_t1_estimate(readings, target_hours, golden_ticket_hours):
+def compute_trajectory(readings, target_hours, golden_ticket_hours):
     """
-    Bracket-nearest-to-target estimate, shared logic with the log
-    dialogue's JS version (see SeatLoggingDialog.html's
-    computeT1EstimateForPool - keep the two in lockstep by hand, since
-    there's no shared module between Python and the browser here).
+    The single source of truth for "where do we think this is headed."
+    Returns None (no estimate - same conditions as the old
+    compute_t1_estimate) or a dict:
+        {'anchors': [{'hrs':.., 'ttl':..}, ...],  # 1 or 2 real readings
+         'target':  {'hrs': target_hours, 'ttl': <estimate>}}
+
+    anchors is whichever real reading(s) the estimate was actually
+    built from. A straight line through anchors, extended to target,
+    is BY CONSTRUCTION the same math this function used internally -
+    that's deliberate, so the graph can draw exactly what the
+    estimator did rather than a separately-computed decoration. If the
+    estimator ever goes non-linear, this is the one place that
+    changes: anchors/target stays the contract, only what's plotted
+    between them (still this function's job, not the graph's) would
+    stop being a straight line.
+
+    Bracket-nearest-to-target logic, shared with the log dialogue's JS
+    version (see SeatLoggingDialog.html's computeT1EstimateForPool -
+    keep the two in lockstep by hand, since there's no shared module
+    between Python and the browser here).
 
     readings: list of dicts with 'hrs' (hoursBeforeDep) and 'ttl'
     (summed seats). No ceiling exclusion - every reading is eligible.
@@ -121,13 +139,16 @@ def compute_t1_estimate(readings, target_hours, golden_ticket_hours):
     Special case: exactly one reading total only counts as an estimate
     if it's within the golden-ticket threshold (his call) - otherwise a
     single distant reading implies no trend at all and isn't shown as
-    one. Returns None (no estimate) or a float.
+    one.
     """
     if not readings:
         return None
 
     if len(readings) == 1:
-        return readings[0]['ttl'] if readings[0]['hrs'] <= golden_ticket_hours else None
+        r = readings[0]
+        if r['hrs'] > golden_ticket_hours:
+            return None
+        return {'anchors': [r], 'target': {'hrs': target_hours, 'ttl': r['ttl']}}
 
     before = [r for r in readings if r['hrs'] >= target_hours]
     after = [r for r in readings if r['hrs'] <= target_hours]
@@ -150,12 +171,16 @@ def compute_t1_estimate(readings, target_hours, golden_ticket_hours):
         ordered = sorted(lst, key=lambda r: abs(r['hrs'] - target_hours))
         return ordered[0], ordered[1]
 
+    def result(anchors, ttl):
+        return {'anchors': anchors, 'target': {'hrs': target_hours, 'ttl': ttl}}
+
     if before and after:
         b = nearest_of(before, True)   # smallest hrs among before-side
         a = nearest_of(after, False)   # largest hrs among after-side
         if b['hrs'] == a['hrs']:
-            return b['ttl']
-        return b['ttl'] + (a['ttl'] - b['ttl']) * (b['hrs'] - target_hours) / (b['hrs'] - a['hrs'])
+            return result([b], b['ttl'])
+        ttl = b['ttl'] + (a['ttl'] - b['ttl']) * (b['hrs'] - target_hours) / (b['hrs'] - a['hrs'])
+        return result([b, a], ttl)
 
     if before:
         # Reaching here guarantees len(readings) >= 2 (top check above)
@@ -164,18 +189,48 @@ def compute_t1_estimate(readings, target_hours, golden_ticket_hours):
         # has something to return.
         nearer, second = two_nearest(before)
         if second['hrs'] == nearer['hrs']:
-            return nearer['ttl']
+            return result([nearer], nearer['ttl'])
         slope = (second['ttl'] - nearer['ttl']) / (second['hrs'] - nearer['hrs'])
-        return nearer['ttl'] + slope * (target_hours - nearer['hrs'])
+        ttl = nearer['ttl'] + slope * (target_hours - nearer['hrs'])
+        return result([second, nearer], ttl)
 
     if after:
         nearer2, second2 = two_nearest(after)
         if second2['hrs'] == nearer2['hrs']:
-            return nearer2['ttl']
+            return result([nearer2], nearer2['ttl'])
         slope2 = (second2['ttl'] - nearer2['ttl']) / (second2['hrs'] - nearer2['hrs'])
-        return nearer2['ttl'] + slope2 * (target_hours - nearer2['hrs'])
+        ttl = nearer2['ttl'] + slope2 * (target_hours - nearer2['hrs'])
+        return result([second2, nearer2], ttl)
 
     return None
+
+
+def compute_t1_estimate(readings, target_hours, golden_ticket_hours):
+    """
+    Thin wrapper kept for callers that only want the number, not the
+    anchors - just the target's ttl from compute_trajectory, or None.
+    Not re-implementing the math here on purpose: two copies of this
+    logic drifting apart is exactly the bug class it already caused
+    once (see compute_trajectory's docstring).
+    """
+    traj = compute_trajectory(readings, target_hours, golden_ticket_hours)
+    return traj['target']['ttl'] if traj else None
+
+
+def compute_confidence(readings, target_hours):
+    """
+    Confidence half-range in seats, at the target hour, given the full
+    reading set for a flight-instance (not just the trajectory's
+    anchors - deliberately the closest ANY real reading got to the
+    target, matching how this has always been computed here).
+    Wild-ass-guess linear model for now (CONFIDENCE_HOURS_TO_SEATS);
+    swap the body of this function for something real later without
+    touching any caller.
+    """
+    if not readings:
+        return 0.0
+    nearest_gap = min(abs(r['hrs'] - target_hours) for r in readings)
+    return CONFIDENCE_HOURS_TO_SEATS * nearest_gap
 
 
 def get_route_options(conn):
@@ -295,13 +350,12 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
         if not readings_old or dep_minutes is None:
             continue
 
-        t1_old = compute_t1_estimate(readings_old, T1_TARGET_HOURS, golden_ticket_hours)
-        t1_new = compute_t1_estimate(readings_new, T1_TARGET_HOURS, golden_ticket_hours)
-        if t1_old is None:
+        trajectory = compute_trajectory(readings_old, T1_TARGET_HOURS, golden_ticket_hours)
+        if trajectory is None:
             continue
-
-        nearest_gap = min(abs(r['hrs'] - T1_TARGET_HOURS) for r in readings_old)
-        confidence_half_range = CONFIDENCE_HOURS_TO_SEATS * nearest_gap
+        t1_old = trajectory['target']['ttl']
+        t1_new = compute_t1_estimate(readings_new, T1_TARGET_HOURS, golden_ticket_hours)
+        confidence_half_range = compute_confidence(readings_old, T1_TARGET_HOURS)
 
         points.append({
             'carrier': carrier,
@@ -313,6 +367,26 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
             't1New': round(t1_new, 2) if t1_new is not None else None,
             'confidenceHalfRange': round(confidence_half_range, 2),
             'numReadings': len(readings_old),
+            # Raw actual readings (precise, no uncertainty) for the
+            # seats-vs-hours-to-departure view - readings_old only
+            # (actual binary-search values, missing = 0), matching
+            # what t1Old itself was computed from. Sorted furthest-out
+            # first so the frontend can draw left-to-right as time
+            # actually passes (large hrs -> 0).
+            'readings': sorted(
+                [{'hrs': round(r['hrs'], 2), 'ttl': r['ttl']} for r in readings_old],
+                key=lambda r: -r['hrs'],
+            ),
+            # The trajectory - anchor reading(s) plus the target point
+            # at T1_TARGET_HOURS - is a straight line today by
+            # construction (see compute_trajectory). Rounded here so
+            # the frontend never needs to know about float noise.
+            'trajectory': {
+                'anchors': [{'hrs': round(a['hrs'], 2), 'ttl': a['ttl']} for a in trajectory['anchors']],
+                'targetHrs': T1_TARGET_HOURS,
+                'targetTtl': round(t1_old, 2),
+                'confidenceHalfRange': round(confidence_half_range, 2),
+            },
         })
 
     points.sort(key=lambda p: (p['flightDate'], p['depTimeMinutes']))
