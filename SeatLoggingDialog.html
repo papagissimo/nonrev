@@ -88,6 +88,12 @@
         <b>Golden ticket</b> - counted on the launcher as "caught" once any reading today lands at or under<br>
         <input type="number" step="0.1" id="setGoldenTicket"> h before departure
       </div>
+      <div class="tierRow">
+        <b>Open/full counts</b> - what the O/F column pools and how it classifies a reading<br>
+        Only count flight-dates on or after <input type="date" id="setOpenFullDateFrom"><br>
+        Full at or below <input type="number" step="1" id="setFullThreshold"> total seats &middot;
+        open at or above <input type="number" step="1" id="setOpenThreshold">
+      </div>
       <button id="saveSettingsBtn" onclick="saveSettings()">Save Settings</button>
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
@@ -364,6 +370,13 @@
       document.getElementById('setGoldenTicket').value = settings.goldenTicketHours;
     }
 
+    function populateOpenFullSettingsForm(settings) {
+      if (!settings) return;
+      document.getElementById('setOpenFullDateFrom').value = settings.dateFrom || '';
+      document.getElementById('setFullThreshold').value = settings.fullThreshold;
+      document.getElementById('setOpenThreshold').value = settings.openThreshold;
+    }
+
     function saveSettings() {
       var settings = {
         logEverything: document.getElementById('setLogEverything').checked,
@@ -383,16 +396,31 @@
           }
         ]
       };
+      var openFullSettings = {
+        dateFrom: document.getElementById('setOpenFullDateFrom').value,
+        fullThreshold: parseFloat(document.getElementById('setFullThreshold').value),
+        openThreshold: parseFloat(document.getElementById('setOpenThreshold').value)
+      };
       var status = document.getElementById('settingsStatus');
       status.textContent = 'Saving\u2026';
-      fetch('/api/saveSettings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings)
-      })
-        .then(function (res) { return res.json(); })
-        .then(function (result) {
-          if (result.error) throw new Error(result.error);
+      // Two separate settings blobs on the backend (different table keys -
+      // see settings.py/ServiceGrouping.py), saved together from this one
+      // button since he thinks of this as one "Settings" panel, not two.
+      Promise.all([
+        fetch('/api/saveSettings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settings)
+        }).then(function (res) { return res.json(); }),
+        fetch('/api/saveOpenFullSettings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(openFullSettings)
+        }).then(function (res) { return res.json(); })
+      ])
+        .then(function (results) {
+          var err = results.find(function (r) { return r.error; });
+          if (err) throw new Error(err.error);
           status.textContent = 'Saved.';
           loadBatch();
         })
@@ -496,6 +524,7 @@
       batch = result;
       renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
       if (batch.settings) populateSettingsForm(batch.settings);
+      if (batch.openFullSettings) populateOpenFullSettingsForm(batch.openFullSettings);
 
       // Seed the recent-readings panel from real logged history exactly
       // once, on the very first batch this page load ever sees - after

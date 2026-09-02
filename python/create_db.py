@@ -44,17 +44,17 @@ CREATE TABLE routeDurations (
 -- same route sharing the same string are pooled together when computing
 -- open/full counts; different strings mean different pools. The string
 -- carries no meaning to the software, only to him - no fixed vocabulary,
--- nothing enumerated. confirmed follows the same convention as
--- routeDurations/flightSchedule: starts FALSE (unreviewed - every day
--- defaults to its own dayOfWeek as its label, i.e. indistinguishable from
--- fully split), flips TRUE only once he's actually reviewed that route
--- and set real groupings via FlightScheduleDialog.
+-- nothing enumerated. No confirmed flag here (unlike routeDurations/
+-- flightSchedule) - tried that once, decided it wasn't earning its keep
+-- for this particular table and dropped it; every row always holds a
+-- real, meaningful label (starts as one of a few sensible defaults, not
+-- a placeholder), so there's no "unreviewed vs reviewed" state worth
+-- tracking.
 CREATE TABLE dayGroupings (
     org           TEXT NOT NULL,
     dest          TEXT NOT NULL,
     dayOfWeek     TEXT NOT NULL,
     dayGrouping   TEXT NOT NULL,
-    confirmed     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (org, dest, dayOfWeek)
 );
 

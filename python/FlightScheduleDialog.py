@@ -123,7 +123,6 @@ def get_schedule_for_route_day(conn, org, dest, dow):
         'durationMinutes': duration['durationMinutes'] if duration else '',
         'durationConfirmed': duration['confirmed'] if duration else False,
         'dayGrouping': day_grouping['dayGrouping'],
-        'dayGroupingConfirmed': day_grouping['confirmed'],
         'knownDayGroupings': get_known_day_groupings(conn),
     }
 

@@ -272,7 +272,7 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
 
 
 def get_next_batch(conn, skip_route_keys=None, include_departed=False):
-    from ServiceGrouping import get_open_full_counts, format_open_full
+    from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
 
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
@@ -407,6 +407,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
             'routeOrg': None, 'routeDest': None, 'summaryText': summary_text,
             'waitMinutes': wait_minutes, 'waitMessage': wait_message, 'rows': [],
             'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
+            'openFullSettings': load_open_full_settings(conn),
             'recentObservations': recent_observations(conn),
         }
 
@@ -484,6 +485,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
         'carrier': next_candidate['car'], 'routeFlag': route_flag,
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
         'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
+        'openFullSettings': load_open_full_settings(conn),
         'recentObservations': recent_observations(conn),
     }
 

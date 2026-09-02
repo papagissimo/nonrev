@@ -74,7 +74,6 @@
   </div>
 
   <div class="durationRow" id="dayGroupingRow" style="display:none;">
-    <span class="status-icon" id="dayGroupingIcon"></span>
     <label for="dayGroupingInput" style="margin:0;">day grouping (this day)</label>
     <input type="text" id="dayGroupingInput" list="dayGroupingOptions" placeholder="e.g. weekday">
   </div>
@@ -305,15 +304,9 @@
 
     function renderDayGrouping() {
       var row = document.getElementById('dayGroupingRow');
-      var icon = document.getElementById('dayGroupingIcon');
       var input = document.getElementById('dayGroupingInput');
       row.style.display = 'flex';
       input.value = current.dayGrouping || '';
-      icon.className = 'status-icon ' + (current.dayGroupingConfirmed ? 'confirmed' : 'unconfirmed');
-      icon.textContent = current.dayGroupingConfirmed ? '\u2713' : '?';
-      icon.title = current.dayGroupingConfirmed
-          ? 'confirmed - pooled with any other day sharing this label'
-          : 'unconfirmed - stands alone until reviewed and saved';
     }
 
     function renderRows() {

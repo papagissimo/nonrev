@@ -20,6 +20,7 @@ import SeatLoggingDialog
 import FlightScheduleDialog
 import ObservationsBrowser
 import GraphObservations
+import ServiceGrouping
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -106,6 +107,19 @@ def api_save_settings():
     conn = get_conn()
     try:
         settings_module.save_settings(conn, new_settings)
+        return jsonify({'saved': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveOpenFullSettings', methods=['POST'])
+def api_save_open_full_settings():
+    new_settings = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        ServiceGrouping.save_open_full_settings(conn, new_settings)
         return jsonify({'saved': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
