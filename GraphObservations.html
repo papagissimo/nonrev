@@ -43,6 +43,9 @@
     <select id="routeSelect"><option value="">Loading routes&hellip;</option></select>
   </label>
   <div id="dowBoxes"></div>
+  <label>Service
+    <select id="serviceSelect"><option value="">All services</option></select>
+  </label>
   <label>From <input type="date" id="dateFrom"></label>
   <label>To <input type="date" id="dateTo"></label>
   <span id="status"></span>
@@ -73,7 +76,11 @@
     <h2>Seats vs hours-to-departure</h2>
     <div class="chartOpts">
       One curve per flight-instance (date + flight). Solid = actual readings (precise, no uncertainty).
-      Dashed = trajectory to the 1-hour-before-departure estimate, with confidence bar.
+      Dashed = trajectory to the 1-hour-before-departure estimate, with confidence bar.<br>
+      Show <input type="number" step="0.25" id="xMinHrs" style="width:46px" value="0.75">
+      to <input type="number" step="0.5" id="xMaxHrs" style="width:46px" value="6">
+      hours before departure
+      <span style="color:#888">(0.75h is the last reading Delta actually offers - readings farther out than the max just aren't drawn, so one far-out check doesn't blow out the whole scale)</span>
     </div>
     <div id="seatsChart"></div>
   </div>
@@ -128,6 +135,67 @@ function hideTip() { document.getElementById('tooltip').style.display = 'none'; 
 function xScale(depMinutes) {
   var innerW = W - MARGIN.left - MARGIN.right;
   return MARGIN.left + (depMinutes / 1440) * innerW;
+}
+
+// Same gap-based clustering as ServiceGrouping.py's cluster_services/
+// service_representative (kept in lockstep by hand, no shared module
+// between Python and the browser here) - lets him isolate "just the
+// 9:30 service" instead of every departure on the route landing on one
+// chart at once.
+var SERVICE_GAP_MINUTES = 60;
+
+function clusterServices(depTimesMinutes) {
+  var times = depTimesMinutes.slice().sort(function (a, b) { return a - b; });
+  if (!times.length) return [];
+  var clusters = [[times[0]]];
+  for (var i = 1; i < times.length; i++) {
+    var lastCluster = clusters[clusters.length - 1];
+    if (times[i] - lastCluster[lastCluster.length - 1] > SERVICE_GAP_MINUTES) {
+      clusters.push([times[i]]);
+    } else {
+      lastCluster.push(times[i]);
+    }
+  }
+  return clusters;
+}
+
+function serviceRepresentative(cluster) {
+  var times = cluster.slice().sort(function (a, b) { return a - b; });
+  var n = times.length;
+  var median = (n % 2) ? times[Math.floor(n / 2)] : (times[n / 2 - 1] + times[n / 2]) / 2;
+  return Math.round(median / 15) * 15;
+}
+
+var selectedServiceRange = null; // null = all services; else [minDep, maxDep] inclusive
+
+function populateServiceSelect(points) {
+  var sel = document.getElementById('serviceSelect');
+  var prevValue = sel.value;
+  sel.innerHTML = '<option value="">All services</option>';
+  var clusters = clusterServices(points.map(function (p) { return p.depTimeMinutes; }));
+  clusters.forEach(function (cluster, i) {
+    var rep = serviceRepresentative(cluster);
+    var opt = document.createElement('option');
+    opt.value = Math.min.apply(null, cluster) + '|' + Math.max.apply(null, cluster);
+    opt.textContent = minutesTo12h(rep) + ' service';
+    sel.appendChild(opt);
+  });
+  // Keep his selection across a reload if that same range still exists
+  // (e.g. toggling a day-of-week checkbox) - otherwise fall back to "All".
+  var stillExists = Array.prototype.some.call(sel.options, function (o) { return o.value === prevValue; });
+  sel.value = stillExists ? prevValue : '';
+  selectedServiceRange = sel.value ? sel.value.split('|').map(Number) : null;
+}
+
+function displayedData() {
+  if (!currentData) return { points: [], dates: [] };
+  var points = currentData.points;
+  if (selectedServiceRange) {
+    points = points.filter(function (p) {
+      return p.depTimeMinutes >= selectedServiceRange[0] && p.depTimeMinutes <= selectedServiceRange[1];
+    });
+  }
+  return { points: points, dates: Array.from(new Set(points.map(function (p) { return p.flightDate; }))).sort() };
 }
 
 function buildAxes(svg, yLabelFn, yTickCount, yScale) {
@@ -291,11 +359,18 @@ function renderCurveChart(data) {
 }
 
 // Hours-before-departure x-scale for the seats chart: DECREASING left to
-// right (large hrs on the left, 0 - departure - on the right), so the
-// chart reads chronologically the same direction time actually passes.
-function xScaleHrs(hrs, maxHrs) {
+// right (large hrs on the left, minHrs - the closest real reading Delta
+// ever offers - on the right), so the chart reads chronologically the
+// same direction time actually passes. Domain is [minHrs, maxHrs], both
+// user-set (his call - auto-scaling to whatever hrs happened to appear
+// in the data let one stray far-out reading balloon the whole axis, and
+// the old fixed-at-0 right edge always drew dead space past 0.75h, since
+// nothing real ever reaches actual departure).
+function xScaleHrs(hrs, minHrs, maxHrs) {
   var innerW = W - MARGIN.left - MARGIN.right;
-  var frac = maxHrs <= 0 ? 0 : (hrs / maxHrs);
+  var span = maxHrs - minHrs;
+  var frac = span <= 0 ? 0 : (hrs - minHrs) / span;
+  frac = Math.max(0, Math.min(1, frac));
   return MARGIN.left + (1 - frac) * innerW;
 }
 
@@ -304,19 +379,24 @@ function renderSeatsChart(data) {
   container.innerHTML = '';
   if (!data.points.length) { container.textContent = 'No observations match these filters.'; return; }
 
-  // Domain: 0 (departure) out to the furthest hrs actually seen, across
-  // every point's readings, anchors, and target - same auto-scale
-  // approach as the other charts, no hardcoded window.
-  var maxHrs = 0, maxTtl = 0;
+  var minHrs = parseFloat(document.getElementById('xMinHrs').value);
+  var maxHrs = parseFloat(document.getElementById('xMaxHrs').value);
+  if (isNaN(minHrs)) minHrs = 0.75;
+  if (isNaN(maxHrs) || maxHrs <= minHrs) maxHrs = minHrs + 1;
+
+  // Only readings actually inside [minHrs, maxHrs] affect the y-scale or
+  // get drawn - a reading further out than maxHrs is simply not
+  // interesting to him right now and shouldn't stretch anything.
+  function inRange(hrs) { return hrs >= minHrs && hrs <= maxHrs; }
+
+  var maxTtl = 0;
   data.points.forEach(function (p) {
-    p.readings.forEach(function (r) { maxHrs = Math.max(maxHrs, r.hrs); maxTtl = Math.max(maxTtl, r.ttl); });
-    if (p.trajectory) {
-      p.trajectory.anchors.forEach(function (a) { maxHrs = Math.max(maxHrs, a.hrs); maxTtl = Math.max(maxTtl, a.ttl); });
-      maxHrs = Math.max(maxHrs, p.trajectory.targetHrs);
+    p.readings.forEach(function (r) { if (inRange(r.hrs)) maxTtl = Math.max(maxTtl, r.ttl); });
+    if (p.trajectory && inRange(p.trajectory.targetHrs)) {
       maxTtl = Math.max(maxTtl, p.trajectory.targetTtl + p.trajectory.confidenceHalfRange);
+      p.trajectory.anchors.forEach(function (a) { if (inRange(a.hrs)) maxTtl = Math.max(maxTtl, a.ttl); });
     }
   });
-  maxHrs = Math.max(maxHrs, 1);
   maxTtl = Math.max(maxTtl, 8);
   var yMax = Math.ceil(maxTtl / 2) * 2;
 
@@ -325,14 +405,15 @@ function renderSeatsChart(data) {
 
   var svg = svgEl('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H });
 
-  // x gridlines every 2 hours, y gridlines shared with buildAxes' scheme
+  // x gridlines across the fixed [minHrs, maxHrs] domain (not data-driven)
   var innerW = W - MARGIN.left - MARGIN.right;
-  var step = maxHrs > 12 ? 4 : 2;
-  for (var hr = 0; hr <= maxHrs; hr += step) {
-    var gx = xScaleHrs(hr, maxHrs);
+  var span = maxHrs - minHrs;
+  var step = span > 8 ? 2 : span > 3 ? 1 : 0.5;
+  for (var hr = Math.ceil(minHrs / step) * step; hr <= maxHrs + 0.0001; hr += step) {
+    var gx = xScaleHrs(hr, minHrs, maxHrs);
     svg.appendChild(svgEl('line', { class: 'gridLine', x1: gx, x2: gx, y1: MARGIN.top, y2: H - MARGIN.bottom }));
     var glbl = svgEl('text', { class: 'axisLabel', x: gx, y: H - MARGIN.bottom + 14, 'text-anchor': 'middle' });
-    glbl.textContent = hr + 'h';
+    glbl.textContent = (Math.round(hr * 100) / 100) + 'h';
     svg.appendChild(glbl);
   }
   for (var i = 0; i <= 4; i++) {
@@ -353,7 +434,8 @@ function renderSeatsChart(data) {
 
   data.points.forEach(function (p) {
     var color = dateColor[p.flightDate];
-    var coords = p.readings.map(function (r) { return [xScaleHrs(r.hrs, maxHrs), yScale(r.ttl)]; });
+    var visibleReadings = p.readings.filter(function (r) { return inRange(r.hrs); });
+    var coords = visibleReadings.map(function (r) { return [xScaleHrs(r.hrs, minHrs, maxHrs), yScale(r.ttl)]; });
 
     // Actual readings: solid line + dots, no uncertainty - these are
     // precise (his explicit call).
@@ -365,7 +447,7 @@ function renderSeatsChart(data) {
       line.appendChild(t0);
       svg.appendChild(line);
     }
-    p.readings.forEach(function (r, i) {
+    visibleReadings.forEach(function (r, i) {
       var dot = svgEl('circle', { class: 'dot', cx: coords[i][0], cy: coords[i][1], r: 3, fill: color });
       dot.addEventListener('mousemove', function (evt) {
         showTip(evt, p.flightDate + ' (' + p.dow + ') fl' + p.flightNumber + '<br>' +
@@ -379,15 +461,18 @@ function renderSeatsChart(data) {
     // to the target point at 1h-before-departure - a straight line by
     // construction of today's linear estimator (see
     // compute_trajectory's docstring in GraphObservations.py). Anchors
-    // are already sorted furthest-out first by the backend.
-    if (p.trajectory && p.trajectory.anchors.length) {
-      var anchors = p.trajectory.anchors;
-      var tx = xScaleHrs(p.trajectory.targetHrs, maxHrs), ty = yScale(p.trajectory.targetTtl);
-      var trajPts = anchors.map(function (a) { return [xScaleHrs(a.hrs, maxHrs), yScale(a.ttl)]; });
-      trajPts.push([tx, ty]);
-      var dt = 'M ' + trajPts[0][0] + ' ' + trajPts[0][1];
-      for (var ti = 1; ti < trajPts.length; ti++) dt += ' L ' + trajPts[ti][0] + ' ' + trajPts[ti][1];
-      svg.appendChild(svgEl('path', { class: 'trajLine', d: dt, stroke: color, fill: 'none' }));
+    // are already sorted furthest-out first by the backend. Skipped
+    // entirely if the target itself falls outside the visible window.
+    if (p.trajectory && p.trajectory.anchors.length && inRange(p.trajectory.targetHrs)) {
+      var anchors = p.trajectory.anchors.filter(function (a) { return inRange(a.hrs); });
+      var tx = xScaleHrs(p.trajectory.targetHrs, minHrs, maxHrs), ty = yScale(p.trajectory.targetTtl);
+      if (anchors.length) {
+        var trajPts = anchors.map(function (a) { return [xScaleHrs(a.hrs, minHrs, maxHrs), yScale(a.ttl)]; });
+        trajPts.push([tx, ty]);
+        var dt = 'M ' + trajPts[0][0] + ' ' + trajPts[0][1];
+        for (var ti = 1; ti < trajPts.length; ti++) dt += ' L ' + trajPts[ti][0] + ' ' + trajPts[ti][1];
+        svg.appendChild(svgEl('path', { class: 'trajLine', d: dt, stroke: color, fill: 'none' }));
+      }
 
       var half = p.trajectory.confidenceHalfRange;
       var yTop = yScale(p.trajectory.targetTtl + half);
@@ -409,9 +494,10 @@ function renderSeatsChart(data) {
 
 function render() {
   if (!currentData) return;
-  renderHeatMap(currentData);
-  renderCurveChart(currentData);
-  renderSeatsChart(currentData);
+  var data = displayedData();
+  renderHeatMap(data);
+  renderCurveChart(data);
+  renderSeatsChart(data);
 }
 
 function applyChartToggles() {
@@ -444,6 +530,7 @@ function loadGraph() {
     .then(function (r) {
       if (r.error) { status.textContent = r.error; return; }
       currentData = r;
+      populateServiceSelect(currentData.points);
       status.textContent = r.points.length + ' flight-instance' + (r.points.length === 1 ? '' : 's') +
         ' across ' + r.dates.length + ' date' + (r.dates.length === 1 ? '' : 's');
       render();
@@ -464,6 +551,12 @@ DOW_ORDER.forEach(function (d) {
 document.getElementById('routeSelect').addEventListener('change', loadGraph);
 document.getElementById('dateFrom').addEventListener('change', loadGraph);
 document.getElementById('dateTo').addEventListener('change', loadGraph);
+document.getElementById('serviceSelect').addEventListener('change', function () {
+  selectedServiceRange = this.value ? this.value.split('|').map(Number) : null;
+  render();
+});
+document.getElementById('xMinHrs').addEventListener('change', render);
+document.getElementById('xMaxHrs').addEventListener('change', render);
 ['showDots', 'showSpline', 'showConf'].forEach(function (id) {
   document.getElementById(id).addEventListener('change', render);
 });
