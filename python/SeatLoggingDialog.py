@@ -40,19 +40,6 @@ from ServiceGrouping import get_open_full_counts, format_open_full, load_open_fu
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
 
-# "Today's readings for this flight" tolerates this many minutes either
-# side of an exact depTime match, rather than requiring exact equality.
-# Two real causes make exact equality too fragile: (1) checkTimestamp has
-# always been stored to the minute only, while hoursBeforeDep was
-# computed from full-precision clock time, so a reconstruction (e.g. the
-# depTime-decorator migration's backfill) can land a minute off; (2) a
-# legitimate mid-day depTime correction on the schedule row - which he's
-# explicitly said he doesn't want to think of as breaking continuity for
-# a flight he's already been checking that day. 3 minutes comfortably
-# covers both without risking conflating two genuinely different
-# services, which are typically separated by hours (see clustering.py).
-DEP_TIME_MATCH_TOLERANCE_MINUTES = 3
-
 
 def eastern_now():
     return datetime.now(ET_ZONE)
@@ -122,20 +109,17 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     flight_date is the flight's own schedule date, not necessarily
     "today" in ET (see module docstring).
 
-    Matched on (carrier, org, dest, flightDate) plus depTime within
-    DEP_TIME_MATCH_TOLERANCE_MINUTES - never flightNumber (see module
-    docstring). Scoped to org/dest as well as depTime - two different
-    routes can share a depTime by coincidence, and without org/dest in
-    the filter this would silently pull the OTHER route's readings in
-    as if they were this flight's own history.
+    Matched on (carrier, org, dest, depTime, flightDate) - never
+    flightNumber (see module docstring). Scoped to org/dest as well as
+    depTime - two different routes can share a depTime by coincidence,
+    and without org/dest in the filter this would silently pull the
+    OTHER route's readings in as if they were this flight's own history.
     """
     rows = conn.execute(
         """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1 FROM observations
-           WHERE readingType='avail' AND carrier=? AND org=? AND dest=? AND flightDate=?
-           AND depTime BETWEEN ? AND ?
+           WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
            ORDER BY hoursBeforeDep ASC""",
-        (carrier, org, dest, flight_date,
-         dep_time - DEP_TIME_MATCH_TOLERANCE_MINUTES, dep_time + DEP_TIME_MATCH_TOLERANCE_MINUTES),
+        (carrier, dep_time, org, dest, flight_date),
     ).fetchall()
     return [
         {'hrs': r[0], 'y': r[1], 'cplus': r[2], 'onePS': r[3], 'd1': r[4]}
@@ -215,11 +199,10 @@ def get_launcher_summary(conn):
 
             best_hrs = conn.execute(
                 """SELECT MIN(hoursBeforeDep) FROM observations
-                   WHERE readingType='avail' AND carrier=? AND org=? AND dest=? AND flightDate=?
-                   AND depTime BETWEEN ? AND ?
+                   WHERE readingType='avail' AND carrier=? AND depTime=?
+                   AND org=? AND dest=? AND flightDate=?
                    AND hoursBeforeDep IS NOT NULL""",
-                (carrier, org, dest, flight_date_str,
-                 dep_time - DEP_TIME_MATCH_TOLERANCE_MINUTES, dep_time + DEP_TIME_MATCH_TOLERANCE_MINUTES),
+                (carrier, dep_time, org, dest, flight_date_str),
             ).fetchone()[0]
             if best_hrs is not None and best_hrs <= threshold:
                 golden += 1
@@ -236,12 +219,8 @@ def get_launcher_summary(conn):
 def get_flight_day_flag(conn, carrier, dep_time, org, dest, flight_date):
     row = conn.execute(
         """SELECT flag FROM flightDayFlag
-           WHERE carrier=? AND org=? AND dest=? AND flightDate=?
-           AND depTime BETWEEN ? AND ?
-           ORDER BY ABS(depTime - ?) ASC LIMIT 1""",
-        (carrier, org, dest, flight_date,
-         dep_time - DEP_TIME_MATCH_TOLERANCE_MINUTES, dep_time + DEP_TIME_MATCH_TOLERANCE_MINUTES,
-         dep_time),
+           WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?""",
+        (carrier, dep_time, org, dest, flight_date),
     ).fetchone()
     return row[0] if row else ''
 
@@ -256,23 +235,13 @@ def get_route_day_flag(conn, carrier, org, dest, flight_date):
 
 
 def save_flight_day_flag(conn, carrier, dep_time, org, dest, flight_date, flag_text):
-    existing = conn.execute(
-        """SELECT rowid FROM flightDayFlag
-           WHERE carrier=? AND org=? AND dest=? AND flightDate=?
-           AND depTime BETWEEN ? AND ?
-           ORDER BY ABS(depTime - ?) ASC LIMIT 1""",
-        (carrier, org, dest, flight_date,
-         dep_time - DEP_TIME_MATCH_TOLERANCE_MINUTES, dep_time + DEP_TIME_MATCH_TOLERANCE_MINUTES,
-         dep_time),
-    ).fetchone()
-    if existing is not None:
-        conn.execute("UPDATE flightDayFlag SET flag=? WHERE rowid=?", (flag_text, existing[0]))
-    else:
-        conn.execute(
-            """INSERT INTO flightDayFlag (carrier, org, dest, flightDate, depTime, flag)
-               VALUES (?,?,?,?,?,?)""",
-            (carrier, org, dest, flight_date, dep_time, flag_text),
-        )
+    conn.execute(
+        """INSERT INTO flightDayFlag (carrier, depTime, org, dest, flightDate, flag)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(carrier, org, dest, depTime, flightDate)
+           DO UPDATE SET flag=excluded.flag""",
+        (carrier, dep_time, org, dest, flight_date, flag_text),
+    )
     conn.commit()
     return {'saved': True}
 
@@ -294,11 +263,18 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
     settings = load_settings(conn)
     now = eastern_now()
 
-    # Consider both today's and yesterday's (ET) day-of-week schedule
-    # rows - see module docstring. Each is evaluated against its own
-    # real calendar date, so a flight that's already departed just falls
-    # out through the normal 45-minute cutoff below, same as always.
-    schedule_days = [now.date(), now.date() - timedelta(days=1)]
+    # Consider yesterday's, today's, AND tomorrow's (ET) day-of-week
+    # schedule rows - see module docstring for the yesterday leg
+    # (cross-midnight west-coast flights). Tomorrow is included so a
+    # flight scheduled for the next calendar date can already enter the
+    # candidate pool once it falls within an existing cadence tier's
+    # hours-until-departure range (e.g. a flight departing shortly after
+    # midnight, checked from tonight) - eligibility itself is untouched
+    # here, still governed entirely by the normal tier math below. A
+    # flight that's already departed still falls out through the normal
+    # 45-minute cutoff, same as always, regardless of which of the three
+    # days its schedule row came from.
+    schedule_days = [now.date() - timedelta(days=1), now.date(), now.date() + timedelta(days=1)]
 
     candidates = []
     departed_candidates = []  # always populated (see forced_route below) -
@@ -353,11 +329,9 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
                 todays_hrs = [
                     r[0] for r in conn.execute(
                         """SELECT hoursBeforeDep FROM observations
-                           WHERE readingType='avail' AND carrier=? AND org=? AND dest=? AND flightDate=?
-                           AND depTime BETWEEN ? AND ?
+                           WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
                            AND hoursBeforeDep IS NOT NULL""",
-                        (carrier, org, dest, flight_date_str,
-                         dep_time - DEP_TIME_MATCH_TOLERANCE_MINUTES, dep_time + DEP_TIME_MATCH_TOLERANCE_MINUTES),
+                        (carrier, dep_time, org, dest, flight_date_str),
                     ).fetchall()
                 ]
                 eligible_now, minutes_until_eligible = evaluate_eligibility(
