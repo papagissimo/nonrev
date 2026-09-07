@@ -278,11 +278,18 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
     settings = load_settings(conn)
     now = eastern_now()
 
-    # Consider both today's and yesterday's (ET) day-of-week schedule
-    # rows - see module docstring. Each is evaluated against its own
-    # real calendar date, so a flight that's already departed just falls
-    # out through the normal 45-minute cutoff below, same as always.
-    schedule_days = [now.date(), now.date() - timedelta(days=1)]
+    # Consider yesterday's, today's, AND tomorrow's (ET) day-of-week
+    # schedule rows - see module docstring for the yesterday leg
+    # (cross-midnight west-coast flights). Tomorrow is included so a
+    # flight scheduled for the next calendar date can already enter the
+    # candidate pool once it falls within an existing cadence tier's
+    # hours-until-departure range (e.g. a flight departing shortly after
+    # midnight, checked from tonight) - eligibility itself is untouched
+    # here, still governed entirely by the normal tier math below. A
+    # flight that's already departed still falls out through the normal
+    # 45-minute cutoff, same as always, regardless of which of the three
+    # days its schedule row came from.
+    schedule_days = [now.date(), now.date() - timedelta(days=1), now.date() + timedelta(days=1)]
 
     candidates = []
     departed_candidates = []  # only populated for rendering when include_departed - see below
