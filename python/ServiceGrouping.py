@@ -151,6 +151,15 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
     for this service on a grouped day, within the date range. open/full
     are classified against the settings' openThreshold/fullThreshold -
     a t1Old between them counts toward measured but neither bucket.
+
+    Matched against get_flight_points' own depTimeMinutes - which is
+    ITSELF a cluster representative (rounded to the nearest 15 min from
+    real observations), not a raw depTime - by the service's own
+    repMinutes (the same kind of representative, computed from
+    flightSchedule's raw depTimes). Comparing representative-to-
+    representative is deliberate: comparing a raw schedule depTime
+    (rarely a clean multiple of 15) against a rounded graph point would
+    essentially never match.
     """
     settings = load_open_full_settings(conn)
 
@@ -160,10 +169,6 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
         return {'measured': 0, 'open': 0, 'full': 0}
 
     grouped_days = get_grouped_days(conn, org, dest, day_of_week)
-    dep_time_keys = {
-        r['depTime']
-        for r in target_service['rows'] if r['dayOfWeek'] in grouped_days
-    }
 
     points = get_flight_points(
         conn, org, dest,
@@ -173,7 +178,7 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
 
     measured = open_count = full_count = 0
     for p in points:
-        if p['depTimeMinutes'] not in dep_time_keys:
+        if p['depTimeMinutes'] != target_service['repMinutes']:
             continue
         measured += 1
         if p['t1Old'] >= settings['openThreshold']:
