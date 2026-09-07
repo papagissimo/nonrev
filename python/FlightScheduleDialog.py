@@ -86,7 +86,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
     dow = normalize_dow(dow)
 
     rows = conn.execute(
-        """SELECT rowid, carrier, flightNumber, depTime, aircraftConfig, confirmed, ignore, verdict, verdictType
+        """SELECT rowid, carrier, flightNumber, depTime, aircraftConfig, ignore, verdict, verdictType
            FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek=?
            ORDER BY depTime""",
         (org, dest, dow),
@@ -102,13 +102,13 @@ def get_schedule_for_route_day(conn, org, dest, dow):
             'scheduleRow': rowid, 'carrier': carrier or 'dl',
             'flightNumber': flight_number or '', 'dep': dep_time,
             'depDisplay': minutes_to_12h(dep_time), 'aircraftConfig': aircraft_config or '',
-            'confirmed': bool(confirmed), 'ignore': bool(ignore),
+            'ignore': bool(ignore),
             'verdict': verdict or '', 'verdictType': verdict_type or 'info',
             'openFull': format_open_full(
                 get_open_full_counts(conn, org, dest, dow, carrier or 'dl', flight_number or '')
             ),
         }
-        for rowid, carrier, flight_number, dep_time, aircraft_config, confirmed, ignore, verdict, verdict_type in rows
+        for rowid, carrier, flight_number, dep_time, aircraft_config, ignore, verdict, verdict_type in rows
     ]
 
     duration = get_route_duration(conn, org, dest)
@@ -259,7 +259,7 @@ def save_schedule_for_route_day(conn, payload):
 
         conn.execute(
             """UPDATE flightSchedule
-               SET carrier=?, flightNumber=?, depTime=?, aircraftConfig=?, confirmed=1, ignore=?, verdict=?, verdictType=?
+               SET carrier=?, flightNumber=?, depTime=?, aircraftConfig=?, ignore=?, verdict=?, verdictType=?
                WHERE rowid=?""",
             (new_carrier, new_flight_number, entry['dep'],
              entry['aircraftConfig'], 1 if entry.get('ignore') else 0,
@@ -287,8 +287,8 @@ def save_schedule_for_route_day(conn, payload):
     for entry in new_rows:
         conn.execute(
             """INSERT INTO flightSchedule
-               (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed, verdict, verdictType, ignore)
-               VALUES (?,?,?,?,?,?,?,1,?,?,?)""",
+               (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (entry.get('carrier') or 'dl', entry['flightNumber'], org, dest, dow,
              entry['dep'], entry['aircraftConfig'],
              (entry.get('verdict') or '').strip() or None,
@@ -341,8 +341,8 @@ def copy_to_other_days(conn, org, dest, source_dow):
         for carrier, flight_number, dep_time, aircraft_config, ignore, verdict, verdict_type in source_rows:
             conn.execute(
                 """INSERT INTO flightSchedule
-                   (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, confirmed, verdict, verdictType, ignore)
-                   VALUES (?,?,?,?,?,?,?,0,?,?,?)""",
+                   (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (carrier, flight_number, org, dest, day, dep_time, aircraft_config, verdict, verdict_type, ignore),
             )
             copied_count += 1

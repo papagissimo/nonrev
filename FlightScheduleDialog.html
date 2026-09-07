@@ -83,7 +83,6 @@
 
   <table id="schedTable" style="display:none;">
     <colgroup>
-      <col style="width:24px;">
       <col style="width:44px;">
       <col style="width:90px;">
       <col style="width:100px;">
@@ -95,7 +94,6 @@
     </colgroup>
     <thead>
       <tr>
-        <th></th>
         <th>car</th>
         <th>flight</th>
         <th>dep time</th>
@@ -317,11 +315,7 @@
       visibleRows.forEach(function (row) {
         var idx = current.rows.indexOf(row);
         var tr = document.createElement('tr');
-        var iconClass = row.confirmed ? 'confirmed' : 'unconfirmed';
-        var iconChar = row.confirmed ? '\u2713' : '?';
         tr.innerHTML =
-          '<td><span class="status-icon ' + iconClass + '" title="' +
-            (row.confirmed ? 'confirmed' : 'unconfirmed') + '">' + iconChar + '</span></td>' +
           '<td><input class="car" data-i="' + idx + '" value="' + (row.carrier || 'dl') + '"></td>' +
           '<td><input class="flt" data-i="' + idx + '" value="' + (row.flightNumber || '') + '"></td>' +
           '<td><input class="dep" data-i="' + idx + '" value="' + (row.depDisplay || '') + '"></td>' +
@@ -355,7 +349,6 @@
         dep: null, depDisplay: '',
         aircraftConfig: '',
         verdict: '', verdictType: 'info',
-        confirmed: false,
         ignore: false,
         deleted: false,
         // A never-yet-saved row has no observation history to pool -
@@ -527,7 +520,7 @@
           if (result.error) throw new Error(result.error);
           document.getElementById('status').textContent = 'Saved.';
           isDirty = false;
-          // Reload this route/day fresh, so confirmed icons and any
+          // Reload this route/day fresh, so the duration icon and any
           // server-assigned bogus numbers reflect what actually got saved.
           loadSchedule();
         })

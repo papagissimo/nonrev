@@ -8,18 +8,23 @@ settled understanding — no history of how it was learned.
 
 ## Flight identity
 
-Flight numbers are worthless as identity within this project. Delta
-rotates flight numbers week to week, and even reuses the same number for
-both directions of a round-trip pairing on the same day. A flight's real
-identity here is origin + destination + scheduled local departure time —
-corrected in place through the day as needed, never matched by flight
-number.
+Flight numbers are not stable, and that's a fact about how Delta
+operates, not a data-quality complaint. Rotating a number week to week
+and reusing one number for both directions of a same-day round-trip
+pairing are two known examples of this, not an exhaustive list — Delta
+does other things with numbering that would break identity-matching just
+as badly if this project ever leaned on it. A flight's real identity
+here is origin + destination + scheduled local departure time — corrected
+in place through the day as needed, never matched by flight number.
 
 Flight numbers still have real, narrow uses outside this project's own
 logic: looking a flight up externally (e.g. "is Delta 1234 running
 tonight?"), and tracing a specific fat-fingered entry back to what it was
 probably supposed to be. Useful for talking to the outside world; never
-useful as a key or join inside this project.
+useful as a key or join inside this project. In the schema, the column
+holding it is named `carriersFltNum_notStable_DO_NOT_USE` for exactly
+this reason — the name itself is the enforcement, since a comment here
+would go stale.
 
 ## Service vs. route vs. flight number
 
