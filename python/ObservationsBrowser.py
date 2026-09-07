@@ -28,6 +28,20 @@ REAL_COLUMNS = [
     'hoursBeforeDep', 'nextDesiredLog',
 ]
 
+# REAL_COLUMNS above are display/dict-key names (what this module's
+# callers and ObservationsBrowser.html already expect) - 'flightNumber'
+# is kept as that display name for continuity, but the actual column in
+# the observations table is carriersFltNum_notStable_DO_NOT_USE (decorative
+# only, never matched/joined on - see domainKnowledge.md). This maps a
+# display name to its real SQL column wherever one gets interpolated
+# into a query (SELECT list, WHERE, ORDER BY) - identity for every other
+# column, which never had a name mismatch.
+SQL_COLUMN_FOR = {'flightNumber': 'carriersFltNum_notStable_DO_NOT_USE'}
+
+
+def _sql_col(display_col):
+    return SQL_COLUMN_FOR.get(display_col, display_col)
+
 # depTime isn't a real observations column, and deliberately isn't joined
 # in from flightSchedule's current row either - a flightNumber can be
 # renamed or dropped from flightSchedule entirely (the known bogus-number
@@ -112,7 +126,7 @@ def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20,
         parts = [p.strip() for p in str(val).split(',') if p.strip()]
         if not parts:
             continue
-        or_clause = ' OR '.join(f"CAST({col} AS TEXT) LIKE ?" for _ in parts)
+        or_clause = ' OR '.join(f"CAST({_sql_col(col)} AS TEXT) LIKE ?" for _ in parts)
         where_clauses.append(f"({or_clause})")
         params.extend(f"%{p}%" for p in parts)
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
@@ -130,8 +144,8 @@ def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20,
         limit_sql = "" if limit is None else "LIMIT ?"
         query_params = list(params) + ([] if limit is None else [limit])
         rows = conn.execute(
-            f"""SELECT {', '.join(REAL_COLUMNS)} FROM observations {where_sql}
-                ORDER BY {sort_col} {sort_dir_sql}, observationId {sort_dir_sql}
+            f"""SELECT {', '.join(_sql_col(c) for c in REAL_COLUMNS)} FROM observations {where_sql}
+                ORDER BY {_sql_col(sort_col)} {sort_dir_sql}, observationId {sort_dir_sql}
                 {limit_sql}""",
             query_params,
         ).fetchall()
@@ -149,7 +163,7 @@ def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20,
     # matching row instead. Observations is a few thousand rows, still
     # cheap; a table that outgrows this would need a different approach.
     rows = conn.execute(
-        f"SELECT {', '.join(REAL_COLUMNS)} FROM observations {where_sql}",
+        f"SELECT {', '.join(_sql_col(c) for c in REAL_COLUMNS)} FROM observations {where_sql}",
         params,
     ).fetchall()
 

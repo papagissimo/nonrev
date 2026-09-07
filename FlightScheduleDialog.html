@@ -159,6 +159,28 @@
     }
     populateDowSelect();
 
+    // If opened with org/dest[/dow] in the URL - the case when
+    // SeatLoggingDialog's route-level pencil opens this modally,
+    // already knowing which route+day to show - prefill and load
+    // right away. Opened plain (no query string), this is unchanged:
+    // a blank picker waiting for manual entry.
+    (function prefillFromQueryString() {
+      var params = new URLSearchParams(window.location.search);
+      var org = params.get('org');
+      var dest = params.get('dest');
+      var dow = params.get('dow');
+      if (!org || !dest) return;
+      document.getElementById('orgInput').value = org.toLowerCase();
+      document.getElementById('destInput').value = dest.toLowerCase();
+      if (dow) {
+        var sel = document.getElementById('dowSelect');
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === dow.toLowerCase()) { sel.selectedIndex = i; break; }
+        }
+      }
+      loadSchedule();
+    })();
+
     // Delegated - the tbody element persists across renderRows() calls
     // even though its innerHTML is replaced each time, so this only
     // needs attaching once. Covers every editable field in the table:
@@ -520,6 +542,14 @@
           if (result.error) throw new Error(result.error);
           document.getElementById('status').textContent = 'Saved.';
           isDirty = false;
+          if (window.parent && window.parent !== window &&
+              typeof window.parent.onFlightScheduleSaved === 'function') {
+            // Embedded - let the parent close the modal and refresh the
+            // log screen itself, rather than reloading a dialogue that's
+            // about to be torn down anyway.
+            window.parent.onFlightScheduleSaved();
+            return;
+          }
           // Reload this route/day fresh, so the duration icon and any
           // server-assigned bogus numbers reflect what actually got saved.
           loadSchedule();

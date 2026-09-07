@@ -8,14 +8,17 @@ independently toggleable on the frontend.
 Each plotted point is one FLIGHT INSTANCE on one calendar date (not one raw
 observation) - e.g. "the 11:37am SLC-LAX flight on 2026-08-19" - positioned
 at its own local departure time-of-day, colored/valued by its T1 estimate.
-That grouping is safe without any cross-day flight-identity matching: within
-a single flightDate, (carrier, flightNumber, org, dest) already uniquely
-tags one real flight instance (see SeatLoggingDialog's docstring - every
-observation carries a real flightNumber assigned at logging time). Nothing
-here ever needs to decide whether "flight 3 last Wednesday" is "flight 3
-this Wednesday" - each date's points stand on their own, placed by real
-clock time, which is exactly what sidesteps that whole problem for this
-graph (see project notes on the route-level view's design).
+Readings are grouped into one flight instance by depTime clustering WITHIN
+that single date (see clustering.py) - never by flightNumber, which isn't a
+stable identifier at all (see domainKnowledge.md). Exact depTime equality
+isn't used either: a same-day depTime correction on the schedule row (a typo
+fix mid-session) would otherwise split one real flight's readings into two
+points, so nearby depTimes on the same date are pooled the same gap-based
+way ServiceGrouping pools services across different days. Nothing here ever
+needs to decide whether "flight 3 last Wednesday" is "flight 3 this
+Wednesday" - each date's points stand on their own, which is exactly what
+sidesteps that whole problem for this graph (see project notes on the
+route-level view's design).
 
 T1 estimate math (compute_t1_estimate, target T-60min) started as a
 port of the old Apps Script computeBucketEstimate_, then was revised with
@@ -52,7 +55,7 @@ it makes a borderline case less comfortable).
 from collections import defaultdict
 from datetime import datetime
 
-from ObservationsBrowser import dep_time_minutes
+from clustering import cluster_services, service_representative
 from settings import load_settings
 
 # Locked design (agreed with him directly, not just a port default anymore):
@@ -242,20 +245,25 @@ def get_route_options(conn):
 
 def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
     """
-    Returns one point per (flightNumber, flightDate) flight instance for
-    the given route, filtered by day-of-week (list of 'Mon'/'Tue'/...,
-    empty/None means all) and flightDate range (either end optional).
+    Returns one point per distinct flight instance for the given route -
+    grouped by depTime clustering WITHIN each flightDate (see module
+    docstring and clustering.py), never by flightNumber - filtered by
+    day-of-week (list of 'Mon'/'Tue'/..., empty/None means all) and
+    flightDate range (either end optional).
 
     Each point: {flightDate, dow, depTimeMinutes, depTimeDisplay,
-                 t1Old, t1New, confidenceHalfRange, numReadings}
+                 flightNumber, t1Old, t1New, confidenceHalfRange, numReadings}
     t1Old is the estimate exactly as it's always worked (actual cabin
     values only, missing = 0). t1New substitutes an expected resolved
     value for a cabin whose actual value is missing but which has a
     genuine nonzero cheap-side floor glance - see substitute_for_floor.
     The two are shown side by side rather than one replacing the other.
-    Points with no computable depTimeMinutes (unconfirmed airport, or
-    every reading in the group has a malformed hoursBeforeDep) are
-    dropped - nothing to place them on the x-axis with.
+    flightNumber is carried through purely for display (a tooltip label)
+    - the most recently logged reading's value in the group, never used
+    to decide the grouping itself.
+    Points with no depTime at all (never captured - a handful of legacy
+    rows predating this column, or an unconfirmed-airport gap at logging
+    time) are dropped - nothing to place them on the x-axis with.
     """
     golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
 
@@ -270,7 +278,8 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
     where_sql = " AND ".join(where)
 
     rows = conn.execute(
-        f"""SELECT carrier, flightNumber, flightDate, checkTimestamp,
+        f"""SELECT flightDate, checkTimestamp, depTime,
+                   carriersFltNum_notStable_DO_NOT_USE,
                    hoursBeforeDep, y, cPlus, firstOrPS, d1,
                    cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
             FROM observations
@@ -278,16 +287,39 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
         params,
     ).fetchall()
 
-    groups = defaultdict(list)
-    for (carrier, flight_number, flight_date, check_ts, hrs, y, c_plus, first_ps, d1,
-         cheap_y, cheap_c_plus, cheap_first_ps, cheap_d1) in rows:
-        groups[(carrier, flight_number, flight_date)].append({
-            'checkTimestamp': check_ts,
-            'hrs': hrs,
-            'y': y, 'cPlus': c_plus, 'firstOrPS': first_ps, 'd1': d1,
-            'cheapY': cheap_y, 'cheapCPlus': cheap_c_plus,
-            'cheapFirstOrPS': cheap_first_ps, 'cheapD1': cheap_d1,
-        })
+    # Group by flightDate first (each date's own set of distinct flights,
+    # never blended across dates - see module docstring), then split each
+    # date's own readings into distinct flight instances by depTime
+    # clustering - not exact equality, so a same-day depTime correction
+    # can't silently split one real flight's readings into two points.
+    by_date = defaultdict(list)
+    for row in rows:
+        by_date[row[0]].append(row)
+
+    groups = defaultdict(list)  # (flightDate, clusterRepMinutes) -> [obs dicts]
+    for flight_date, date_rows in by_date.items():
+        dep_times = [r[2] for r in date_rows if r[2] is not None]
+        clusters = cluster_services(dep_times)
+        rep_by_time = {}
+        for cluster in clusters:
+            rep = service_representative(cluster)
+            for t in cluster:
+                rep_by_time[t] = rep
+
+        for (f_date, check_ts, dep_time, flight_number, hrs, y, c_plus, first_ps, d1,
+             cheap_y, cheap_c_plus, cheap_first_ps, cheap_d1) in date_rows:
+            if dep_time is None:
+                continue  # nothing to cluster this reading into - dropped
+            rep = rep_by_time[dep_time]
+            groups[(flight_date, rep)].append({
+                'checkTimestamp': check_ts,
+                'depTime': dep_time,
+                'flightNumber': flight_number,
+                'hrs': hrs,
+                'y': y, 'cPlus': c_plus, 'firstOrPS': first_ps, 'd1': d1,
+                'cheapY': cheap_y, 'cheapCPlus': cheap_c_plus,
+                'cheapFirstOrPS': cheap_first_ps, 'cheapD1': cheap_d1,
+            })
 
     dow_filter = set(days_of_week) if days_of_week else None
 
@@ -321,14 +353,14 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
         return 0, (cheap if cheap is not None else 0)
 
     points = []
-    for (carrier, flight_number, flight_date), obs_list in groups.items():
+    for (flight_date, dep_minutes), obs_list in groups.items():
         dow = _dow_abbrev(flight_date)
         if dow_filter and dow not in dow_filter:
             continue
 
         readings_old = []
         readings_new = []
-        dep_minutes = None
+        flight_number_display = ''
         for obs in obs_list:
             if obs['hrs'] is None:
                 continue
@@ -344,10 +376,13 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
 
             readings_old.append({'hrs': hrs, 'ttl': y_old + cp_old + fp_old + d1_old})
             readings_new.append({'hrs': hrs, 'ttl': y_new + cp_new + fp_new + d1_new})
-            if dep_minutes is None:
-                dep_minutes = dep_time_minutes(conn, org, obs['checkTimestamp'], obs['hrs'])
+            # Decoration only (see module docstring) - whichever reading's
+            # value happens to be seen last in iteration order, no real
+            # significance to the choice beyond having something to show.
+            if obs['flightNumber']:
+                flight_number_display = obs['flightNumber']
 
-        if not readings_old or dep_minutes is None:
+        if not readings_old:
             continue
 
         trajectory = compute_trajectory(readings_old, T1_TARGET_HOURS, golden_ticket_hours)
@@ -358,8 +393,7 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
         confidence_half_range = compute_confidence(readings_old, T1_TARGET_HOURS)
 
         points.append({
-            'carrier': carrier,
-            'flightNumber': flight_number,
+            'flightNumber': flight_number_display,
             'flightDate': flight_date,
             'dow': dow,
             'depTimeMinutes': dep_minutes,

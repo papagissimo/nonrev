@@ -1,20 +1,21 @@
+import os
 import sqlite3
 
-DB_PATH = "nonrev.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nonrev.db')
 
 SCHEMA = """
 CREATE TABLE flightSchedule (
-    carrier         TEXT NOT NULL,
-    flightNumber    TEXT NOT NULL,
-    org             TEXT NOT NULL,
-    dest            TEXT NOT NULL,
-    dayOfWeek       TEXT NOT NULL,
-    depTime         INTEGER NOT NULL,
-    aircraftConfig  TEXT NOT NULL,
-    verdict         TEXT,
-    ignore          INTEGER NOT NULL DEFAULT 0,
-    humanReviewed   INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (carrier, flightNumber, org, dest, dayOfWeek)
+    carrier                              TEXT NOT NULL,
+    carriersFltNum_notStable_DO_NOT_USE  TEXT NOT NULL,
+    org                                  TEXT NOT NULL,
+    dest                                 TEXT NOT NULL,
+    dayOfWeek                           TEXT NOT NULL,
+    depTime                             INTEGER NOT NULL,
+    aircraftConfig                      TEXT NOT NULL,
+    verdict                             TEXT,
+    ignore                              INTEGER NOT NULL DEFAULT 0,
+    humanReviewed                       INTEGER NOT NULL DEFAULT 0,
+    verdictType                         TEXT NOT NULL DEFAULT 'info'
 );
 
 CREATE TABLE aircraftConfigs (
@@ -70,12 +71,13 @@ CREATE TABLE dayGroupings (
 CREATE TABLE observations (
     observationId   INTEGER PRIMARY KEY AUTOINCREMENT,
     carrier         TEXT NOT NULL,
-    flightNumber    TEXT,
+    carriersFltNum_notStable_DO_NOT_USE  TEXT,
     org             TEXT NOT NULL,
     dest            TEXT NOT NULL,
     flightDate      TEXT NOT NULL,
     checkTimestamp  TEXT NOT NULL,
     hoursBeforeDep  REAL,
+    depTime         INTEGER,
     readingType     TEXT NOT NULL CHECK (readingType IN ('avail', 'soloSelect', 'pairSelect')),
     y               INTEGER,
     cPlus           INTEGER,
@@ -89,11 +91,11 @@ CREATE TABLE observations (
 );
 
 CREATE INDEX idxObservationsFlightDay
-    ON observations (carrier, flightNumber, org, dest, flightDate);
+    ON observations (carrier, org, dest, depTime, flightDate);
 
 -- Both flag tables below are the free-text "hey, look here" mechanism -
 -- deliberately NOT the same thing as flightSchedule.verdict (a
--- multi-week (flightNumber, dayOfWeek) pattern judgment). These are
+-- multi-week (org, dest, depTime, dayOfWeek) pattern judgment). These are
 -- single mutable fields scoped to one specific flight-date instance:
 -- writing over one replaces whatever was there, no history kept.
 -- No fixed vocabulary - plain text, searchable later the same
@@ -101,12 +103,13 @@ CREATE INDEX idxObservationsFlightDay
 
 CREATE TABLE flightDayFlag (
     carrier       TEXT NOT NULL,
-    flightNumber  TEXT NOT NULL,
+    carriersFltNum_notStable_DO_NOT_USE  TEXT,
     org           TEXT NOT NULL,
     dest          TEXT NOT NULL,
     flightDate    TEXT NOT NULL,
+    depTime       INTEGER,
     flag          TEXT,
-    PRIMARY KEY (carrier, flightNumber, org, dest, flightDate)
+    PRIMARY KEY (carrier, org, dest, depTime, flightDate)
 );
 
 CREATE TABLE routeDayFlag (
@@ -121,6 +124,11 @@ CREATE TABLE routeDayFlag (
 
 
 def create_db():
+    if os.path.exists(DB_PATH):
+        raise SystemExit(
+            f"{DB_PATH} already exists - create_db.py is only for a from-scratch "
+            f"setup. Delete it first if you really mean to start over."
+        )
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
     conn.commit()

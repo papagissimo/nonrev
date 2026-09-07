@@ -3,16 +3,18 @@ SeatLoggingDialog backend: port of Entrydialog.gs.js's getNextBatch /
 saveEntryDialog / cadence engine to Python against nonrev.db, replacing
 Sheets/PropertiesService.
 
-One real simplification versus the old version: the old sheet had no
-reliable flight-number field, so "which readings are for this exact
-flight instance today" had to be inferred by fuzzy-matching org/dest/dep
-time within +/-30 min. Here, every observation carries a real
-flightNumber (assigned from the flightSchedule row it was logged
-against), so "today's readings for this flight" is an exact match on
-(carrier, flightNumber, flightDate) - no fuzzy matching needed for this
-part. depTime itself still deliberately isn't stored on observations
-(see schema notes) - it's read from flightSchedule via flightNumber
-whenever it's needed for display or hours-until-departure math.
+Flight identity: a real Delta flight number is not a stable identifier
+(see domainKnowledge.md / flightSchedule's carriersFltNum_notStable_
+DO_NOT_USE column) - never matched on, anywhere. "Today's readings for
+this flight" is instead an exact match on (carrier, org, dest, depTime,
+flightDate): depTime is captured directly on each observation at logging
+time (from whatever the schedule said then), not read back from
+flightSchedule afterward - so a later depTime correction there can never
+make an already-logged observation's own recorded time go stale, and
+nothing here needs flightSchedule at all once a reading exists. This is
+a real simplification versus the old Sheets version too, which had no
+reliable flight-number field at all and had to fuzzy-match org/dest/dep
+time within +/-30 min - exact match now, on data each row owns outright.
 
 Cross-midnight handling: a flight can still be legitimately "in play"
 even after the calendar has rolled over in ET, if its own origin airport
@@ -33,11 +35,7 @@ from zoneinfo import ZoneInfo
 
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from settings import load_settings
-# Deliberately NOT imported at module level - ServiceGrouping pulls in
-# GraphObservations -> ObservationsBrowser, which itself imports from
-# THIS module (eastern_now/ET_ZONE/minutes_to_12h) - a module-level
-# import here would be circular. Imported lazily inside get_next_batch
-# instead, by which point this module has already finished loading.
+from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -103,7 +101,7 @@ def load_d1_map(conn):
     }
 
 
-def previous_readings_for(conn, carrier, flight_number, org, dest, flight_date):
+def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     """
     Every reading logged today for this exact flight, sorted
     most-recent-check first (ascending hoursBeforeDep, since it counts
@@ -111,17 +109,17 @@ def previous_readings_for(conn, carrier, flight_number, org, dest, flight_date):
     flight_date is the flight's own schedule date, not necessarily
     "today" in ET (see module docstring).
 
-    Scoped to org/dest as well as carrier/flightNumber - a flight number
-    is sometimes reused between the two directions of a route pair (same
-    tail, there-and-back) on the same calendar date, and without org/dest
-    in the filter this would silently pull the OTHER direction's readings
-    in as if they were this flight's own history.
+    Matched on (carrier, org, dest, depTime, flightDate) - never
+    flightNumber (see module docstring). Scoped to org/dest as well as
+    depTime - two different routes can share a depTime by coincidence,
+    and without org/dest in the filter this would silently pull the
+    OTHER route's readings in as if they were this flight's own history.
     """
     rows = conn.execute(
         """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1 FROM observations
-           WHERE readingType='avail' AND carrier=? AND flightNumber=? AND org=? AND dest=? AND flightDate=?
+           WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
            ORDER BY hoursBeforeDep ASC""",
-        (carrier, flight_number, org, dest, flight_date),
+        (carrier, dep_time, org, dest, flight_date),
     ).fetchall()
     return [
         {'hrs': r[0], 'y': r[1], 'cplus': r[2], 'onePS': r[3], 'd1': r[4]}
@@ -137,32 +135,21 @@ def recent_observations(conn, limit=9):
     Returned oldest-of-the-batch first / most-recent last, matching the
     client's own recentlyLogged accumulation order.
 
-    Includes each flight's scheduled departure time (via a FlightSchedule
-    lookup, since observations itself doesn't store one) - blank if no
-    matching schedule row exists (e.g. flight number since renamed).
+    depTime is read straight off the observation row (each one carries
+    its own snapshot from logging time) - no flightSchedule lookup
+    needed, so this can never go blank due to a since-renamed/changed
+    schedule row the way a join-based lookup could.
     """
-    from FlightScheduleDialog import normalize_dow
-
     rows = conn.execute(
-        """SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1, carrier, flightNumber, flightDate
+        """SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1, depTime
            FROM observations WHERE readingType='avail'
            ORDER BY checkTimestamp DESC LIMIT ?""",
         (limit,),
     ).fetchall()
 
     result = []
-    for org, dest, hrs, y, cplus, ps, d1, carrier, flight_number, flight_date_str in rows:
-        dep_display = ''
-        if flight_number:
-            flight_date = datetime.strptime(flight_date_str, '%Y-%m-%d').date()
-            dow = normalize_dow(flight_date.strftime('%a'))
-            dep_row = conn.execute(
-                """SELECT depTime FROM flightSchedule
-                   WHERE carrier=? AND flightNumber=? AND org=? AND dest=? AND dayOfWeek=?""",
-                (carrier, flight_number, org, dest, dow),
-            ).fetchone()
-            if dep_row is not None:
-                dep_display = minutes_to_12h(dep_row[0])
+    for org, dest, hrs, y, cplus, ps, d1, dep_time in rows:
+        dep_display = minutes_to_12h(dep_time) if dep_time is not None else ''
         result.append({
             'org': org, 'dest': dest, 'depDisplay': dep_display,
             'hrs': hrs, 'y': y, 'cplus': cplus, 'onePS': ps, 'd1': d1,
@@ -193,12 +180,12 @@ def get_launcher_summary(conn):
         flight_date_str = schedule_date.isoformat()
 
         sched_rows = conn.execute(
-            """SELECT carrier, flightNumber, org, dest, depTime
+            """SELECT carrier, org, dest, depTime
                FROM flightSchedule WHERE dayOfWeek = ? AND ignore = 0""",
             (dow,),
         ).fetchall()
 
-        for carrier, flight_number, org, dest, dep_time in sched_rows:
+        for carrier, org, dest, dep_time in sched_rows:
             try:
                 dep_dt = et_equivalent_datetime(conn, dep_time, org, schedule_date)
             except UnconfirmedAirportError:
@@ -212,10 +199,10 @@ def get_launcher_summary(conn):
 
             best_hrs = conn.execute(
                 """SELECT MIN(hoursBeforeDep) FROM observations
-                   WHERE readingType='avail' AND carrier=? AND flightNumber=?
+                   WHERE readingType='avail' AND carrier=? AND depTime=?
                    AND org=? AND dest=? AND flightDate=?
                    AND hoursBeforeDep IS NOT NULL""",
-                (carrier, flight_number, org, dest, flight_date_str),
+                (carrier, dep_time, org, dest, flight_date_str),
             ).fetchone()[0]
             if best_hrs is not None and best_hrs <= threshold:
                 golden += 1
@@ -229,11 +216,11 @@ def get_launcher_summary(conn):
     }
 
 
-def get_flight_day_flag(conn, carrier, flight_number, org, dest, flight_date):
+def get_flight_day_flag(conn, carrier, dep_time, org, dest, flight_date):
     row = conn.execute(
         """SELECT flag FROM flightDayFlag
-           WHERE carrier=? AND flightNumber=? AND org=? AND dest=? AND flightDate=?""",
-        (carrier, flight_number, org, dest, flight_date),
+           WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?""",
+        (carrier, dep_time, org, dest, flight_date),
     ).fetchone()
     return row[0] if row else ''
 
@@ -247,13 +234,13 @@ def get_route_day_flag(conn, carrier, org, dest, flight_date):
     return row[0] if row else ''
 
 
-def save_flight_day_flag(conn, carrier, flight_number, org, dest, flight_date, flag_text):
+def save_flight_day_flag(conn, carrier, dep_time, org, dest, flight_date, flag_text):
     conn.execute(
-        """INSERT INTO flightDayFlag (carrier, flightNumber, org, dest, flightDate, flag)
+        """INSERT INTO flightDayFlag (carrier, depTime, org, dest, flightDate, flag)
            VALUES (?,?,?,?,?,?)
-           ON CONFLICT(carrier, flightNumber, org, dest, flightDate)
+           ON CONFLICT(carrier, org, dest, depTime, flightDate)
            DO UPDATE SET flag=excluded.flag""",
-        (carrier, flight_number, org, dest, flight_date, flag_text),
+        (carrier, dep_time, org, dest, flight_date, flag_text),
     )
     conn.commit()
     return {'saved': True}
@@ -271,28 +258,21 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
     return {'saved': True}
 
 
-def get_next_batch(conn, skip_route_keys=None, include_departed=False):
-    from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
-
+def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_route=None):
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
     now = eastern_now()
 
-    # Consider yesterday's, today's, AND tomorrow's (ET) day-of-week
-    # schedule rows - see module docstring for the yesterday leg
-    # (cross-midnight west-coast flights). Tomorrow is included so a
-    # flight scheduled for the next calendar date can already enter the
-    # candidate pool once it falls within an existing cadence tier's
-    # hours-until-departure range (e.g. a flight departing shortly after
-    # midnight, checked from tonight) - eligibility itself is untouched
-    # here, still governed entirely by the normal tier math below. A
-    # flight that's already departed still falls out through the normal
-    # 45-minute cutoff, same as always, regardless of which of the three
-    # days its schedule row came from.
-    schedule_days = [now.date(), now.date() - timedelta(days=1), now.date() + timedelta(days=1)]
+    # Consider both today's and yesterday's (ET) day-of-week schedule
+    # rows - see module docstring. Each is evaluated against its own
+    # real calendar date, so a flight that's already departed just falls
+    # out through the normal 45-minute cutoff below, same as always.
+    schedule_days = [now.date(), now.date() - timedelta(days=1)]
 
     candidates = []
-    departed_candidates = []  # only populated for rendering when include_departed - see below
+    departed_candidates = []  # always populated (see forced_route below) -
+                               # include_departed only gates whether these
+                               # end up rendered in the response's rows
     unconfirmed_codes = set()
     departed_by_route = {}  # (org, dest, flightDate) -> count - see summary_text below
     for schedule_date in schedule_days:
@@ -300,7 +280,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
         flight_date_str = schedule_date.isoformat()
 
         sched_rows = conn.execute(
-            """SELECT rowid, carrier, flightNumber, org, dest, depTime, aircraftConfig, verdict, verdictType
+            """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, depTime, aircraftConfig, verdict, verdictType
                FROM flightSchedule WHERE dayOfWeek = ? AND ignore = 0""",
             (dow,),
         ).fetchall()
@@ -324,14 +304,13 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 # so it's still counted at the only place it's real.
                 route_key = (org, dest, flight_date_str)
                 departed_by_route[route_key] = departed_by_route.get(route_key, 0) + 1
-                if include_departed:
-                    departed_candidates.append({
-                        'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
-                        'dep': dep_time, 'flightDate': flight_date_str, 'dow': dow,
-                        'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
-                        'hoursUntilDep': hours_until_dep, 'verdict': verdict or '',
-                        'verdictType': verdict_type or 'info',
-                    })
+                departed_candidates.append({
+                    'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
+                    'dep': dep_time, 'flightDate': flight_date_str, 'dow': dow,
+                    'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
+                    'hoursUntilDep': hours_until_dep, 'verdict': verdict or '',
+                    'verdictType': verdict_type or 'info',
+                })
                 continue
 
             if settings['logEverything']:
@@ -343,9 +322,9 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 todays_hrs = [
                     r[0] for r in conn.execute(
                         """SELECT hoursBeforeDep FROM observations
-                           WHERE readingType='avail' AND carrier=? AND flightNumber=? AND org=? AND dest=? AND flightDate=?
+                           WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
                            AND hoursBeforeDep IS NOT NULL""",
-                        (carrier, flight_number, org, dest, flight_date_str),
+                        (carrier, dep_time, org, dest, flight_date_str),
                     ).fetchall()
                 ]
                 eligible_now, minutes_until_eligible = evaluate_eligibility(
@@ -390,11 +369,27 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
     # regardless of which calendar day it's currently grouped under,
     # which is the right behavior (the person thinks of it as "that
     # route", not "that route on that specific date").
-    next_candidate = next(
-        (c for c in candidates
-         if c['eligibleNow'] and f"{c['org']}|{c['dest']}" not in skip_set),
-        None,
-    )
+    next_candidate = None
+    if forced_route is not None:
+        # Used after the schedule-edit modal closes, to return to the
+        # exact route+day that was just edited rather than whatever
+        # cadence would otherwise pick next - see project history on
+        # why "usually the same thing, rarely not" was worth avoiding.
+        # Checked against both pools since the route may have finished
+        # departing (or a flight may have just crossed the cutoff)
+        # during however long the modal was open.
+        next_candidate = next(
+            (c for c in candidates + departed_candidates
+             if c['org'] == forced_route['org'] and c['dest'] == forced_route['dest']
+             and c['flightDate'] == forced_route['flightDate']),
+            None,
+        )
+    if next_candidate is None:
+        next_candidate = next(
+            (c for c in candidates
+             if c['eligibleNow'] and f"{c['org']}|{c['dest']}" not in skip_set),
+            None,
+        )
 
     if next_candidate is None:
         total_departed = sum(departed_by_route.values())
@@ -439,11 +434,11 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
-            'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
-            'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
+            'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
+            'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'verdict': c['verdict'], 'verdictType': c['verdictType'],
             'openFull': format_open_full(
-                get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['car'], c['flightNumber'])
+                get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['dep'])
             ),
         })
 
@@ -460,11 +455,11 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False):
                 'hoursUntilDep': round(c['hoursUntilDep'], 1),
                 'isNext': False,
                 'departed': True,
-                'previousReadings': previous_readings_for(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
-                'flag': get_flight_day_flag(conn, c['car'], c['flightNumber'], c['org'], c['dest'], c['flightDate']),
+                'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
+                'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'verdict': c['verdict'], 'verdictType': c['verdictType'],
                 'openFull': format_open_full(
-                    get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['car'], c['flightNumber'])
+                    get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['dep'])
                 ),
             })
         # Chronological, same order Delta's own site lists a route's day -
@@ -503,9 +498,8 @@ def save_entry_dialog(conn, payload):
       flightDate: "YYYY-MM-DD",   # the flight's own schedule date - may
                                    # be "yesterday" per the cross-midnight
                                    # handling above, not always ET-today
-      entries: [{ scheduleRow, org, dest, car, dep (HHMM string),
-                  aircraftConfig, flightNumber, scheduleEdited (bool),
-                  ignore (bool),
+      entries: [{ scheduleRow, org, dest, car, dep, aircraftConfig,
+                  flightNumber,
                   y, cplus, onePS, d1 (each '' or a value as typed),
                   cheapY, cheapCplus, cheapOnePS, cheapD1 (each '' or a
                   free-glanced ceiling/floor value - a 9, or a confirmed
@@ -514,48 +508,6 @@ def save_entry_dialog(conn, payload):
     """
     flight_date = payload['flightDate']
     flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()
-
-    for entry in payload['entries']:
-        if entry.get('scheduleEdited'):
-            # Local import to dodge a circular import - FlightScheduleDialog
-            # already imports minutes_to_12h from this module, so importing
-            # back at module load time would deadlock; a function-local
-            # import only resolves once both modules have finished loading.
-            from FlightScheduleDialog import (
-                cascade_flight_number_rename, normalize_dow, recompute_hours_before_dep,
-            )
-
-            old_row = conn.execute(
-                "SELECT carrier, flightNumber, depTime FROM flightSchedule WHERE rowid=?",
-                (entry['scheduleRow'],),
-            ).fetchone()
-            if old_row is not None:
-                old_carrier, old_flight_number, old_dep_time = old_row
-                dow = normalize_dow(flight_date_obj.strftime('%a'))
-                cascade_flight_number_rename(
-                    conn, entry['org'], entry['dest'], dow,
-                    old_carrier, old_flight_number,
-                    old_carrier, entry['flightNumber'],  # this backdoor never edits carrier
-                )
-
-            conn.execute(
-                """UPDATE flightSchedule SET depTime=?, aircraftConfig=?, flightNumber=?, ignore=?
-                   WHERE rowid=?""",
-                (entry['dep'], entry['aircraftConfig'], entry['flightNumber'],
-                 1 if entry.get('ignore') else 0, entry['scheduleRow']),
-            )
-
-            # Same stale-hoursBeforeDep fix as FlightScheduleDialog's save
-            # path - this pencil-edit is the other place depTime/flightNumber
-            # get corrected, so it needs the same recompute.
-            if old_row is not None:
-                dep_changed = old_dep_time != entry['dep']
-                flight_changed = old_flight_number != entry['flightNumber']
-                if dep_changed or flight_changed:
-                    recompute_hours_before_dep(
-                        conn, old_carrier, entry['flightNumber'],
-                        entry['org'], entry['dest'], dow, entry['dep'],
-                    )
 
     SEAT_KEYS = ('y', 'cplus', 'onePS', 'd1', 'cheapY', 'cheapCplus', 'cheapOnePS', 'cheapD1')
     to_write = [
@@ -587,12 +539,12 @@ def save_entry_dialog(conn, payload):
 
         conn.execute(
             """INSERT INTO observations
-               (carrier, flightNumber, org, dest, flightDate, checkTimestamp,
-                hoursBeforeDep, readingType, y, cPlus, firstOrPS, d1,
+               (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, flightDate, checkTimestamp,
+                hoursBeforeDep, depTime, readingType, y, cPlus, firstOrPS, d1,
                 cheapY, cheapCPlus, cheapFirstOrPS, cheapD1)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (entry['car'], entry['flightNumber'], entry['org'], entry['dest'],
-             flight_date, check_timestamp, hours_before_dep, 'avail',
+             flight_date, check_timestamp, hours_before_dep, entry['dep'], 'avail',
              num('y'), num('cplus'), num('onePS'), num('d1'),
              num('cheapY'), num('cheapCplus'), num('cheapOnePS'), num('cheapD1')),
         )
@@ -601,7 +553,7 @@ def save_entry_dialog(conn, payload):
     return {'logged': len(to_write)}
 
 
-def save_and_get_next_batch(conn, payload, skip_route_keys=None, include_departed=False):
+def save_and_get_next_batch(conn, payload, skip_route_keys=None, include_departed=False, forced_route=None):
     save_result = save_entry_dialog(conn, payload)
-    next_result = get_next_batch(conn, skip_route_keys, include_departed)
+    next_result = get_next_batch(conn, skip_route_keys, include_departed, forced_route)
     return {'logged': save_result['logged'], 'next': next_result}

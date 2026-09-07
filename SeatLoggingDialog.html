@@ -25,8 +25,6 @@
     input.seat.cheapSeat { background: #fafbfe; }
     input.seat.locked { background: #eee; color: #888; }
     td.col-y { border-left: 2px solid #ddd; }
-    input.timeEdit, input.aircEdit, input.fltEdit { font-size: 14px; display: none; width: 100%; box-sizing: border-box; }
-    label.ignoreEdit { font-size: 12px; color: #666; display: none; white-space: nowrap; }
     .flt { font-size: 14px; color: #666; }
     .verdictNote { cursor: help; font-size: 18px; font-weight: bold; }
     .verdictNote.info { color: #e0a815; }
@@ -35,6 +33,20 @@
     .verdictNote.starred { color: #ffc700; }
     .ofCell { font-size: 11px; color: #555; line-height: 1.35; white-space: nowrap; }
     .pencil { cursor: pointer; color: #888; font-size: 16px; }
+    .routePencil { margin-left: 8px; }
+    #scheduleModalOverlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000;
+    }
+    #scheduleModalBox {
+      background: #fff; margin: 30px auto; max-width: 760px; height: 85vh;
+      border-radius: 6px; position: relative; box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    }
+    #scheduleModalClose {
+      position: absolute; top: 6px; right: 10px; font-size: 20px; color: #888;
+      cursor: pointer; background: none; border: none; z-index: 1;
+    }
+    #scheduleModalClose:hover { color: #c5221f; }
+    #scheduleModalFrame { width: 100%; height: 100%; border: none; border-radius: 6px; }
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; }
     .prevHrsInline { display: inline-block; width: 38px; color: #666; }
@@ -98,7 +110,7 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span>
     </div>
     <div id="routeFlagRow">
       <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
@@ -115,6 +127,13 @@
       <button id="logBtn" onclick="logReadings()">Log these readings</button>
     </div>
     <div id="recentPanel"></div>
+  </div>
+
+  <div id="scheduleModalOverlay">
+    <div id="scheduleModalBox">
+      <button id="scheduleModalClose" onclick="closeScheduleModal()" title="close">&#10006;</button>
+      <iframe id="scheduleModalFrame" src=""></iframe>
+    </div>
   </div>
 
   <script>
@@ -208,13 +227,6 @@
       cols.push({ key: 'flt', label: 'Flight', width: 68 });
       cols.push({ key: 'gap2', label: '', width: 10 });
       cols.push({ key: 'flag', label: 'Flag', width: 115 });
-      // Car dropped from view entirely (no edit affordance). Aircraft
-      // stays hidden UNTIL a row is toggled into edit mode via the
-      // pencil - unlike Car, it's a real editable field (see toggleEdit),
-      // just never shown as a read-only display the rest of the time.
-      cols.push({ key: 'airc', label: '', width: 70 });
-      cols.push({ key: 'ignoreEdit', label: '', width: 76 });
-      cols.push({ key: 'pencil', label: '', width: 30 });
       return cols;
     }
 
@@ -439,14 +451,17 @@
       if (batch && batch.routeOrg) loadBatch(captureUnsavedSeatValues());
     }
 
-    function loadBatch(preserveMap) {
+    function loadBatch(preserveMap, forcedRoute) {
       var btn = document.getElementById('getNextBtn');
       btn.disabled = true;
       btn.textContent = 'Loading\u2026';
       fetch('/api/getNextBatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skipRouteKeys: skippedRouteKeys, includeDeparted: showDeparted })
+        body: JSON.stringify({
+          skipRouteKeys: skippedRouteKeys, includeDeparted: showDeparted,
+          forcedRoute: forcedRoute || null
+        })
       })
         .then(function (res) { return res.json(); })
         .then(function (result) {
@@ -600,9 +615,7 @@
         var seatDisabled = row.departed ? ' disabled' : '';
 
         var cellHtml = {
-          dep:
-            '<span class="dep" data-i="' + i + '" id="depDisplay' + i + '">' + row.depDisplay + '</span>' +
-            '<input class="timeEdit" data-i="' + i + '" id="depEdit' + i + '" value="' + row.depDisplay + '">',
+          dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>',
           cheapY: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapY" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           cheapCplus: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapCplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           cheapOnePS: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapOnePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
@@ -619,21 +632,14 @@
           openFull: '<span class="ofCell">open ' + (row.openFull ? row.openFull.openDisplay : '\u2014') +
             '<br>full ' + (row.openFull ? row.openFull.fullDisplay : '\u2014') + '</span>',
           flt:
-            '<span class="flt" data-i="' + i + '" id="fltDisplay' + i + '">' + row.flightNumber +
+            '<span class="flt" data-i="' + i + '">' + row.flightNumber +
             (row.verdict ? '<span class="verdictNote ' + (row.verdictType || 'info') +
               '" title="' + row.verdict.replace(/"/g, '&quot;') + '">\u00a0' +
               (row.verdictType === 'warning' ? '\u26a0' : row.verdictType === 'axed' ? '\u2612' :
                row.verdictType === 'starred' ? '\u2605' : '\u24d8') + '</span>' : '') +
-            '</span>' +
-            '<input class="fltEdit" data-i="' + i + '" id="fltEdit' + i + '" value="' + row.flightNumber + '">',
+            '</span>',
           flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +
-            '" value="' + (row.flag || '').replace(/"/g, '&quot;') + '" placeholder="\u2014"></span>',
-          airc:
-            '<input class="aircEdit" list="aircraftOptions" data-i="' + i + '" id="aircEdit' + i + '" value="' + row.aircraftConfig + '">',
-          ignoreEdit:
-            '<label class="ignoreEdit" data-i="' + i + '" id="ignoreEdit' + i + '">' +
-              '<input type="checkbox" id="ignoreChk' + i + '"> ignore</label>',
-          pencil: '<span class="pencil" data-i="' + i + '" onclick="toggleEdit(' + i + ')" title="edit schedule">\u270e</span>'
+            '" value="' + (row.flag || '').replace(/"/g, '&quot;') + '" placeholder="\u2014"></span>'
         };
 
         tr.innerHTML = columns.map(function (c) {
@@ -728,22 +734,31 @@
       }
     }
 
-    function toggleEdit(i) {
-      var display = document.getElementById('depDisplay' + i);
-      var edit = document.getElementById('depEdit' + i);
-      var aEdit = document.getElementById('aircEdit' + i);
-      var fDisplay = document.getElementById('fltDisplay' + i);
-      var fEdit = document.getElementById('fltEdit' + i);
-      var iEdit = document.getElementById('ignoreEdit' + i);
-      var editing = edit.style.display === 'inline-block';
-      display.style.display = editing ? 'inline' : 'none';
-      edit.style.display = editing ? 'none' : 'inline-block';
-      aEdit.style.display = editing ? 'none' : 'inline-block';
-      fDisplay.style.display = editing ? 'inline' : 'none';
-      fEdit.style.display = editing ? 'none' : 'inline-block';
-      iEdit.style.display = editing ? 'none' : 'inline-block';
-      batch.rows[i].scheduleEdited = !editing;
+    function openScheduleModal() {
+      if (!batch || !batch.routeOrg) return;
+      var dow = (batch.dowDisplay || '').slice(0, 3).toLowerCase();
+      var url = '/schedule?org=' + encodeURIComponent(batch.routeOrg) +
+                 '&dest=' + encodeURIComponent(batch.routeDest) +
+                 '&dow=' + encodeURIComponent(dow);
+      document.getElementById('scheduleModalFrame').src = url;
+      document.getElementById('scheduleModalOverlay').style.display = 'block';
     }
+
+    function closeScheduleModal() {
+      document.getElementById('scheduleModalOverlay').style.display = 'none';
+      document.getElementById('scheduleModalFrame').src = '';
+    }
+
+    // Called by FlightScheduleDialog.html (running in the modal iframe)
+    // once its save actually succeeds - see its saveSchedule(). Returns
+    // to the SAME route+day just edited (forcedRoute), rather than
+    // whatever cadence would otherwise pick next - see project history
+    // for why that distinction matters here.
+    window.onFlightScheduleSaved = function () {
+      var forcedRoute = batch ? { org: batch.routeOrg, dest: batch.routeDest, flightDate: batch.flightDate } : null;
+      closeScheduleModal();
+      loadBatch(null, forcedRoute);
+    };
 
     function logReadings() {
       var btn = document.getElementById('logBtn');
@@ -752,55 +767,23 @@
       status.textContent = 'Logging\u2026';
 
       var entries = batch.rows.map(function (row, i) {
-        var dep = row.dep, aircraftConfig = row.aircraftConfig, flightNumber = row.flightNumber;
-        var scheduleEdited = !!row.scheduleEdited;
-        if (scheduleEdited) {
-          var timeText = document.getElementById('depEdit' + i).value;
-          aircraftConfig = document.getElementById('aircEdit' + i).value;
-          flightNumber = document.getElementById('fltEdit' + i).value;
-          // Accepts "6:46", "6:46 PM" (colon form) as before, and now also
-          // bare digits with no colon and no leading zero required: "646"
-          // (defaults AM, same as an unmarked colon time always has),
-          // "646p"/"646P"/"646PM" (PM), "0646" (leading zero still fine).
-          var parts = timeText.trim().toUpperCase().match(/^(\d{1,2}):(\d{2})\s*(A|AM|P|PM)?$/);
-          if (!parts) {
-            var bare = timeText.trim().toUpperCase().match(/^(\d{3,4})\s*(A|AM|P|PM)?$/);
-            if (bare) {
-              var digits = bare[1];
-              var hh = digits.length === 3 ? digits.slice(0, 1) : digits.slice(0, 2);
-              var mm = digits.slice(-2);
-              parts = [null, hh, mm, bare[2]];
-            }
-          }
-          if (parts) {
-            var h = parseInt(parts[1], 10), m = parseInt(parts[2], 10), period = parts[3];
-            if (period && period[0] === 'P' && h !== 12) h += 12;
-            if (period && period[0] === 'A' && h === 12) h = 0;
-            dep = h * 60 + m;
-          }
-        }
         function val(field) {
           var el = document.querySelector('input[data-field="' + field + '"][data-i="' + i + '"]');
           return el ? el.value.trim() : '';
         }
-        var ignoreChk = document.getElementById('ignoreChk' + i);
         return {
           scheduleRow: row.scheduleRow, org: row.org, dest: row.dest, car: row.car,
-          dep: dep, aircraftConfig: aircraftConfig, flightNumber: flightNumber,
-          scheduleEdited: scheduleEdited, ignore: ignoreChk ? ignoreChk.checked : false,
+          dep: row.dep, aircraftConfig: row.aircraftConfig, flightNumber: row.flightNumber,
           y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
           cheapY: val('cheapY'), cheapCplus: val('cheapCplus'),
           cheapOnePS: val('cheapOnePS'), cheapD1: val('cheapD1'),
           hoursUntilDep: row.hoursUntilDep,
-          // Row's own display text, not recomputed from a possibly-just-
-          // edited dep - fine for the recent-panel's purposes, a purely
-          // session-local convenience list.
           depDisplay: row.depDisplay
         };
       });
 
       var hasAnyData = entries.some(function (e) {
-        return e.scheduleEdited || e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '' ||
+        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '' ||
           e.cheapY !== '' || e.cheapCplus !== '' || e.cheapOnePS !== '' || e.cheapD1 !== '';
       });
 
@@ -870,7 +853,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          carrier: row.car, flightNumber: row.flightNumber, org: row.org, dest: row.dest,
+          carrier: row.car, depTime: row.dep, org: row.org, dest: row.dest,
           flightDate: batch.flightDate, flag: flagText
         })
       }).then(function (res) { return res.json(); })

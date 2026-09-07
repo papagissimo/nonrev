@@ -4,11 +4,19 @@ getScheduleForRouteDay / saveScheduleForRouteDay / copyToOtherDays to
 Python against nonrev.db.
 
 Real differences from the Sheets version, not just syntax:
-  - Row identity is SQLite `rowid`, not a sheet row number - same pattern
-    SeatLoggingDialog.py already uses for `scheduleRow`.
-  - depTime is INTEGER minutes-since-midnight (see the depTime migration),
-    not a 24h HHMM int - display formatting reuses SeatLoggingDialog's
-    minutes_to_12h rather than duplicating it.
+  - Row identity is SQLite `rowid`, not a sheet row number, and not
+    flightNumber either - flightNumber isn't a stable identifier at all
+    (see domainKnowledge.md / the carriersFltNum_notStable_DO_NOT_USE
+    column name) - it's stored purely as decoration from here on, never
+    matched or joined on anywhere in this file.
+  - depTime is INTEGER minutes-since-midnight (see the depTime
+    migration), not a 24h HHMM int - display formatting reuses
+    SeatLoggingDialog's minutes_to_12h rather than duplicating it.
+  - Editing a schedule row's depTime or flightNumber no longer touches
+    observations at all - each observation carries its own immutable
+    depTime/hoursBeforeDep snapshot from when it was logged (see
+    SeatLoggingDialog.save_entry_dialog), so there's nothing here left
+    to cascade-rename or recompute.
   - routeDurations already exists as its own table in nonrev.db (see
     create_db.py) - there's no separate sheet to set up or gate behind a
     one-time menu action the way RouteDurations was in Sheets.
@@ -20,10 +28,8 @@ Real differences from the Sheets version, not just syntax:
 """
 
 import re
-from datetime import datetime
 
-from SeatLoggingDialog import minutes_to_12h, ET_ZONE
-from timezones import et_equivalent_datetime, UnconfirmedAirportError
+from SeatLoggingDialog import minutes_to_12h
 from ServiceGrouping import (
     get_day_grouping_row, save_day_grouping, get_known_day_groupings,
     get_open_full_counts, format_open_full,
@@ -52,7 +58,7 @@ def get_next_bogus_number(conn):
     route), zero-padded to 3 digits to match the convention already in
     real data (bogus001..bogus345) - a deliberate fix versus the old
     Sheets version, which never zero-padded."""
-    rows = conn.execute("SELECT flightNumber FROM flightSchedule").fetchall()
+    rows = conn.execute("SELECT carriersFltNum_notStable_DO_NOT_USE FROM flightSchedule").fetchall()
     max_n = 0
     for (flight_number,) in rows:
         m = BOGUS_RE.match(flight_number or '')
@@ -86,7 +92,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
     dow = normalize_dow(dow)
 
     rows = conn.execute(
-        """SELECT rowid, carrier, flightNumber, depTime, aircraftConfig, ignore, verdict, verdictType
+        """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, depTime, aircraftConfig, ignore, verdict, verdictType
            FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek=?
            ORDER BY depTime""",
         (org, dest, dow),
@@ -105,7 +111,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
             'ignore': bool(ignore),
             'verdict': verdict or '', 'verdictType': verdict_type or 'info',
             'openFull': format_open_full(
-                get_open_full_counts(conn, org, dest, dow, carrier or 'dl', flight_number or '')
+                get_open_full_counts(conn, org, dest, dow, dep_time)
             ),
         }
         for rowid, carrier, flight_number, dep_time, aircraft_config, ignore, verdict, verdict_type in rows
@@ -127,102 +133,6 @@ def get_schedule_for_route_day(conn, org, dest, dow):
     }
 
 
-def cascade_flight_number_rename(conn, org, dest, dow, old_carrier, old_flight_number,
-                                  new_carrier, new_flight_number):
-    """
-    When a schedule row's identity changes (typically a placeholder bogus
-    number getting corrected to a real one), any observations already
-    logged against the OLD (carrier, flightNumber) for this exact row need
-    to move to the new identity too - otherwise they're silently orphaned:
-    SeatLoggingDialog's cadence check (get_next_batch/previous_readings_for)
-    keys strictly on (carrier, flightNumber, flightDate), so an orphaned
-    reading becomes invisible to it, and a flight already logged today can
-    get offered again as if it never was.
-
-    Scoped to observations whose flightDate actually falls on this row's
-    dayOfWeek (not just matching org/dest/old flightNumber) - a real Delta
-    flight number can be reused across multiple days of the week, so a
-    real->real correction must not sweep up a different day's readings
-    that happen to share the old number.
-    """
-    if (old_carrier, old_flight_number) == (new_carrier, new_flight_number):
-        return 0  # nothing actually changed - don't touch observations
-
-    candidates = conn.execute(
-        """SELECT observationId, flightDate FROM observations
-           WHERE carrier=? AND flightNumber=? AND org=? AND dest=?""",
-        (old_carrier, old_flight_number, org, dest),
-    ).fetchall()
-
-    matching_ids = [
-        obs_id for obs_id, flight_date in candidates
-        if normalize_dow(datetime.strptime(flight_date, '%Y-%m-%d').strftime('%a')) == dow
-    ]
-    if not matching_ids:
-        return 0
-
-    placeholders = ','.join('?' for _ in matching_ids)
-    conn.execute(
-        f"""UPDATE observations SET carrier=?, flightNumber=?
-            WHERE observationId IN ({placeholders})""",
-        (new_carrier, new_flight_number, *matching_ids),
-    )
-    return len(matching_ids)
-
-
-def recompute_hours_before_dep(conn, carrier, flight_number, org, dest, dow, dep_time):
-    """
-    Fixes the stale-hoursBeforeDep bug: that value used to be computed
-    once at logging time from whatever depTime was current then, and
-    never touched again - so a later depTime correction (typo fix,
-    Delta schedule churn) left already-logged rows showing an
-    increasingly wrong number of hours-before-departure. Departure time
-    is itself an observation, refined over the day same as seat counts,
-    so the stored value gets corrected in place here instead.
-
-    Recomputes every observation currently attributed to (carrier,
-    flightNumber, org, dest) on this exact dayOfWeek, using the flight's
-    current depTime. Called both when a row's depTime is edited directly,
-    and after cascade_flight_number_rename reassigns observations onto a
-    new flightNumber - either can leave hoursBeforeDep stale.
-
-    Scoped to this exact dow, same as cascade_flight_number_rename and
-    for the same reason: a flight number can be reused across different
-    days of the week, so matching without dow filtering would sweep up
-    a different day's readings. Deliberately inherits cascade's known
-    blind spot rather than fixing it: if Delta drops a flight and a
-    surviving neighbor absorbs its number, this can recompute
-    hoursBeforeDep against the wrong depTime for misattributed
-    historical rows. Accepted risk, not addressed here - see project
-    handoff on scope.
-    """
-    candidates = conn.execute(
-        """SELECT observationId, flightDate, checkTimestamp FROM observations
-           WHERE carrier=? AND flightNumber=? AND org=? AND dest=?""",
-        (carrier, flight_number, org, dest),
-    ).fetchall()
-
-    updated = 0
-    for obs_id, flight_date_str, check_timestamp in candidates:
-        flight_date = datetime.strptime(flight_date_str, '%Y-%m-%d').date()
-        if normalize_dow(flight_date.strftime('%a')) != dow:
-            continue
-
-        try:
-            dep_dt = et_equivalent_datetime(conn, dep_time, org, flight_date)
-        except UnconfirmedAirportError:
-            continue  # can't compute right now - leave the existing value alone
-
-        check_dt = datetime.strptime(check_timestamp, '%Y-%m-%d %H:%M').replace(tzinfo=ET_ZONE)
-        hours_before_dep = (dep_dt - check_dt).total_seconds() / 3600
-        conn.execute(
-            "UPDATE observations SET hoursBeforeDep=? WHERE observationId=?",
-            (hours_before_dep, obs_id),
-        )
-        updated += 1
-    return updated
-
-
 def save_schedule_for_route_day(conn, payload):
     """
     payload: {
@@ -242,42 +152,15 @@ def save_schedule_for_route_day(conn, payload):
         if not entry.get('scheduleRow') or entry.get('deleted'):
             continue
 
-        old_row = conn.execute(
-            "SELECT carrier, flightNumber, depTime FROM flightSchedule WHERE rowid=?",
-            (entry['scheduleRow'],),
-        ).fetchone()
-        new_carrier = entry.get('carrier') or 'dl'
-        new_flight_number = entry['flightNumber']
-
-        if old_row is not None:
-            old_carrier, old_flight_number, old_dep_time = old_row
-            cascade_flight_number_rename(
-                conn, org, dest, dow,
-                old_carrier, old_flight_number,
-                new_carrier, new_flight_number,
-            )
-
         conn.execute(
             """UPDATE flightSchedule
-               SET carrier=?, flightNumber=?, depTime=?, aircraftConfig=?, ignore=?, verdict=?, verdictType=?
+               SET carrier=?, carriersFltNum_notStable_DO_NOT_USE=?, depTime=?, aircraftConfig=?, ignore=?, verdict=?, verdictType=?
                WHERE rowid=?""",
-            (new_carrier, new_flight_number, entry['dep'],
+            (entry.get('carrier') or 'dl', entry['flightNumber'], entry['dep'],
              entry['aircraftConfig'], 1 if entry.get('ignore') else 0,
              (entry.get('verdict') or '').strip() or None,
              entry.get('verdictType') or 'info', entry['scheduleRow']),
         )
-
-        # A depTime correction or a flightNumber rename can both leave
-        # already-logged observations' hoursBeforeDep stale - see
-        # recompute_hours_before_dep's docstring. Only bother when
-        # something that actually feeds the calculation changed.
-        if old_row is not None:
-            dep_changed = old_dep_time != entry['dep']
-            flight_changed = (old_carrier, old_flight_number) != (new_carrier, new_flight_number)
-            if dep_changed or flight_changed:
-                recompute_hours_before_dep(
-                    conn, new_carrier, new_flight_number, org, dest, dow, entry['dep'],
-                )
 
     to_delete = [e['scheduleRow'] for e in payload['rows'] if e.get('scheduleRow') and e.get('deleted')]
     for rowid in to_delete:
@@ -287,7 +170,7 @@ def save_schedule_for_route_day(conn, payload):
     for entry in new_rows:
         conn.execute(
             """INSERT INTO flightSchedule
-               (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
+               (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (entry.get('carrier') or 'dl', entry['flightNumber'], org, dest, dow,
              entry['dep'], entry['aircraftConfig'],
@@ -323,7 +206,7 @@ def copy_to_other_days(conn, org, dest, source_dow):
     source_dow = normalize_dow(source_dow)
 
     source_rows = conn.execute(
-        """SELECT carrier, flightNumber, depTime, aircraftConfig, ignore, verdict, verdictType
+        """SELECT carrier, carriersFltNum_notStable_DO_NOT_USE, depTime, aircraftConfig, ignore, verdict, verdictType
            FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek=?""",
         (org, dest, source_dow),
     ).fetchall()
@@ -341,7 +224,7 @@ def copy_to_other_days(conn, org, dest, source_dow):
         for carrier, flight_number, dep_time, aircraft_config, ignore, verdict, verdict_type in source_rows:
             conn.execute(
                 """INSERT INTO flightSchedule
-                   (carrier, flightNumber, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
+                   (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (carrier, flight_number, org, dest, day, dep_time, aircraft_config, verdict, verdict_type, ignore),
             )

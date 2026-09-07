@@ -77,9 +77,10 @@ def api_get_next_batch():
     body = request.get_json(silent=True) or {}
     skip_route_keys = body.get('skipRouteKeys', [])
     include_departed = body.get('includeDeparted', False)
+    forced_route = body.get('forcedRoute')
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_keys, include_departed))
+        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_keys, include_departed, forced_route))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -92,9 +93,10 @@ def api_save_and_get_next_batch():
     payload = body['payload']
     skip_route_keys = body.get('skipRouteKeys', [])
     include_departed = body.get('includeDeparted', False)
+    forced_route = body.get('forcedRoute')
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, skip_route_keys, include_departed))
+        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, skip_route_keys, include_departed, forced_route))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -214,7 +216,7 @@ def api_save_flight_day_flag():
     conn = get_conn()
     try:
         return jsonify(SeatLoggingDialog.save_flight_day_flag(
-            conn, body['carrier'], body['flightNumber'], body['org'], body['dest'],
+            conn, body['carrier'], body['depTime'], body['org'], body['dest'],
             body['flightDate'], body.get('flag', ''),
         ))
     except Exception as e:

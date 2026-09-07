@@ -23,15 +23,8 @@ this once already).
 from collections import defaultdict
 
 from GraphObservations import get_flight_points
+from clustering import cluster_services, service_representative
 from settings import load_settings, save_settings
-
-# Wherever the gap between two sorted depTimes (minutes) exceeds this,
-# they're treated as different services. Real schedule data showed
-# distinct services hours apart with intra-cluster spread usually
-# 5-20 min (a few known routes wider, ~60 min) - this comfortably
-# splits real distinct services without splintering one service's own
-# day-to-day wobble.
-SERVICE_GAP_MINUTES = 60
 
 OPEN_FULL_SETTINGS_KEY = 'openFullSettings'
 DEFAULT_OPEN_FULL_SETTINGS = {
@@ -52,51 +45,22 @@ def save_open_full_settings(conn, new_settings):
     save_settings(conn, new_settings, key=OPEN_FULL_SETTINGS_KEY)
 
 
-def cluster_services(dep_times):
-    """
-    dep_times: iterable of int minutes-since-midnight. Returns a list of
-    clusters (each a sorted list of the original values), split wherever
-    the gap to the next value exceeds SERVICE_GAP_MINUTES.
-    """
-    times = sorted(dep_times)
-    if not times:
-        return []
-    clusters = [[times[0]]]
-    for t in times[1:]:
-        if t - clusters[-1][-1] > SERVICE_GAP_MINUTES:
-            clusters.append([t])
-        else:
-            clusters[-1].append(t)
-    return clusters
-
-
-def service_representative(cluster):
-    """Median depTime of a cluster, rounded to the nearest 15 minutes."""
-    times = sorted(cluster)
-    n = len(times)
-    if n % 2:
-        median = times[n // 2]
-    else:
-        median = (times[n // 2 - 1] + times[n // 2]) / 2
-    return round(median / 15) * 15
-
-
 def get_route_services(conn, org, dest):
     """
     One entry per distinct service on this route, across all 7 days
-    combined. Returns [{'repMinutes': int, 'rows': [{'carrier',
-    'flightNumber', 'dayOfWeek', 'depTime'}, ...]}, ...] - rows is every
-    flightSchedule row (any day of week) belonging to that service.
+    combined. Returns [{'repMinutes': int, 'rows': [{'dayOfWeek',
+    'depTime'}, ...]}, ...] - rows is every flightSchedule row (any day
+    of week) belonging to that service.
     """
     rows = conn.execute(
-        """SELECT carrier, flightNumber, dayOfWeek, depTime
+        """SELECT dayOfWeek, depTime
            FROM flightSchedule WHERE org = ? AND dest = ?""",
         (org, dest),
     ).fetchall()
     if not rows:
         return []
 
-    clusters = cluster_services(r[3] for r in rows)
+    clusters = cluster_services(r[1] for r in rows)
 
     rep_by_time = {}
     for cluster in clusters:
@@ -105,24 +69,21 @@ def get_route_services(conn, org, dest):
             rep_by_time[t] = rep
 
     services = defaultdict(list)
-    for carrier, flight_number, dow, dep_time in rows:
+    for dow, dep_time in rows:
         rep = rep_by_time[dep_time]
-        services[rep].append({
-            'carrier': carrier, 'flightNumber': flight_number,
-            'dayOfWeek': dow, 'depTime': dep_time,
-        })
+        services[rep].append({'dayOfWeek': dow, 'depTime': dep_time})
 
     return [{'repMinutes': rep, 'rows': members}
             for rep, members in sorted(services.items())]
 
 
-def find_service_for_row(services, day_of_week, carrier, flight_number):
+def find_service_for_row(services, day_of_week, dep_time):
     """Which service (from get_route_services) a specific flightSchedule
-    row belongs to, matched by (dayOfWeek, carrier, flightNumber)."""
+    row belongs to, matched by (dayOfWeek, depTime) - never flightNumber
+    (see domainKnowledge.md)."""
     for service in services:
         for row in service['rows']:
-            if (row['dayOfWeek'], row['carrier'], row['flightNumber']) == \
-               (day_of_week, carrier, flight_number):
+            if (row['dayOfWeek'], row['depTime']) == (day_of_week, dep_time):
                 return service
     return None
 
@@ -177,12 +138,12 @@ def get_grouped_days(conn, org, dest, day_of_week):
     return days
 
 
-def get_open_full_counts(conn, org, dest, day_of_week, carrier, flight_number):
+def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
     """
-    For the service that (org, dest, day_of_week, carrier, flight_number)
-    belongs to, pooled across every day sharing that day's dayGrouping
-    label, within the openFullSettings date range. Returns real counts,
-    never a percentage:
+    For the service that (org, dest, day_of_week, dep_time) belongs to,
+    pooled across every day sharing that day's dayGrouping label, within
+    the openFullSettings date range. Returns real counts, never a
+    percentage:
 
         {'measured': n, 'open': n, 'full': n}
 
@@ -194,13 +155,13 @@ def get_open_full_counts(conn, org, dest, day_of_week, carrier, flight_number):
     settings = load_open_full_settings(conn)
 
     services = get_route_services(conn, org, dest)
-    target_service = find_service_for_row(services, day_of_week, carrier, flight_number)
+    target_service = find_service_for_row(services, day_of_week, dep_time)
     if target_service is None:
         return {'measured': 0, 'open': 0, 'full': 0}
 
     grouped_days = get_grouped_days(conn, org, dest, day_of_week)
-    flight_keys = {
-        (r['carrier'], r['flightNumber'])
+    dep_time_keys = {
+        r['depTime']
         for r in target_service['rows'] if r['dayOfWeek'] in grouped_days
     }
 
@@ -212,7 +173,7 @@ def get_open_full_counts(conn, org, dest, day_of_week, carrier, flight_number):
 
     measured = open_count = full_count = 0
     for p in points:
-        if (p['carrier'], p['flightNumber']) not in flight_keys:
+        if p['depTimeMinutes'] not in dep_time_keys:
             continue
         measured += 1
         if p['t1Old'] >= settings['openThreshold']:
