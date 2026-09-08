@@ -120,6 +120,25 @@ CREATE TABLE routeDayFlag (
     flag        TEXT,
     PRIMARY KEY (carrier, org, dest, flightDate)
 );
+
+-- Cached per-(cabin, cheap-floor-value) mean of the actual (binary-search-
+-- confirmed) value, computed from every historical row where both a cheap
+-- glance and a real actual value are present for that cabin on the same
+-- row/session. Recomputed from scratch (never maintained incrementally)
+-- whenever refreshed - see python/FloorEstimates.py for the math and the
+-- refresh triggers. Powers the decimal-valued "estimate" shown wherever
+-- only a glance is available (Previous readings, the live T1 column, and
+-- GraphObservations' t1New) - deliberately distinct from a real actual
+-- value, which is always a whole number; the decimal point alone is the
+-- signal a consumer needs to tell the two apart, no separate flag/column
+-- required.
+CREATE TABLE floorEstimateCoefficients (
+    cabin        TEXT NOT NULL,
+    floorValue   INTEGER NOT NULL,
+    meanActual   REAL NOT NULL,
+    sampleCount  INTEGER NOT NULL,
+    PRIMARY KEY (cabin, floorValue)
+);
 """
 
 

@@ -803,7 +803,7 @@
       }
 
       if (!hasAnyData) {
-        var key = batch.routeOrg + '|' + batch.routeDest + '|' + batch.flightDate;
+        var key = batch.routeOrg + '|' + batch.routeDest;
         if (skippedRouteKeys.indexOf(key) === -1) skippedRouteKeys.push(key);
         status.textContent = 'Skipped. Getting next\u2026';
         fetch('/api/getNextBatch', {
@@ -879,7 +879,17 @@
       saveRouteDayFlag(e.target.value);
     });
 
-    loadBatch();
+    // One-time refresh of the floor->actual estimate coefficients, right
+    // before the first batch loads - see FloorEstimates.py. Deliberately
+    // only here (page load), not inside loadBatch() itself, since
+    // loadBatch also runs on every "get next"/toggle/settings-save
+    // within an already-open session and this isn't meant to re-fire on
+    // any of those. If the refresh fails for any reason, still proceed
+    // to loadBatch() with whatever coefficients (or none) already
+    // exist - a stale/missing estimate table should never block logging.
+    fetch('/api/refreshFloorEstimates', { method: 'POST' })
+      .catch(function (err) { console.error('Floor-estimate refresh failed:', err); })
+      .then(function () { loadBatch(); });
   </script>
 </body>
 </html>

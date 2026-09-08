@@ -36,13 +36,12 @@ Two variants are computed per flight-instance, t1Old and t1New:
 - t1Old: actual (binary-search) cabin values only, missing = 0 - this is
   the estimate exactly as it's always worked, unchanged.
 - t1New: same, but where an actual value is missing and a cheap-side
-  floor glance (cheapY/cheapCPlus/cheapFirstOrPS/cheapD1) is present and
-  nonzero, substitutes an expected resolved value (see
-  substitute_for_floor below) instead of treating the cabin as 0. A
-  cheap 9 or confirmed cheap 0 never reaches this path in well-formed
-  data, since the dialogue auto-fills and locks the matching actual
-  column in both those cases - the substitution only ever fires for a
-  genuine unresolved nonzero floor.
+  floor glance (cheapY/cheapCPlus/cheapFirstOrPS/cheapD1) is present,
+  substitutes the real data-driven estimate from FloorEstimates.py
+  instead of treating the cabin as 0. This used to be a flat gut-feel
+  guess (floor + 1.7); now it's the actual per-cabin conditional mean of
+  historical actual values given that floor reading - see
+  FloorEstimates.py for the math.
 Both are shown side by side rather than replacing one with the other -
 his call, to watch how far they diverge as real paired
 cheap-floor/same-day-resolve data accumulates. Same estimate feeds both
@@ -57,6 +56,7 @@ from datetime import datetime
 
 from clustering import cluster_services, service_representative
 from settings import load_settings
+from FloorEstimates import load_floor_estimates, estimate_for_floor
 
 # Locked design (agreed with him directly, not just a port default anymore):
 # T-60min exactly - the old T-61min was a leftover distinction from an
@@ -74,28 +74,7 @@ T1_TARGET_HOURS = 1.0
 # for now) - meant to be eyeballed against a real chart and edited here.
 CONFIDENCE_HOURS_TO_SEATS = 0.75
 
-# Expected resolved value for a cheap-side floor reading of N, used only
-# when the actual (binary-search) value for that cabin is still missing.
-# His gut-feel seed, not yet fit to real data: floor + 1.7. Meant to be
-# overwritten once enough same-day cheap-floor/actual-resolve pairs pile
-# up to fit a real distribution (Beta over [floor, 8], mean/concentration
-# parameterized - tabled until there's data to fit against; this
-# constant is the mean only, and is all today's math needs).
-FLOOR_MEAN_OFFSET = 1.7
-
 DOW_ABBREV = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-
-def substitute_for_floor(cheap_floor):
-    """
-    Expected resolved value for a genuine nonzero cheap-side floor
-    reading, missing its actual value. Deliberately not called for a
-    cheap 9 or cheap 0 - those cases already have a real actual value
-    in well-formed data (auto-filled/locked by the dialogue), so they
-    never need a substitute; this is purely the "we glanced a floor but
-    haven't binary-searched it yet" case.
-    """
-    return cheap_floor + FLOOR_MEAN_OFFSET
 
 
 def _dow_abbrev(flight_date_str):
@@ -266,6 +245,7 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
     time) are dropped - nothing to place them on the x-axis with.
     """
     golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
+    floor_coefficients = load_floor_estimates(conn)
 
     where = ["org = ?", "dest = ?"]
     params = [org, dest]
@@ -333,24 +313,23 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
         except (TypeError, ValueError):
             return None
 
-    def resolve_cabin(actual, cheap):
+    def resolve_cabin(actual, cheap, cabin):
         """
         One cabin's contribution to a reading's ttl, old and new.
         old: actual value if present, else 0 (unchanged behavior).
-        new: actual value if present, else a floor-derived substitute if
-        a genuine nonzero cheap floor is present, else 0. A cheap 9 or
-        cheap 0 with no actual value shouldn't occur in well-formed data
-        (the dialogue auto-fills/locks actual in both cases) - if it
-        ever does, it's treated the same as any other missing actual
-        value here (falls through to the nonzero-floor check, which a 9
-        or 0 fails, so old and new agree and it's just 0/9 respectively
-        via whichever value IS present).
+        new: actual value if present, else the FloorEstimates-derived
+        estimate for this cabin's cheap glance if one is present, else 0.
+        A cheap 9 or confirmed cheap 0 with no actual value shouldn't
+        occur in well-formed data (the dialogue auto-fills/locks actual
+        in both cases) - if it ever does, the same lookup handles it:
+        estimate_for_floor(coeffs, cabin, 9) will itself resolve very
+        close to 9 given real data, no special case needed.
         """
         if actual is not None:
             return actual, actual
-        if cheap is not None and cheap != 0 and cheap != 9:
-            return 0, substitute_for_floor(cheap)
-        return 0, (cheap if cheap is not None else 0)
+        if cheap is not None:
+            return 0, estimate_for_floor(floor_coefficients, cabin, cheap)
+        return 0, 0
 
     points = []
     for (flight_date, dep_minutes), obs_list in groups.items():
@@ -369,10 +348,10 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
             except (TypeError, ValueError):
                 continue
 
-            y_old, y_new = resolve_cabin(as_int(obs['y']), as_int(obs['cheapY']))
-            cp_old, cp_new = resolve_cabin(as_int(obs['cPlus']), as_int(obs['cheapCPlus']))
-            fp_old, fp_new = resolve_cabin(as_int(obs['firstOrPS']), as_int(obs['cheapFirstOrPS']))
-            d1_old, d1_new = resolve_cabin(as_int(obs['d1']), as_int(obs['cheapD1']))
+            y_old, y_new = resolve_cabin(as_int(obs['y']), as_int(obs['cheapY']), 'y')
+            cp_old, cp_new = resolve_cabin(as_int(obs['cPlus']), as_int(obs['cheapCPlus']), 'cPlus')
+            fp_old, fp_new = resolve_cabin(as_int(obs['firstOrPS']), as_int(obs['cheapFirstOrPS']), 'firstOrPS')
+            d1_old, d1_new = resolve_cabin(as_int(obs['d1']), as_int(obs['cheapD1']), 'd1')
 
             readings_old.append({'hrs': hrs, 'ttl': y_old + cp_old + fp_old + d1_old})
             readings_new.append({'hrs': hrs, 'ttl': y_new + cp_new + fp_new + d1_new})

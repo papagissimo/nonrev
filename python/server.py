@@ -21,6 +21,7 @@ import FlightScheduleDialog
 import ObservationsBrowser
 import GraphObservations
 import ServiceGrouping
+import FloorEstimates
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -66,6 +67,23 @@ def api_get_launcher_summary():
     conn = get_conn()
     try:
         return jsonify(SeatLoggingDialog.get_launcher_summary(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/refreshFloorEstimates', methods=['POST'])
+def api_refresh_floor_estimates():
+    """
+    Recomputes floorEstimateCoefficients from scratch. Called once by
+    SeatLoggingDialog.html on page load, and on demand from the manual
+    button on Launcher.html - never from getNextBatch/cadence code (see
+    FloorEstimates.py).
+    """
+    conn = get_conn()
+    try:
+        return jsonify(FloorEstimates.refresh_floor_estimates(conn))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

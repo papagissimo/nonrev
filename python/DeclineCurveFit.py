@@ -13,9 +13,10 @@ What it does:
   1. Clusters flightSchedule departure times per route into "services"
      (gap-based clustering - trusts that real clusters separate cleanly,
      confirmed against real data in a prior session).
-  2. Joins observations to flightSchedule (via carrier/flightNumber/org/dest/
-     dayOfWeek, dayOfWeek derived from flightDate) to attach each observation
-     to a service + depTime.
+  2. Joins observations to flightSchedule (via carrier/
+     carriersFltNum_notStable_DO_NOT_USE/org/dest/dayOfWeek, dayOfWeek
+     derived from flightDate) to attach each observation to a service +
+     depTime.
   3. For each (service, cabin), extracts:
        - C1 brackets: [lower, upper] bounding when the cabin left 9
        - gap brackets: [lower, upper] bounding the C1-to-C2 gap, derived from
@@ -123,13 +124,14 @@ def build_service_map(conn):
 
 
 def load_observations_with_schedule(conn):
-    """Joins observations to flightSchedule (via carrier/flightNumber/org/
-    dest/dayOfWeek) to attach depTime. Returns a list of dict rows. Rows with
-    no matching flightSchedule entry are dropped (reported separately)."""
+    """Joins observations to flightSchedule (via carrier/
+    carriersFltNum_notStable_DO_NOT_USE/org/dest/dayOfWeek) to attach
+    depTime. Returns a list of dict rows. Rows with no matching
+    flightSchedule entry are dropped (reported separately)."""
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT observationId, carrier, flightNumber, org, dest, flightDate,
+        SELECT observationId, carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, flightDate,
                checkTimestamp, hoursBeforeDep, readingType,
                y, cPlus, firstOrPS, d1,
                cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
@@ -140,10 +142,10 @@ def load_observations_with_schedule(conn):
     obs_rows = cur.fetchall()
     col_names = [d[0] for d in cur.description]
 
-    cur.execute("SELECT carrier, flightNumber, org, dest, dayOfWeek, depTime FROM flightSchedule")
+    cur.execute("SELECT carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime FROM flightSchedule")
     sched_lookup = {}
-    for carrier, flightNumber, org, dest, dow, depTime in cur.fetchall():
-        sched_lookup[(carrier, flightNumber, org, dest, dow)] = depTime
+    for carrier, flight_number, org, dest, dow, depTime in cur.fetchall():
+        sched_lookup[(carrier, flight_number, org, dest, dow)] = depTime
 
     matched = []
     unmatched_count = 0
@@ -154,7 +156,7 @@ def load_observations_with_schedule(conn):
         except ValueError:
             unmatched_count += 1
             continue
-        key = (r["carrier"], r["flightNumber"], r["org"], r["dest"], dow)
+        key = (r["carrier"], r["carriersFltNum_notStable_DO_NOT_USE"], r["org"], r["dest"], dow)
         depTime = sched_lookup.get(key)
         if depTime is None:
             unmatched_count += 1

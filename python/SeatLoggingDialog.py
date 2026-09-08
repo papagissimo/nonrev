@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from settings import load_settings
 from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
+from FloorEstimates import load_floor_estimates, estimate_for_floor
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -101,7 +102,24 @@ def load_d1_map(conn):
     }
 
 
-def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
+def resolved_or_estimate(actual, cheap, cabin, floor_coefficients):
+    """
+    Real actual (binary-search-confirmed) value if present - always a
+    whole number. Otherwise a decimal-valued estimate derived from the
+    cheap-side glance via the cached FloorEstimates coefficients, rounded
+    to one decimal place (his call - visible at a glance, not fake
+    precision). None (blank) if neither is present. The two cases are
+    self-distinguishing by shape alone (whole number vs one-decimal
+    number) - no separate flag needed anywhere downstream.
+    """
+    if actual is not None:
+        return actual
+    if cheap is not None:
+        return round(estimate_for_floor(floor_coefficients, cabin, int(cheap)), 1)
+    return None
+
+
+def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor_coefficients):
     """
     Every reading logged today for this exact flight, sorted
     most-recent-check first (ascending hoursBeforeDep, since it counts
@@ -114,15 +132,29 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     depTime - two different routes can share a depTime by coincidence,
     and without org/dest in the filter this would silently pull the
     OTHER route's readings in as if they were this flight's own history.
+
+    Each cabin value is the real actual if one was logged, else a
+    FloorEstimates-derived decimal estimate from that same row's cheap
+    glance if there is one, else blank - see resolved_or_estimate. This
+    also automatically feeds the browser's own live T1 column (it sums
+    whatever's in these same fields), with no JS changes needed.
     """
     rows = conn.execute(
-        """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1 FROM observations
+        """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1,
+                  cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
+           FROM observations
            WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
            ORDER BY hoursBeforeDep ASC""",
         (carrier, dep_time, org, dest, flight_date),
     ).fetchall()
     return [
-        {'hrs': r[0], 'y': r[1], 'cplus': r[2], 'onePS': r[3], 'd1': r[4]}
+        {
+            'hrs': r[0],
+            'y': resolved_or_estimate(r[1], r[5], 'y', floor_coefficients),
+            'cplus': resolved_or_estimate(r[2], r[6], 'cPlus', floor_coefficients),
+            'onePS': resolved_or_estimate(r[3], r[7], 'firstOrPS', floor_coefficients),
+            'd1': resolved_or_estimate(r[4], r[8], 'd1', floor_coefficients),
+        }
         for r in rows
     ]
 
@@ -261,6 +293,7 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
 def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_route=None):
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
+    floor_coefficients = load_floor_estimates(conn)
     now = eastern_now()
 
     # Consider yesterday's, today's, AND tomorrow's (ET) day-of-week
@@ -379,15 +412,11 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
-    # Skip-key format is org|dest|flightDate, matching the client's
-    # session-skip list - a blank ("skip") submission only removes that
-    # route's specific day from candidacy, not every date it appears on.
-    # This used to be org|dest with no date at all, on the reasoning that
-    # a route is a route regardless of which day it's grouped under - true
-    # while the pool was ~1 day wide, but wrong once the pool started
-    # spanning multiple calendar days (2026-09-07): skipping today's
-    # instance of a route was silently taking tomorrow's and the day
-    # after's off the table too, for the rest of the session.
+    # Skip-key format stays org|dest (no date) to match the client's
+    # existing session-skip list - skipping a route mid-session skips it
+    # regardless of which calendar day it's currently grouped under,
+    # which is the right behavior (the person thinks of it as "that
+    # route", not "that route on that specific date").
     next_candidate = None
     if forced_route is not None:
         # Used after the schedule-edit modal closes, to return to the
@@ -406,7 +435,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
     if next_candidate is None:
         next_candidate = next(
             (c for c in candidates
-             if c['eligibleNow'] and f"{c['org']}|{c['dest']}|{c['flightDate']}" not in skip_set),
+             if c['eligibleNow'] and f"{c['org']}|{c['dest']}" not in skip_set),
             None,
         )
 
@@ -453,7 +482,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
-            'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
+            'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'], floor_coefficients),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'verdict': c['verdict'], 'verdictType': c['verdictType'],
             'openFull': format_open_full(
@@ -474,7 +503,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
                 'hoursUntilDep': round(c['hoursUntilDep'], 1),
                 'isNext': False,
                 'departed': True,
-                'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
+                'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'], floor_coefficients),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'verdict': c['verdict'], 'verdictType': c['verdictType'],
                 'openFull': format_open_full(
