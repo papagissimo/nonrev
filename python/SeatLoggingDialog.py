@@ -290,6 +290,20 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
     return {'saved': True}
 
 
+def floor_estimates_for_client(floor_coefficients):
+    """
+    Reshapes the (cabin, floorValue) -> mean dict into a plain nested
+    dict the browser can look up directly: {cabin: {floorValue: mean}}.
+    Sent once per getNextBatch response so the client can compute the
+    dimmed under-field estimate live, per keystroke, with no extra round
+    trip - see SeatLoggingDialog.html's estimateForFloor.
+    """
+    result = {}
+    for (cabin, floor_value), mean_actual in floor_coefficients.items():
+        result.setdefault(cabin, {})[floor_value] = mean_actual
+    return result
+
+
 def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_route=None):
     skip_set = set(skip_route_keys or [])
     settings = load_settings(conn)
@@ -459,6 +473,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
             'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
             'openFullSettings': load_open_full_settings(conn),
             'recentObservations': recent_observations(conn),
+            'floorEstimates': floor_estimates_for_client(floor_coefficients),
         }
 
     d1_map = load_d1_map(conn)
@@ -537,6 +552,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
         'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
         'openFullSettings': load_open_full_settings(conn),
         'recentObservations': recent_observations(conn),
+        'floorEstimates': floor_estimates_for_client(floor_coefficients),
     }
 
 

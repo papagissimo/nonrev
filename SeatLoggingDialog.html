@@ -24,6 +24,11 @@
     input.seat { width: 38px; font-size: 16px; text-align: center; box-sizing: border-box; }
     input.seat.cheapSeat { background: #fafbfe; }
     input.seat.locked { background: #eee; color: #888; }
+    .seatCellWrap { display: flex; flex-direction: column; align-items: center; }
+    .estimateLine {
+      font-size: 10px; color: #bbb; line-height: 1.3; min-height: 13px;
+      font-style: italic;
+    }
     td.col-y { border-left: 2px solid #ddd; }
     .flt { font-size: 14px; color: #666; }
     .verdictNote { cursor: help; font-size: 18px; font-weight: bold; }
@@ -51,6 +56,7 @@
     .prev .row { white-space: nowrap; }
     .prevHrsInline { display: inline-block; width: 38px; color: #666; }
     .prevHrsInline.mostRecent { color: #c5221f; }
+    .prevSeatVal { display: inline-block; width: 30px; text-align: left; }
     .t1cell { font-style: italic; color: #555; }
     td.col-flt { padding-right: 2px; }
     td.col-flag { padding-left: 2px; }
@@ -141,6 +147,14 @@
     var batch = null;
     var SEAT_FIELDS = ['cheapY', 'cheapCplus', 'cheapOnePS', 'cheapD1', 'y', 'cplus', 'onePS', 'd1'];
     var CHEAP_TO_ACTUAL = { cheapY: 'y', cheapCplus: 'cplus', cheapOnePS: 'onePS', cheapD1: 'd1' };
+    // Actual-field JS names use his dialog's own casing (cplus, onePS);
+    // FloorEstimates' coefficients are keyed by the Python-side cabin
+    // names (cPlus, firstOrPS) - this is just that naming translation,
+    // not a different concept.
+    var FIELD_TO_CABIN = { y: 'y', cplus: 'cPlus', onePS: 'firstOrPS', d1: 'd1' };
+    // {cabin: {floorValue: meanActual}} - sent fresh on every getNextBatch
+    // response (see renderBatch), never fetched separately.
+    var floorEstimates = {};
     var aircraftOptionsRendered = false;
     var skippedRouteKeys = [];
     var showDeparted = false;
@@ -215,8 +229,8 @@
       // columns themselves stay put - only the padding/gap around them
       // shrank, to give other columns more room.
       cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
-      cols.push({ key: 'gap', label: '', width: 8 });
-      cols.push({ key: 'prev', label: 'Prev', width: 104 });
+      cols.push({ key: 'gap', label: '', width: 0 });
+      cols.push({ key: 'prev', label: 'Prev', width: 136 });
       // Real column now, not text crammed inline onto the Prev column's
       // top line (which was blowing the whole table out sideways - a
       // fixed-width nowrap cell forced to hold far more text than it
@@ -340,16 +354,25 @@
       // The most recent one (index 0) is highlighted - his call, since
       // that's the number he's actually comparing the live Hrs column
       // against, over and over, while working a route.
+      //
+      // Each seat value gets its own fixed-width, LEFT-aligned span
+      // (not a space-joined string) - left alignment is what makes a
+      // whole-number "1" and a decimal-estimate "1.7" line up on their
+      // shared ones digit, since both start at the same left edge of
+      // their slot. Right-aligning (or plain space-joining) would put
+      // the ones digit at a different x position depending on how many
+      // characters follow it.
       if (!readings || readings.length === 0) return '';
       return readings.map(function (rd, idx) {
         var parts = [rd.y, rd.cplus, rd.onePS];
         if (anyD1) parts.push(rd.d1);
         var text = parts.map(function (v) {
-          return (v === '' || v === null || v === undefined) ? '-' : v;
-        }).join(' ');
+          var display = (v === '' || v === null || v === undefined) ? '-' : v;
+          return '<span class="prevSeatVal">' + display + '</span>';
+        }).join('');
         var hrsText = formatHours(rd.hrs);
         var hrsClass = 'prevHrsInline' + (idx === 0 ? ' mostRecent' : '');
-        return '<div class="row"><span class="' + hrsClass + '">' + hrsText + '</span> ' + text + '</div>';
+        return '<div class="row"><span class="' + hrsClass + '">' + hrsText + '</span>' + text + '</div>';
       }).join('');
     }
 
@@ -537,6 +560,7 @@
 
     function renderBatch(result) {
       batch = result;
+      floorEstimates = result.floorEstimates || {};
       renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
       if (batch.settings) populateSettingsForm(batch.settings);
       if (batch.openFullSettings) populateOpenFullSettingsForm(batch.openFullSettings);
@@ -620,10 +644,10 @@
           cheapCplus: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapCplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           cheapOnePS: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapOnePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
           cheapD1: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapD1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          y: '<input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          cplus: '<input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          onePS: '<input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          d1: '<input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
+          y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="y"></div></div>',
+          cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="cplus"></div></div>',
+          onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="onePS"></div></div>',
+          d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="d1"></div></div>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           t1: '<div class="prev">' + formatT1Column(row.previousReadings, goldenTicketHours) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
@@ -672,6 +696,36 @@
       if (el.classList.contains('cheapSeat')) applyCheapAutoFill(el);
     }
 
+    function estimateForFloor(cabin, floorValue) {
+      // Mirrors FloorEstimates.estimate_for_floor (python/FloorEstimates.py)
+      // - falls back to the raw floor value itself when no coefficient
+      // exists yet for this exact (cabin, floor) pair.
+      var byCabin = floorEstimates[cabin];
+      if (byCabin && byCabin[floorValue] !== undefined) return byCabin[floorValue];
+      return floorValue;
+    }
+
+    function updateEstimateLine(i, actualField, cheapValue) {
+      // Dimmed preview of what the actual value is likely to resolve to,
+      // shown UNDER the actual input, never inside it - a placeholder
+      // would vanish the instant a binary-search guess gets typed,
+      // right when comparing against it matters most. This is a plain
+      // separate element, not part of the input's value in any way, so
+      // there's nothing for the save path to ever pick up by accident -
+      // no flag/state needed, unlike an earlier version of this idea.
+      // Deliberately keyed off "whatever the cheap field currently
+      // holds" rather than wired to a keystroke event specifically, so
+      // a future estimator that can supply a number with no glance
+      // input at all (his stated plan) only requires a change inside
+      // estimateForFloor, not to this call site.
+      var lineEl = document.querySelector('.estimateLine[data-field="' + actualField + '"][data-i="' + i + '"]');
+      if (!lineEl) return;
+      if (cheapValue === '') { lineEl.textContent = ''; return; }
+      var cabin = FIELD_TO_CABIN[actualField];
+      var est = estimateForFloor(cabin, parseInt(cheapValue, 10));
+      lineEl.textContent = est.toFixed(1);
+    }
+
     function applyCheapAutoFill(cheapEl) {
       // A cheap 9 (ceiling) or confirmed cheap 0 auto-fills and
       // permanently locks the matching actual field - both are already
@@ -698,6 +752,7 @@
         actualEl.disabled = false;
         actualEl.classList.remove('locked');
       }
+      updateEstimateLine(i, actualField, v);
     }
 
     function handleArrowNav(e) {
