@@ -272,9 +272,17 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
     # midnight, checked from tonight) - eligibility itself is untouched
     # here, still governed entirely by the normal tier math below. A
     # flight that's already departed still falls out through the normal
-    # 45-minute cutoff, same as always, regardless of which of the three
-    # days its schedule row came from.
-    schedule_days = [now.date() - timedelta(days=1), now.date(), now.date() + timedelta(days=1)]
+    # 45-minute cutoff, same as always, regardless of which of the four
+    # days its schedule row came from. Day-after-tomorrow is included too
+    # (his call) so an evening session can reach past tomorrow's earliest
+    # flights into tomorrow NIGHT's as well, not just the ones close to
+    # midnight - logEverything is what actually gets him there ahead of
+    # normal cadence timing; this just widens the outer bound of what's
+    # reachable at all.
+    schedule_days = [
+        now.date() - timedelta(days=1), now.date(),
+        now.date() + timedelta(days=1), now.date() + timedelta(days=2),
+    ]
 
     candidates = []
     departed_candidates = []  # always populated (see forced_route below) -
