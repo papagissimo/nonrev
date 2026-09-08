@@ -803,7 +803,7 @@
       }
 
       if (!hasAnyData) {
-        var key = batch.routeOrg + '|' + batch.routeDest;
+        var key = batch.routeOrg + '|' + batch.routeDest + '|' + batch.flightDate;
         if (skippedRouteKeys.indexOf(key) === -1) skippedRouteKeys.push(key);
         status.textContent = 'Skipped. Getting next\u2026';
         fetch('/api/getNextBatch', {

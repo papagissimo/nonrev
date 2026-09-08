@@ -379,11 +379,15 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
-    # Skip-key format stays org|dest (no date) to match the client's
-    # existing session-skip list - skipping a route mid-session skips it
-    # regardless of which calendar day it's currently grouped under,
-    # which is the right behavior (the person thinks of it as "that
-    # route", not "that route on that specific date").
+    # Skip-key format is org|dest|flightDate, matching the client's
+    # session-skip list - a blank ("skip") submission only removes that
+    # route's specific day from candidacy, not every date it appears on.
+    # This used to be org|dest with no date at all, on the reasoning that
+    # a route is a route regardless of which day it's grouped under - true
+    # while the pool was ~1 day wide, but wrong once the pool started
+    # spanning multiple calendar days (2026-09-07): skipping today's
+    # instance of a route was silently taking tomorrow's and the day
+    # after's off the table too, for the rest of the session.
     next_candidate = None
     if forced_route is not None:
         # Used after the schedule-edit modal closes, to return to the
@@ -402,7 +406,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
     if next_candidate is None:
         next_candidate = next(
             (c for c in candidates
-             if c['eligibleNow'] and f"{c['org']}|{c['dest']}" not in skip_set),
+             if c['eligibleNow'] and f"{c['org']}|{c['dest']}|{c['flightDate']}" not in skip_set),
             None,
         )
 
