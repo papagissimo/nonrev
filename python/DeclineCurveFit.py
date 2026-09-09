@@ -1,37 +1,81 @@
 """
 DeclineCurveFit.py
 
-First step of the seat decline-curve modeling work (see decline-curve-handoff.md).
+Fits a per-(service, cabin) two-coefficient model - a shared decline slope
+and a single C1 (leaves-9 corner) timing - meant to seed the live sliding
+T-1 estimator, not to describe the true shape of a decline. Real declines
+are lumpy (a group booking or cancellation is a genuine step change, not
+noise around a curve); this deliberately stays a "gross, gross
+approximation" - the live estimator's job is to slide this frozen line to
+match whatever's actually been observed today, this script's only job is
+to produce the two frozen numbers it slides.
 
-This is a standalone, exploratory/calibration script - not wired into any live
-dialog or estimator. It operates on the whole population of observations at
-once, which is a fundamentally different kind of computation from everything
-else in this codebase (per-instance logging, per-day scheduling), so it lives
-on its own rather than folded into GraphObservations.py.
+Design, worked out over many rounds of real back-and-forth, several dead
+ends included:
 
-What it does:
-  1. Clusters flightSchedule departure times per route into "services"
-     (gap-based clustering - trusts that real clusters separate cleanly,
-     confirmed against real data in a prior session).
-  2. Joins observations to flightSchedule (via carrier/
-     carriersFltNum_notStable_DO_NOT_USE/org/dest/dayOfWeek, dayOfWeek
-     derived from flightDate) to attach each observation to a service +
-     depTime.
-  3. For each (service, cabin), extracts:
-       - C1 brackets: [lower, upper] bounding when the cabin left 9
-       - gap brackets: [lower, upper] bounding the C1-to-C2 gap, derived from
-         each instance's C1 bracket and C2 bracket (C2 = C1 + gap, enforced
-         by construction rather than fit independently - this prevents C2
-         from ever being placed before C1 in the fitted model)
-     Per-row cabin state uses the real (binary-search) value when present,
-     falls back to the glance/cheap value when not, skips the row for that
-     cabin when neither is present.
-  4. Fits lifelines' interval-censored KaplanMeierFitter (the Turnbull
-     estimator) to each population and reports summary results.
+  PER-INSTANCE FIT. Rather than hand-rolling separate cases for "has
+  interior readings" / "all-9 all day" / "all-0 all day" / "corner jump,
+  no interior" (an earlier, messier version of this file did exactly
+  that), each flight-day instance is fit directly against a Python
+  function shaped like the model itself - flat at 9, linear through the
+  decline, flat at 0 - via scipy.optimize.curve_fit, using EVERY raw
+  reading that day (9s and 0s included, not just the 1-8 interior subset).
+  This handles every case uniformly: an all-9 instance's fit is
+  automatically constrained by its own 9-readings, no special-casing
+  needed. C1's search range is bounded by that instance's own observed
+  corner bracket (last-known-9 -> first-known-non-9) when it has one -
+  keeps the optimizer away from the flat-gradient regions that would
+  otherwise risk bad convergence.
 
-Coefficient selection (what single number to hand the live estimator) and
-any curve-fitting against the fitted distributions is explicitly NOT this
-script's job yet - that's a follow-on step once this output is reviewed.
+  STEP-CHANGE DETECTION (his idea, and it works): after fitting, check the
+  residuals of ONLY the interior (1-8) readings - 9s/0s should already sit
+  exactly on the clamped fit, so they're not checked. If the RMSE of those
+  residuals is above threshold, the single worst-residual interior
+  reading is set aside as a detected step change (a real booking/
+  cancellation jump, not noise) and the instance is refit without it,
+  repeating until the fit is clean. Capped at half of that instance's own
+  interior-reading count - confirmed against real data that an instance
+  can occasionally have every reading tripled (a separate, real
+  duplicate-row data-quality bug, ~9% of rows, tracked separately - not
+  something this script tries to fix), which without a cap turns into a
+  runaway removal loop chasing duplicate copies of the same real outlier
+  one at a time. Past the cap, the fit is used as-is rather than
+  discarded - an imperfect frozen curve beats none, matching this
+  project's whole "gross, gross approximation" design stance.
+
+  SLOPE POOLING. Per (org, dest, time-of-day cluster) PHYSICAL GROUP -
+  pooled ACROSS days of week, since decline rate is a capacity/demand-mix
+  phenomenon, not something that should vary just because it's a Tuesday.
+  Restricted to instances that had at least one real interior reading
+  (post-step-change-removal) - an all-9/all-0 instance's fitted slope is
+  unidentifiable (no transition was ever observed, so curve_fit picks an
+  arbitrary value near a bound) and would corrupt a naive average;
+  confirmed directly against real data (excluding these raised plausible-
+  gap groups from 72% to 95%). Plain mean across qualifying instances -
+  tested against point-count and inverse-variance weighting; inverse-
+  variance was confirmed WORSE (it hands the unidentifiable-slope
+  instances outsized weight whenever curve_fit happens to report a
+  deceptively tiny variance for a boundary-pinned fit), and point-count
+  weighting performed the same as a plain mean once the unidentifiable
+  instances were excluded, so plain mean is used for simplicity.
+
+  GAP is not independently fit - once slope is known, gap = 9 / slope
+  falls straight out (the time a 9-seat cabin takes to cross at that
+  rate). Not a separate coefficient.
+
+  C1 POOLING. Stays day-of-week-specific (a demand/behavior pattern,
+  unlike slope) - reuses the existing service map. Per service, the
+  MEDIAN of every one of its instances' own fitted C1 (including the
+  all-9/all-0 instances - their C1 is well-constrained by the bracket
+  even without a real transition, unlike their slope). His gut call:
+  C1 varies wildly/randomly across instances, so a median is the
+  reasonable frozen summary - and it's the parameter that matters least
+  anyway, since the live estimator overrides it the instant a real
+  sub-9 reading comes in.
+
+Coefficient PERSISTENCE (a table someone can actually query, vs. this
+script's console report) remains explicitly out of scope - still an open
+design question from an earlier session, not decided here.
 
 Run directly for a console report:
     python3 DeclineCurveFit.py
@@ -42,6 +86,9 @@ from collections import defaultdict
 from datetime import datetime
 
 import numpy as np
+from scipy.optimize import curve_fit
+
+from clustering import cluster_services, service_representative
 
 DB_PATH = "nonrev.db"
 
@@ -52,87 +99,33 @@ CABIN_COLUMNS = {
     "d1": ("d1", "cheapD1"),
 }
 
-# Gap-based clustering threshold for grouping distinct depTimes (minutes since
-# midnight) into services on a route. Real services are hours apart; real
-# intra-service spread is small (usually 5-20 min, occasionally up to ~65 min
-# per prior flagged cases). 90 minutes is a deliberately generous gap that
-# still won't merge two real services, per the settled clustering approach.
-SERVICE_CLUSTER_GAP_MINUTES = 90
+# How well the fitted curve has to match an instance's own interior (1-8)
+# readings before we stop hunting for step changes. In seats - a gross,
+# round number, not derived from anything; tune by eye once real reports
+# come out of this.
+STEP_CHANGE_RMSE_THRESHOLD = 0.75
 
-# lifelines' fit_interval_censoring rejects a literal -inf lower bound
-# outright (confirmed directly - it errors even though it accepts +inf on
-# the upper side without complaint). This is a library quirk, not a math
-# one: a sufficiently large-magnitude finite stand-in behaves identically,
-# for the same reason a finite right-censoring cutoff doesn't matter as
-# long as it's beyond all real data (same idea already worked through for
-# the right-censored/OPEN_PROXY side).
-NEGATIVE_INFINITY_STANDIN = -1e6
-# at departure), used only because real full/open/iffy classification isn't
-# built yet. A right-censored C1 reading (still 9, no later reading that day)
-# is only kept as informative evidence for the fit when it's this close to
-# departure - matches the existing golden-ticket window. Far-from-departure
-# right-censored readings carry almost no information (the corner could have
-# happened five minutes later, or five hours later, or not at all that day)
-# and are dropped from the fit entirely rather than treated as evidence.
-# Replace this with real per-(service,cabin) classification once it exists -
-# this is standing in for that, not a permanent corner-fitting rule.
-OPEN_PROXY_HOURS_BEFORE_DEP = 1.5
+# Never remove more than this fraction of an instance's own interior
+# readings hunting for step changes - confirmed necessary against real
+# data (a duplicate-row data bug, tracked separately, can otherwise turn
+# into a runaway loop chasing 3 copies of the same real outlier one at a
+# time). Past the cap, the last fit found is used as-is rather than
+# discarding the instance outright.
+MAX_STEP_CHANGE_REMOVAL_FRACTION = 0.5
 
 
-def cluster_service_times(dep_times):
-    """Gap-based clustering of a sorted list of depTimes (minutes since
-    midnight) into services. Returns a list of clusters, each a list of the
-    original depTimes belonging to that cluster."""
-    if not dep_times:
-        return []
-    times = sorted(dep_times)
-    clusters = [[times[0]]]
-    for t in times[1:]:
-        if t - clusters[-1][-1] <= SERVICE_CLUSTER_GAP_MINUTES:
-            clusters[-1].append(t)
-        else:
-            clusters.append([t])
-    return clusters
-
-
-def build_service_map(conn):
-    """Returns dict: (org, dest, depTime) -> serviceId (int), plus a dict
-    serviceId -> (org, dest, representative_depTime) for reporting."""
-    cur = conn.cursor()
-    cur.execute("SELECT DISTINCT org, dest, depTime FROM flightSchedule")
-    rows = cur.fetchall()
-
-    by_route = defaultdict(set)
-    for org, dest, depTime in rows:
-        by_route[(org, dest)].add(depTime)
-
-    dep_time_to_service = {}
-    service_info = {}
-    next_service_id = 1
-
-    for (org, dest), times in by_route.items():
-        clusters = cluster_service_times(list(times))
-        for cluster in clusters:
-            service_id = next_service_id
-            next_service_id += 1
-            rep_time = int(round(sum(cluster) / len(cluster)))
-            service_info[service_id] = (org, dest, rep_time, len(cluster))
-            for t in cluster:
-                dep_time_to_service[(org, dest, t)] = service_id
-
-    return dep_time_to_service, service_info
-
-
-def load_observations_with_schedule(conn):
-    """Joins observations to flightSchedule (via carrier/
-    carriersFltNum_notStable_DO_NOT_USE/org/dest/dayOfWeek) to attach
-    depTime. Returns a list of dict rows. Rows with no matching
-    flightSchedule entry are dropped (reported separately)."""
+def load_observations(conn):
+    """Reads avail-type observations directly - no flightSchedule join.
+    depTime lives on the observation row itself now. Returns (rows,
+    dropped_count): rows with an unparsable flightDate or a null depTime
+    (a handful of legacy rows predating the depTime column, or an
+    unconfirmed-airport gap at logging time - same class GraphObservations
+    already drops for the same reason) are excluded and counted."""
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT observationId, carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, flightDate,
-               checkTimestamp, hoursBeforeDep, readingType,
+        SELECT observationId, carrier, org, dest, flightDate,
+               checkTimestamp, hoursBeforeDep, depTime, readingType,
                y, cPlus, firstOrPS, d1,
                cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
         FROM observations
@@ -142,30 +135,85 @@ def load_observations_with_schedule(conn):
     obs_rows = cur.fetchall()
     col_names = [d[0] for d in cur.description]
 
-    cur.execute("SELECT carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime FROM flightSchedule")
-    sched_lookup = {}
-    for carrier, flight_number, org, dest, dow, depTime in cur.fetchall():
-        sched_lookup[(carrier, flight_number, org, dest, dow)] = depTime
-
-    matched = []
-    unmatched_count = 0
+    kept = []
+    dropped_count = 0
     for row in obs_rows:
         r = dict(zip(col_names, row))
+        if r["depTime"] is None:
+            dropped_count += 1
+            continue
         try:
-            dow = datetime.strptime(r["flightDate"], "%Y-%m-%d").strftime("%a")
+            r["dayOfWeek"] = datetime.strptime(r["flightDate"], "%Y-%m-%d").strftime("%a")
         except ValueError:
-            unmatched_count += 1
+            dropped_count += 1
             continue
-        key = (r["carrier"], r["carriersFltNum_notStable_DO_NOT_USE"], r["org"], r["dest"], dow)
-        depTime = sched_lookup.get(key)
-        if depTime is None:
-            unmatched_count += 1
-            continue
-        r["depTime"] = depTime
-        r["dayOfWeek"] = dow
-        matched.append(r)
+        kept.append(r)
 
-    return matched, unmatched_count
+    return kept, dropped_count
+
+
+def build_service_map(rows):
+    """Clusters each (org, dest, dayOfWeek)'s observed depTimes into
+    services via the shared gap-based clustering (clustering.py) - day-
+    of-week-specific, per the later-settled service definition (NOT
+    pooled across all 7 days the way ServiceGrouping.get_route_services
+    is, for its different purpose of open/full pooling). Used for C1,
+    which is a demand/behavior pattern and genuinely does vary by day of
+    week (e.g. the Tuesday-after-a-long-weekend case).
+
+    Returns dict: (org, dest, dayOfWeek, depTime) -> serviceId (int), plus
+    a dict serviceId -> (org, dest, dayOfWeek, representative_depTime,
+    cluster_size) for reporting."""
+    by_group = defaultdict(set)
+    for r in rows:
+        by_group[(r["org"], r["dest"], r["dayOfWeek"])].add(r["depTime"])
+
+    dep_time_to_service = {}
+    service_info = {}
+    next_service_id = 1
+
+    for (org, dest, dow), times in by_group.items():
+        clusters = cluster_services(times)
+        for cluster in clusters:
+            service_id = next_service_id
+            next_service_id += 1
+            rep_time = service_representative(cluster)
+            service_info[service_id] = (org, dest, dow, rep_time, len(cluster))
+            for t in cluster:
+                dep_time_to_service[(org, dest, dow, t)] = service_id
+
+    return dep_time_to_service, service_info
+
+
+def build_slope_group_map(rows):
+    """Clusters each (org, dest)'s observed depTimes into "physical
+    groups" POOLED ACROSS ALL 7 DAYS - deliberately coarser than
+    build_service_map's day-of-week-specific services. Slope is a
+    capacity/decline-rate phenomenon, not a demand-pattern one - no
+    reason it should be split by day of week, and pooling across days
+    gives it roughly 7x the instances to draw on.
+
+    Returns dict: (org, dest, depTime) -> groupId (int), plus a dict
+    groupId -> (org, dest, representative_depTime, cluster_size)."""
+    by_route = defaultdict(set)
+    for r in rows:
+        by_route[(r["org"], r["dest"])].add(r["depTime"])
+
+    dep_time_to_group = {}
+    group_info = {}
+    next_group_id = 1
+
+    for (org, dest), times in by_route.items():
+        clusters = cluster_services(times)
+        for cluster in clusters:
+            group_id = next_group_id
+            next_group_id += 1
+            rep_time = service_representative(cluster)
+            group_info[group_id] = (org, dest, rep_time, len(cluster))
+            for t in cluster:
+                dep_time_to_group[(org, dest, t)] = group_id
+
+    return dep_time_to_group, group_info
 
 
 def resolved_cabin_value(row, real_col, cheap_col):
@@ -182,33 +230,29 @@ def resolved_cabin_value(row, real_col, cheap_col):
     return None
 
 
-def parse_check_timestamp(ts):
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-        try:
-            return datetime.strptime(ts, fmt)
-        except ValueError:
-            continue
-    return None
-
-
-def extract_brackets(matched_rows, dep_time_to_service, cabin):
+def gather_instances(rows, dep_time_to_service, dep_time_to_group, cabin):
     """For one cabin, groups matched observation rows into instances
-    (serviceId, flightDate), and within each instance extracts:
-      - the C1 bracket (last-known-9 -> first-known-non-9), in a
-        monotonically-increasing-with-time coordinate (timeCoord = -hoursBeforeDep)
-      - the C2 bracket (last-known-nonzero -> first-known-0), same coordinate
-    Returns (c1_brackets, c2_brackets), each a list of (lower, upper) tuples
-    using np.inf for right-censored (never resolved) sides.
-    """
+    keyed by (serviceId, flightDate). Each instance also carries its own
+    groupId (the cross-day slope group its depTime falls into - normally
+    the same physical group regardless of which day it landed on, since
+    both cluster the same underlying depTimes, just pooled differently).
+    Readings are sorted chronologically (ascending real time = descending
+    hoursBeforeDep).
+
+    Returns dict: (serviceId, flightDate) -> {"group_id": int,
+    "readings": [(hoursBeforeDep, value), ...] sorted chronologically}."""
     real_col, cheap_col = CABIN_COLUMNS[cabin]
 
-    instances = defaultdict(list)
-    for r in matched_rows:
+    instances = defaultdict(lambda: {"group_id": None, "readings": []})
+    for r in rows:
         val = resolved_cabin_value(r, real_col, cheap_col)
         if val is None:
             continue
-        service_id = dep_time_to_service.get((r["org"], r["dest"], r["depTime"]))
+        service_id = dep_time_to_service.get((r["org"], r["dest"], r["dayOfWeek"], r["depTime"]))
         if service_id is None:
+            continue
+        group_id = dep_time_to_group.get((r["org"], r["dest"], r["depTime"]))
+        if group_id is None:
             continue
         if r["hoursBeforeDep"] is None:
             continue
@@ -216,218 +260,202 @@ def extract_brackets(matched_rows, dep_time_to_service, cabin):
             hbd = float(r["hoursBeforeDep"])
         except (ValueError, TypeError):
             continue
-        instances[(service_id, r["flightDate"])].append((hbd, val))
+        key = (service_id, r["flightDate"])
+        instances[key]["group_id"] = group_id
+        instances[key]["readings"].append((hbd, val))
 
-    c1_brackets = []
-    c2_brackets = []
+    for inst in instances.values():
+        inst["readings"].sort(key=lambda x: -x[0])  # descending hoursBeforeDep = chronological
 
-    for key, readings in instances.items():
-        # sort by time coordinate ascending (timeCoord = -hoursBeforeDep,
-        # so this is real chronological order within the day)
-        readings.sort(key=lambda x: -x[0])
-        time_coords = [-hbd for hbd, _ in readings]
-        vals = [v for _, v in readings]
-
-        # --- C1: leaves 9 ---
-        last_nine_idx = None
-        first_non_nine_idx = None
-        for i, v in enumerate(vals):
-            if v >= 9:
-                last_nine_idx = i
-            elif first_non_nine_idx is None:
-                first_non_nine_idx = i
-        if last_nine_idx is not None and first_non_nine_idx is not None and first_non_nine_idx > last_nine_idx:
-            c1_lower = time_coords[last_nine_idx]
-            c1_upper = time_coords[first_non_nine_idx]
-        elif last_nine_idx is not None and first_non_nine_idx is None:
-            # right-censored: still 9 at every check we have. Only keep this
-            # as evidence if the last check was close to departure (OPEN_PROXY
-            # threshold) - otherwise we genuinely don't know enough to say
-            # anything, and including it would just park uninformative mass
-            # at infinity in the fit.
-            last_nine_hbd = readings[last_nine_idx][0]
-            if last_nine_hbd <= OPEN_PROXY_HOURS_BEFORE_DEP:
-                c1_lower = time_coords[last_nine_idx]
-                c1_upper = np.inf
-            else:
-                c1_lower = c1_upper = None
-        elif last_nine_idx is None and first_non_nine_idx is not None:
-            # left-censored: the very first reading we have already shows
-            # non-9. Mathematically legitimate evidence (see prior
-            # discussion), but lifelines' fit_interval_censoring produces
-            # confirmed-broken (non-monotonic) output for left-censored data
-            # - a real library bug/limitation, not a data issue on our end.
-            # Dropping these for now until that's resolved (icenReg test,
-            # or a different tool) rather than feed the fit known-bad input.
-            c1_lower = c1_upper = None
-        else:
-            c1_lower = c1_upper = None
-
-        # --- C2: hits 0 ---
-        last_nonzero_idx = None
-        first_zero_idx = None
-        for i, v in enumerate(vals):
-            if v > 0:
-                last_nonzero_idx = i
-            elif first_zero_idx is None:
-                first_zero_idx = i
-        if last_nonzero_idx is not None and first_zero_idx is not None and first_zero_idx > last_nonzero_idx:
-            c2_lower = time_coords[last_nonzero_idx]
-            c2_upper = time_coords[first_zero_idx]
-        elif last_nonzero_idx is not None and first_zero_idx is None:
-            c2_lower = time_coords[last_nonzero_idx]
-            c2_upper = np.inf
-        else:
-            c2_lower = c2_upper = None
-
-        if c1_lower is not None:
-            c1_brackets.append((key[0], c1_lower, c1_upper))
-
-        # gap bracket only derivable when BOTH C1 and C2 are at least
-        # partially bracketed for this instance
-        if c1_lower is not None and c2_lower is not None:
-            gap_lower = c2_lower - c1_upper if np.isfinite(c1_upper) else np.nan
-            if c1_lower <= NEGATIVE_INFINITY_STANDIN:
-                # c1_lower is a finite stand-in for -inf (left-censored C1) -
-                # treat the gap's upper bound as genuinely unbounded rather
-                # than doing arithmetic against the stand-in's arbitrary
-                # magnitude, which would produce a technically-correct but
-                # misleading huge finite number if anyone inspects it directly.
-                gap_upper = np.inf
-            else:
-                gap_upper = (c2_upper - c1_lower) if np.isfinite(c2_upper) else np.inf
-            if not np.isnan(gap_lower) and gap_lower >= 0:
-                c2_brackets.append((key[0], gap_lower, gap_upper))
-
-    return c1_brackets, c2_brackets
+    return instances
 
 
-def fit_turnbull_grid(brackets, resolution=0.05, max_iter=500, tol=1e-8):
-    """Fits a nonparametric interval-censored (Turnbull-style) population
-    distribution directly, as a fine-grained probability mass distribution
-    over time via an EM/self-consistency algorithm - rather than delegating
-    to lifelines' fit_interval_censoring, which was confirmed (this session)
-    to produce non-monotonic, invalid survival curves on ordinary real data
-    (see decline-curve-handoff discussion; reproduced on both synthetic and
-    real service data, independent of left-censoring).
-
-    This implementation is structurally guaranteed correct in a way that
-    matters here: it builds a genuine normalized probability distribution
-    bin-by-bin, so its cumulative sum CANNOT be non-monotonic - there is no
-    code path that could reproduce the lifelines failure, not just "tested
-    and seemed fine." Verified via: (1) a synthetic case where every bracket
-    is the same tight interval - median correctly concentrates there; (2) the
-    exact real data that broke lifelines - now fits cleanly with a monotonic
-    result.
-
-    brackets: list of (serviceId, lower, upper) tuples, same shape as what
-    extract_brackets returns. upper may be np.inf for right-censored - this
-    gets capped at 0.0 (departure) as the grid's upper bound, which is the
-    real physical constraint (C1 cannot happen after departure), not an
-    approximation.
-
-    Returns (centers, p) - centers is the grid's bin-center array, p is the
-    fitted probability mass per bin (sums to 1, all non-negative).
-    """
-    lowers = np.array([b[1] for b in brackets], dtype=float)
-    uppers = np.array([0.0 if not np.isfinite(b[2]) else b[2] for b in brackets], dtype=float)
-
-    grid_min = lowers.min()
-    grid_max = max(uppers.max(), 0.0)
-    n_bins = max(int(np.ceil((grid_max - grid_min) / resolution)), 1)
-    edges = np.linspace(grid_min, grid_max, n_bins + 1)
-    centers = (edges[:-1] + edges[1:]) / 2
-
-    indicator = (centers[None, :] >= lowers[:, None]) & (centers[None, :] <= uppers[:, None])
-    keep = indicator.sum(axis=1) > 0
-    indicator = indicator[keep]
-    n = indicator.shape[0]
-    if n == 0:
-        return centers, np.zeros_like(centers)
-
-    p = np.full(centers.shape[0], 1.0 / centers.shape[0])
-    for _ in range(max_iter):
-        S = indicator @ p
-        S[S == 0] = 1e-300
-        p_new = ((indicator / S[:, None]) * p[None, :]).sum(axis=0) / n
-        if np.max(np.abs(p_new - p)) < tol:
-            p = p_new
-            break
-        p = p_new
-
-    assert np.all(p >= -1e-9), "negative probability mass produced - real bug, do not trust this fit"
-    assert abs(p.sum() - 1.0) < 1e-6, "distribution does not sum to 1 - real bug, do not trust this fit"
-    cdf = np.cumsum(p)
-    assert np.all(np.diff(cdf) >= -1e-9), "non-monotonic CDF produced - real bug, do not trust this fit"
-
-    return centers, p
+def piecewise_model(hbd, c1, slope):
+    """Flat at 9 until C1, linear decline (rate = slope, seats per hour)
+    from there, flat at 0 once it's fully declined. hbd = hoursBeforeDep;
+    larger hbd = further from departure."""
+    return np.clip(9 - slope * (c1 - hbd), 0, 9)
 
 
-def summarize_grid_fit(brackets):
-    """Reports median (when resolvable) and the right-censored fraction,
-    same spirit as the earlier lifelines-based summarize_fit."""
-    n = len(brackets)
-    if n < 5:
-        return f"insufficient data (n={n})"
-    n_right_censored = sum(1 for b in brackets if not np.isfinite(b[2]))
-    pct_rc = n_right_censored / n * 100
+def find_c1_bracket(readings):
+    """Last-known-9 -> first-known-non-9, in hoursBeforeDep terms. None
+    if this instance never left 9, or never showed a 9 to begin with."""
+    last_nine_hbd = None
+    first_non9_hbd = None
+    for hbd, v in readings:  # already chronological (descending hbd)
+        if v >= 9:
+            last_nine_hbd = hbd
+        elif first_non9_hbd is None and last_nine_hbd is not None:
+            first_non9_hbd = hbd
+    if last_nine_hbd is None or first_non9_hbd is None:
+        return None
+    return (first_non9_hbd, last_nine_hbd)  # (lower, upper)
 
-    centers, p = fit_turnbull_grid(brackets)
-    if p.sum() == 0:
-        return f"fit failed (n={n})"
-    cdf = np.cumsum(p)
-    idx = np.searchsorted(cdf, 0.5)
-    if idx >= len(centers):
-        return f"UNRESOLVED - {pct_rc:.0f}% of n={n} right-censored, no median crossing"
-    median_val = centers[idx]
-    return f"median={median_val:.2f}h (n={n}, {pct_rc:.0f}% right-censored)"
+
+def fit_instance(readings):
+    """Fits the piecewise model to one flight-day instance via
+    scipy.optimize.curve_fit against its FULL set of raw readings (9s and
+    0s included), with C1's search range bounded by this instance's own
+    corner bracket when it has one. Then hunts for step changes: if the
+    fit's residuals on just the interior (1-8) readings are too large,
+    the single worst one is set aside as a detected step change and the
+    instance is refit without it, repeating (capped - see module
+    docstring) until the fit is clean or the cap is hit.
+
+    Returns a dict with c1, slope, n_interior (count of interior readings
+    actually used in the final fit - 0 means this instance's slope is
+    unidentifiable, see module docstring), n_points, and step_changes (a
+    list of (hoursBeforeDep, observed_value, magnitude) for every reading
+    set aside - magnitude is the fit residual at the time it was flagged,
+    rounded to the nearest integer seat since a real booking/cancellation
+    moves a whole number of seats; detection and ranking use the
+    unrounded residual, only the recorded magnitude rounds) - or None if
+    there's nothing fittable at all (fewer than 2 readings, or every
+    reading at the same hoursBeforeDep)."""
+    pts = list(readings)
+    original_n_interior = sum(1 for _, v in pts if 1 <= v <= 8)
+    max_removals = max(0, int(original_n_interior * MAX_STEP_CHANGE_REMOVAL_FRACTION))
+    step_changes = []
+
+    while True:
+        if len(pts) < 2:
+            return None
+        xs = np.array([h for h, v in pts], dtype=float)
+        ys = np.array([v for h, v in pts], dtype=float)
+        if np.var(xs) == 0:
+            return None
+
+        bracket = find_c1_bracket(pts)
+        c1_lo, c1_hi = bracket if bracket else (0.0, xs.max() + 1)
+        c1_guess = (c1_lo + c1_hi) / 2
+        try:
+            popt, _ = curve_fit(
+                piecewise_model, xs, ys, p0=[c1_guess, 1.0],
+                bounds=([c1_lo, 1e-4], [c1_hi, 50]), maxfev=2000,
+            )
+        except (RuntimeError, ValueError):
+            return None
+        c1, slope = popt
+
+        interior_idx = [i for i, (h, v) in enumerate(pts) if 1 <= v <= 8]
+        if not interior_idx:
+            return {"c1": float(c1), "slope": float(slope), "n_interior": 0,
+                    "n_points": len(pts), "step_changes": step_changes}
+
+        residuals = [ys[i] - piecewise_model(xs[i], c1, slope) for i in interior_idx]
+        rmse = float(np.sqrt(np.mean(np.square(residuals))))
+        if rmse <= STEP_CHANGE_RMSE_THRESHOLD or len(step_changes) >= max_removals:
+            return {"c1": float(c1), "slope": float(slope), "n_interior": len(interior_idx),
+                    "n_points": len(pts), "step_changes": step_changes}
+
+        worst_local = int(np.argmax(np.abs(residuals)))
+        worst_i = interior_idx[worst_local]
+        # detection/ranking stays on the raw residual (see docstring); only
+        # the RECORDED magnitude rounds to an integer - a real booking or
+        # cancellation moves a whole number of seats, so "-1.6" isn't
+        # describing anything that could have physically happened, even
+        # though the underlying fit residual it's derived from is continuous
+        step_changes.append((pts[worst_i][0], pts[worst_i][1], round(residuals[worst_local])))
+        pts = pts[:worst_i] + pts[worst_i + 1:]
+
+
+def pool_slope(fits_by_instance, service_to_group):
+    """Plain mean of per-instance fitted slopes, restricted to instances
+    with n_interior >= 1 (an instance with zero real interior readings
+    has an unidentifiable slope - see module docstring for why this
+    matters, confirmed directly against real data). Returns dict
+    groupId -> (slope, gap_hours, n_instances_used)."""
+    by_group = defaultdict(list)
+    for (service_id, flight_date), fit in fits_by_instance.items():
+        if fit is None or fit["n_interior"] < 1:
+            continue
+        gid = service_to_group.get(service_id)
+        if gid is None:
+            continue
+        by_group[gid].append(fit["slope"])
+
+    pooled = {}
+    for gid, slopes in by_group.items():
+        slope = float(np.mean(slopes))
+        if slope <= 0:
+            continue
+        pooled[gid] = (slope, 9.0 / slope, len(slopes))
+    return pooled
+
+
+def pool_c1(fits_by_instance):
+    """Median of every instance's own fitted C1, per (day-of-week-
+    specific) service - includes all-9/all-0 instances too, since their
+    C1 is well-constrained by the bracket even without a real transition
+    (only their slope is unidentifiable). Returns dict serviceId ->
+    (median_c1, n_instances)."""
+    by_service = defaultdict(list)
+    for (service_id, flight_date), fit in fits_by_instance.items():
+        if fit is None:
+            continue
+        by_service[service_id].append(fit["c1"])
+
+    return {sid: (float(np.median(c1s)), len(c1s)) for sid, c1s in by_service.items()}
 
 
 def main():
     conn = sqlite3.connect(DB_PATH)
 
-    dep_time_to_service, service_info = build_service_map(conn)
-    print(f"Built {len(service_info)} services from flightSchedule departure-time clustering.")
+    matched_rows, dropped_count = load_observations(conn)
+    print(f"Loaded {len(matched_rows)} avail-type observations "
+          f"({dropped_count} dropped - no depTime or unparsable flightDate).")
 
-    matched_rows, unmatched_count = load_observations_with_schedule(conn)
-    print(f"Matched {len(matched_rows)} avail-type observations to flightSchedule "
-          f"({unmatched_count} unmatched/dropped).")
+    dep_time_to_service, service_info = build_service_map(matched_rows)
+    dep_time_to_group, group_info = build_slope_group_map(matched_rows)
+    print(f"Built {len(service_info)} day-of-week-specific services (for C1) "
+          f"and {len(group_info)} cross-day physical groups (for slope).")
     print()
+
+    service_members = defaultdict(list)
+    for (org, dest, dow, dep_time), sid in dep_time_to_service.items():
+        service_members[sid].append((org, dest, dep_time))
+    service_to_group = {}
+    for sid, members in service_members.items():
+        votes = defaultdict(int)
+        for org, dest, dep_time in members:
+            gid = dep_time_to_group.get((org, dest, dep_time))
+            if gid is not None:
+                votes[gid] += 1
+        if votes:
+            service_to_group[sid] = max(votes.items(), key=lambda kv: kv[1])[0]
 
     for cabin in ["y", "cPlus", "firstOrPS", "d1"]:
         print(f"=== Cabin: {cabin} ===")
-        c1_brackets, gap_brackets = extract_brackets(matched_rows, dep_time_to_service, cabin)
-        print(f"  Total C1 brackets: {len(c1_brackets)}   Total gap brackets: {len(gap_brackets)}")
+        instances = gather_instances(matched_rows, dep_time_to_service, dep_time_to_group, cabin)
 
-        # per-service breakdown, only for services with enough data to bother
-        by_service_c1 = defaultdict(list)
-        by_service_gap = defaultdict(list)
-        for b in c1_brackets:
-            by_service_c1[b[0]].append(b)
-        for b in gap_brackets:
-            by_service_gap[b[0]].append(b)
+        fits_by_instance = {key: fit_instance(inst["readings"]) for key, inst in instances.items()}
+        n_fit = sum(1 for f in fits_by_instance.values() if f is not None)
+        n_step_changes = sum(len(f["step_changes"]) for f in fits_by_instance.values() if f)
+        n_instances_with_step_changes = sum(1 for f in fits_by_instance.values() if f and f["step_changes"])
 
-        reportable_services = sorted(
-            set(by_service_c1) | set(by_service_gap),
-            key=lambda sid: -len(by_service_c1.get(sid, []))
-        )
+        group_slopes = pool_slope(fits_by_instance, service_to_group)
+        c1_by_service = pool_c1(fits_by_instance)
 
+        print(f"  {len(instances)} flight-day instances, {n_fit} fit successfully.")
+        print(f"  {n_instances_with_step_changes} instances had at least one step change detected "
+              f"({n_step_changes} total readings set aside as step changes).")
+        print(f"  {len(group_slopes)}/{len(group_info)} physical groups got a resolvable slope, "
+              f"{len(c1_by_service)}/{len(service_info)} services got a resolvable C1.")
+
+        ranked = sorted(c1_by_service.items(), key=lambda kv: -kv[1][1])
         shown = 0
-        for sid in reportable_services:
-            c1_for_service = by_service_c1.get(sid, [])
-            gap_for_service = by_service_gap.get(sid, [])
-            if len(c1_for_service) < 5:
+        for sid, (median_c1, n_instances) in ranked:
+            gid = service_to_group.get(sid)
+            if gid is None or gid not in group_slopes:
                 continue
-            org, dest, rep_time, n_days = service_info[sid]
-            c1_summary = summarize_grid_fit(c1_for_service)
-            gap_summary = summarize_grid_fit(gap_for_service) if gap_for_service else "insufficient data (n=0)"
+            slope, gap, n_slope_instances = group_slopes[gid]
+            org, dest, dow, rep_time, _ = service_info[sid]
             hh, mm = divmod(rep_time, 60)
-            print(f"  service {sid} ({org}-{dest} ~{hh:02d}{mm:02d}):")
-            print(f"    C1:  {c1_summary}")
-            print(f"    gap: {gap_summary}")
+            print(f"  service {sid} ({org}-{dest} {dow} ~{hh:02d}{mm:02d}): "
+                  f"slope={slope:.2f} seats/h (from {n_slope_instances} instances), "
+                  f"gap={gap:.2f}h, C1 median={median_c1:.2f}h (from {n_instances} instances)")
             shown += 1
             if shown >= 10:
-                print(f"  ... ({len(reportable_services) - shown} more services with >=5 C1 brackets not shown)")
                 break
         print()
 
