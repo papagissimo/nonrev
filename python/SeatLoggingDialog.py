@@ -304,8 +304,7 @@ def floor_estimates_for_client(floor_coefficients):
     return result
 
 
-def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_route=None):
-    skip_set = set(skip_route_keys or [])
+def get_next_batch(conn, include_departed=False, forced_route=None):
     settings = load_settings(conn)
     floor_coefficients = load_floor_estimates(conn)
     now = eastern_now()
@@ -323,9 +322,9 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
     # days its schedule row came from. Day-after-tomorrow is included too
     # (his call) so an evening session can reach past tomorrow's earliest
     # flights into tomorrow NIGHT's as well, not just the ones close to
-    # midnight - logEverything is what actually gets him there ahead of
-    # normal cadence timing; this just widens the outer bound of what's
-    # reachable at all.
+    # midnight - the single wide-open tier (see settings.py) is what
+    # actually gets him there ahead of normal cadence timing; this just
+    # widens the outer bound of what's reachable at all.
     schedule_days = [
         now.date() - timedelta(days=1), now.date(),
         now.date() + timedelta(days=1), now.date() + timedelta(days=2),
@@ -375,37 +374,29 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
                 })
                 continue
 
-            if settings['logEverything']:
-                # "Everything" means everything - axed flights included.
-                # This is the one override that punches through axed's
-                # normal cadence suppression (below).
-                eligible_now, minutes_until_eligible = True, 0
-            else:
-                todays_hrs = [
-                    r[0] for r in conn.execute(
-                        """SELECT hoursBeforeDep FROM observations
-                           WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
-                           AND hoursBeforeDep IS NOT NULL""",
-                        (carrier, dep_time, org, dest, flight_date_str),
-                    ).fetchall()
-                ]
-                eligible_now, minutes_until_eligible = evaluate_eligibility(
-                    hours_until_dep, todays_hrs, settings['tiers']
-                )
+            todays_hrs = [
+                r[0] for r in conn.execute(
+                    """SELECT hoursBeforeDep FROM observations
+                       WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
+                       AND hoursBeforeDep IS NOT NULL""",
+                    (carrier, dep_time, org, dest, flight_date_str),
+                ).fetchall()
+            ]
+            eligible_now, minutes_until_eligible = evaluate_eligibility(
+                hours_until_dep, todays_hrs, settings['tiers']
+            )
 
-                # 'axed' and 'starred' are both settled judgment calls
-                # ("full too often" / "reliably open, don't bother") rather
-                # than timing preferences - both suppressed from normal
-                # cadence selection, but logEverything (above) overrides
-                # both, same as it overrides ordinary cadence timing.
-                # Deliberately NOT filtered out of sched_rows the way
-                # `ignore` is: these flights still need to appear in
-                # route_rows below (same route, still shown) so a day's
-                # schedule never looks like it's silently missing a flight
-                # - only eligibility for being picked as "next" is
-                # suppressed here.
-                if verdict_type in ('axed', 'starred'):
-                    eligible_now, minutes_until_eligible = False, None
+            # 'axed' and 'starred' are both settled judgment calls ("full
+            # too often" / "reliably open, don't bother") rather than
+            # timing preferences - suppressed from normal cadence
+            # selection regardless of what the tier math above said.
+            # Deliberately NOT filtered out of sched_rows the way `ignore`
+            # is: these flights still need to appear in route_rows below
+            # (same route, still shown) so a day's schedule never looks
+            # like it's silently missing a flight - only eligibility for
+            # being picked as "next" is suppressed here.
+            if verdict_type in ('axed', 'starred'):
+                eligible_now, minutes_until_eligible = False, None
 
             candidates.append({
                 'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
@@ -426,20 +417,19 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
-    # Skip-key format stays org|dest (no date) to match the client's
-    # existing session-skip list - skipping a route mid-session skips it
-    # regardless of which calendar day it's currently grouped under,
-    # which is the right behavior (the person thinks of it as "that
-    # route", not "that route on that specific date").
+    # No separate "already handled" tracking needed: eligible_now already
+    # reflects real logged history (via todays_hrs + recheckGapHours
+    # above) and departure has its own hard cutoff (DEP_CUTOFF_MINUTES,
+    # applied earlier). Nothing client-side needs to be remembered between
+    # calls for this to work correctly.
     next_candidate = None
     if forced_route is not None:
-        # Used after the schedule-edit modal closes, to return to the
-        # exact route+day that was just edited rather than whatever
-        # cadence would otherwise pick next - see project history on
-        # why "usually the same thing, rarely not" was worth avoiding.
-        # Checked against both pools since the route may have finished
-        # departing (or a flight may have just crossed the cutoff)
-        # during however long the modal was open.
+        # Used after the schedule-edit modal closes (return to the exact
+        # route+day just edited) and to redisplay the current route+day
+        # unchanged (e.g. the "show departed" toggle) - never advances
+        # past anything, just re-fetches. Checked against both pools since
+        # the route may have finished departing (or a flight may have just
+        # crossed the cutoff) while the modal was open.
         next_candidate = next(
             (c for c in candidates + departed_candidates
              if c['org'] == forced_route['org'] and c['dest'] == forced_route['dest']
@@ -448,8 +438,7 @@ def get_next_batch(conn, skip_route_keys=None, include_departed=False, forced_ro
         )
     if next_candidate is None:
         next_candidate = next(
-            (c for c in candidates
-             if c['eligibleNow'] and f"{c['org']}|{c['dest']}" not in skip_set),
+            (c for c in candidates if c['eligibleNow']),
             None,
         )
 
@@ -617,7 +606,7 @@ def save_entry_dialog(conn, payload):
     return {'logged': len(to_write)}
 
 
-def save_and_get_next_batch(conn, payload, skip_route_keys=None, include_departed=False, forced_route=None):
+def save_and_get_next_batch(conn, payload, include_departed=False, forced_route=None):
     save_result = save_entry_dialog(conn, payload)
-    next_result = get_next_batch(conn, skip_route_keys, include_departed, forced_route)
+    next_result = get_next_batch(conn, include_departed, forced_route)
     return {'logged': save_result['logged'], 'next': next_result}

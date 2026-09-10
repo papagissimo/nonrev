@@ -89,18 +89,9 @@
   <div id="batchView" style="display:none;">
     <div class="settingsLink"><a onclick="toggleSettings()">Settings</a></div>
     <div id="settingsPanel">
-      <label><input type="checkbox" id="setLogEverything"> Log every flight regardless of timing (ignores tiers below)</label>
       <div class="tierRow">
-        <b>Near tier</b> - always runs to the 45-min cutoff, no "done for the day"<br>
-        Due within <input type="number" step="0.1" id="setNearMax"> h &middot;
-        recheck every <input type="number" step="0.1" id="setNearGap"> h
-      </div>
-      <div class="tierRow">
-        <b>Far tier</b> - closes for the day once a close-enough reading lands<br>
-        Due between <input type="number" step="0.1" id="setFarMin"> and <input type="number" step="0.1" id="setFarMax"> h &middot;
-        target <input type="number" step="0.1" id="setFarTarget"> h<br>
-        done once within <input type="number" step="0.1" id="setFarTol"> h of target &middot;
-        else recheck every <input type="number" step="0.1" id="setFarGap"> h
+        <b>Recheck gap</b> - how soon a route can come back up as "next" after you've logged it<br>
+        Recheck every <input type="number" step="0.1" id="setRecheckGap"> h
       </div>
       <div class="tierRow">
         <b>Golden ticket</b> - counted on the launcher as "caught" once any reading today lands at or under<br>
@@ -156,8 +147,19 @@
     // response (see renderBatch), never fetched separately.
     var floorEstimates = {};
     var aircraftOptionsRendered = false;
-    var skippedRouteKeys = [];
     var showDeparted = false;
+
+    // The route+day currently on screen, in the shape the backend wants
+    // for a same-route reload (org/dest/flightDate) - null before the
+    // first batch loads. Used only to redisplay the current route+day
+    // unchanged (schedule-edit modal close, show-departed toggle); real
+    // progression to the next route is handled server-side by cadence
+    // eligibility, nothing client-side to track for that.
+    function currentRouteKey() {
+      return batch && batch.routeOrg
+        ? { org: batch.routeOrg, dest: batch.routeDest, flightDate: batch.flightDate }
+        : null;
+    }
 
     // Session-scoped only (resets on page reload) - just-logged entries,
     // most recent last. Rendered as a plain static "current + last 2"
@@ -393,15 +395,7 @@
     }
 
     function populateSettingsForm(settings) {
-      document.getElementById('setLogEverything').checked = !!settings.logEverything;
-      var near = settings.tiers[0], far = settings.tiers[1];
-      document.getElementById('setNearMax').value = near.maxHours;
-      document.getElementById('setNearGap').value = near.recheckGapHours;
-      document.getElementById('setFarMin').value = far.minHours;
-      document.getElementById('setFarMax').value = far.maxHours;
-      document.getElementById('setFarTarget').value = far.targetHours;
-      document.getElementById('setFarTol').value = far.doneToleranceHours;
-      document.getElementById('setFarGap').value = far.recheckGapHours;
+      document.getElementById('setRecheckGap').value = settings.tiers[0].recheckGapHours;
       document.getElementById('setGoldenTicket').value = settings.goldenTicketHours;
     }
 
@@ -414,20 +408,15 @@
 
     function saveSettings() {
       var settings = {
-        logEverything: document.getElementById('setLogEverything').checked,
         goldenTicketHours: parseFloat(document.getElementById('setGoldenTicket').value),
+        // Single tier spanning the whole candidate window - maxHours is
+        // fixed (see settings.py DEFAULT_SETTINGS), not user-editable;
+        // recheckGapHours is the one real knob here.
         tiers: [
           {
             minHours: 0,
-            maxHours: parseFloat(document.getElementById('setNearMax').value),
-            recheckGapHours: parseFloat(document.getElementById('setNearGap').value)
-          },
-          {
-            minHours: parseFloat(document.getElementById('setFarMin').value),
-            maxHours: parseFloat(document.getElementById('setFarMax').value),
-            targetHours: parseFloat(document.getElementById('setFarTarget').value),
-            doneToleranceHours: parseFloat(document.getElementById('setFarTol').value),
-            recheckGapHours: parseFloat(document.getElementById('setFarGap').value)
+            maxHours: 100,
+            recheckGapHours: parseFloat(document.getElementById('setRecheckGap').value)
           }
         ]
       };
@@ -471,10 +460,10 @@
       // Only the toggle re-fetches the SAME route/day purely to reveal
       // more rows - nothing here was submitted or discarded, so whatever
       // he'd typed but not yet logged has to survive the rebuild.
-      if (batch && batch.routeOrg) loadBatch(captureUnsavedSeatValues());
+      if (batch && batch.routeOrg) loadBatch(captureUnsavedSeatValues(), currentRouteKey());
     }
 
-    function loadBatch(preserveMap, forcedRoute) {
+    function loadBatch(preserveMap, sameRoute) {
       var btn = document.getElementById('getNextBtn');
       btn.disabled = true;
       btn.textContent = 'Loading\u2026';
@@ -482,8 +471,8 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          skipRouteKeys: skippedRouteKeys, includeDeparted: showDeparted,
-          forcedRoute: forcedRoute || null
+          includeDeparted: showDeparted,
+          forcedRoute: sameRoute || null
         })
       })
         .then(function (res) { return res.json(); })
@@ -569,7 +558,7 @@
       // once, on the very first batch this page load ever sees - after
       // that, it's purely built up from what's actually logged in this
       // session (recordRecentlyLogged), so it isn't clobbered by a fresh
-      // db read every time a route gets skipped/reloaded.
+      // db read every time a new route loads.
       if (!recentSeeded) {
         recentSeeded = true;
         if (recentlyLogged.length === 0 && result.recentObservations) {
@@ -806,13 +795,12 @@
 
     // Called by FlightScheduleDialog.html (running in the modal iframe)
     // once its save actually succeeds - see its saveSchedule(). Returns
-    // to the SAME route+day just edited (forcedRoute), rather than
-    // whatever cadence would otherwise pick next - see project history
-    // for why that distinction matters here.
+    // to the SAME route+day just edited, rather than advancing to
+    // whatever comes next.
     window.onFlightScheduleSaved = function () {
-      var forcedRoute = batch ? { org: batch.routeOrg, dest: batch.routeDest, flightDate: batch.flightDate } : null;
+      var sameRoute = currentRouteKey();
       closeScheduleModal();
-      loadBatch(null, forcedRoute);
+      loadBatch(null, sameRoute);
     };
 
     function logReadings() {
@@ -857,14 +845,16 @@
         renderRecentPanel();
       }
 
+      // Either way (blank or filled in), moving to whatever's actually
+      // due next is entirely the server's call now - cadence eligibility
+      // (recheck gap + departure cutoff) decides it from real logged
+      // data, nothing to signal from here.
       if (!hasAnyData) {
-        var key = batch.routeOrg + '|' + batch.routeDest;
-        if (skippedRouteKeys.indexOf(key) === -1) skippedRouteKeys.push(key);
-        status.textContent = 'Skipped. Getting next\u2026';
+        status.textContent = 'Nothing entered. Getting next\u2026';
         fetch('/api/getNextBatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skipRouteKeys: skippedRouteKeys, includeDeparted: showDeparted })
+          body: JSON.stringify({ includeDeparted: showDeparted })
         })
           .then(function (res) { return res.json(); })
           .then(function (nextResult) {
@@ -885,7 +875,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           payload: { flightDate: batch.flightDate, entries: entries },
-          skipRouteKeys: skippedRouteKeys,
           includeDeparted: showDeparted
         })
       })

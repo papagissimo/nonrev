@@ -1,9 +1,9 @@
 """
-Cadence settings (tier windows, recheck gaps, logEverything toggle) -
-what used to live in Apps Script's PropertiesService. Local equivalent is
-a tiny key/value table inside nonrev.db itself, so there's still exactly
-one file holding everything about this project, not a second settings
-file living alongside it.
+Cadence settings (tier windows, recheck gaps) - what used to live in Apps
+Script's PropertiesService. Local equivalent is a tiny key/value table
+inside nonrev.db itself, so there's still exactly one file holding
+everything about this project, not a second settings file living
+alongside it.
 
 load_settings/save_settings take an optional `key`/`defaults` pair so
 other modules can store their own settings blob in this same table
@@ -16,15 +16,20 @@ import json
 
 SETTINGS_KEY = 'nextUpSettings'
 
-# Same gut-feel starting numbers as the old DEFAULT_NEXT_UP_SETTINGS_ in
+# Same gut-feel starting number as the old DEFAULT_NEXT_UP_SETTINGS_ in
 # Entrydialog.gs.js - not derived, just where the old system started too.
+# One tier only, spanning the whole candidate window (see get_next_batch's
+# 4-day schedule_days pool) - maxHours is a fixed ceiling well past
+# anything that pool can ever produce, not something he needs to tune;
+# recheckGapHours is the one real knob (settings pane) - how soon a route
+# can come back up after being logged. There's no separate "logEverything"
+# mode anymore: this single wide-open tier plus the normal 45-minute
+# departure cutoff (DEP_CUTOFF_MINUTES) already covers "keep offering me
+# the same flights every day until they depart."
 DEFAULT_SETTINGS = {
     'tiers': [
-        {'minHours': 0, 'maxHours': 2, 'recheckGapHours': 0.5},
-        {'minHours': 3.5, 'maxHours': 4.5, 'targetHours': 4,
-         'doneToleranceHours': 0.3, 'recheckGapHours': 1},
+        {'minHours': 0, 'maxHours': 100, 'recheckGapHours': 0.5},
     ],
-    'logEverything': False,
     # "Golden ticket" - his term for a reading close enough to departure
     # to trust as the real go/no-go signal. Configurable rather than
     # hardcoded since he expects to tune it, but tuning it never touches

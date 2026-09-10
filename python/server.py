@@ -93,12 +93,11 @@ def api_refresh_floor_estimates():
 @app.route('/api/getNextBatch', methods=['POST'])
 def api_get_next_batch():
     body = request.get_json(silent=True) or {}
-    skip_route_keys = body.get('skipRouteKeys', [])
     include_departed = body.get('includeDeparted', False)
     forced_route = body.get('forcedRoute')
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_keys, include_departed, forced_route))
+        return jsonify(SeatLoggingDialog.get_next_batch(conn, include_departed, forced_route))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -109,12 +108,11 @@ def api_get_next_batch():
 def api_save_and_get_next_batch():
     body = request.get_json(force=True)
     payload = body['payload']
-    skip_route_keys = body.get('skipRouteKeys', [])
     include_departed = body.get('includeDeparted', False)
     forced_route = body.get('forcedRoute')
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, skip_route_keys, include_departed, forced_route))
+        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, include_departed, forced_route))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
