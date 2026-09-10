@@ -386,17 +386,12 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 hours_until_dep, todays_hrs, settings['tiers']
             )
 
-            # 'axed' and 'starred' are both settled judgment calls ("full
-            # too often" / "reliably open, don't bother") rather than
-            # timing preferences - suppressed from normal cadence
-            # selection regardless of what the tier math above said.
-            # Deliberately NOT filtered out of sched_rows the way `ignore`
-            # is: these flights still need to appear in route_rows below
-            # (same route, still shown) so a day's schedule never looks
-            # like it's silently missing a flight - only eligibility for
-            # being picked as "next" is suppressed here.
-            if verdict_type in ('axed', 'starred'):
-                eligible_now, minutes_until_eligible = False, None
+            # 'axed'/'starred' suppression is OFF for now (his call - too
+            # many routes had accumulated a full set of one or the other,
+            # silently making whole routes unreachable with no signal
+            # that they'd dropped out). verdict/verdictType are still
+            # computed, stored, and shown below - only the eligibility
+            # effect is disabled. Re-add a check here if he wants it back.
 
             candidates.append({
                 'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
