@@ -253,83 +253,6 @@
       return cols;
     }
 
-    var T1_TARGET_HOURS = 1.0;
-
-    function t1SeatSum(rd) {
-      return ['y', 'cplus', 'onePS', 'd1'].reduce(function (acc, f) {
-        var v = rd[f];
-        return acc + ((v === '' || v === null || v === undefined) ? 0 : Number(v));
-      }, 0);
-    }
-
-    function t1NearestOf(list, wantMin) {
-      var best = null;
-      list.forEach(function (cur) {
-        if (best === null) { best = cur; return; }
-        if (wantMin && cur.hrs < best.hrs) best = cur;
-        else if (!wantMin && cur.hrs > best.hrs) best = cur;
-      });
-      return best;
-    }
-
-    function t1TwoNearest(list) {
-      // The two readings closest to the target time, by absolute
-      // distance - used when every available reading is on the same
-      // side of the target (no real before/after bracket, which is
-      // the common case - the T-45min-to-T-60min window is rarely
-      // actually hit). Since the list is same-side, sorting by
-      // distance-to-target sorts the same as sorting by hrs itself,
-      // so this also naturally returns the two readings adjacent in
-      // time.
-      var sorted = list.slice().sort(function (x, y) {
-        return Math.abs(x.hrs - T1_TARGET_HOURS) - Math.abs(y.hrs - T1_TARGET_HOURS);
-      });
-      return [sorted[0], sorted[1]];
-    }
-
-    function computeT1EstimateForPool(readings, goldenTicketHours) {
-      // Shared logic with GraphObservations.py's compute_bucket_estimate -
-      // the two are kept in lockstep by hand, no shared module between
-      // Python and the browser. Bracket the two readings nearest T-60min
-      // (one on each side) when a real straddle is available - true
-      // interpolation. When every reading is on the same side, use the
-      // two NEAREST readings on that side rather than nearest+farthest -
-      // extrapolating off the full span pulled the estimate toward a
-      // stale, distant reading even after the trend had since flattened
-      // (confirmed against a real bug: two flat readings at 5.6h/6.1h
-      // both summing to 5 were dragged down to 2.4 by a lone 8-seat
-      // reading out at 11h). Exactly one reading total only counts as
-      // an estimate if it's within the golden-ticket range - his call,
-      // a single close-in reading is trustworthy on its own, a single
-      // distant one implies no trend at all.
-      if (!readings || readings.length === 0) return null;
-
-      if (readings.length === 1) {
-        return (readings[0].hrs <= goldenTicketHours) ? t1SeatSum(readings[0]) : null;
-      }
-
-      var before = readings.filter(function (r) { return r.hrs >= T1_TARGET_HOURS; });
-      var after = readings.filter(function (r) { return r.hrs <= T1_TARGET_HOURS; });
-
-      var b, a;
-      if (before.length && after.length) {
-        b = t1NearestOf(before, true);   // smallest hrs among before-side (nearest to target)
-        a = t1NearestOf(after, false);   // largest hrs among after-side (nearest to target)
-      } else if (before.length) {
-        var nb = t1TwoNearest(before);
-        b = nb[0];
-        a = nb[1];
-      } else {
-        var na = t1TwoNearest(after);
-        b = na[0];
-        a = na[1];
-      }
-
-      var bSum = t1SeatSum(b), aSum = t1SeatSum(a);
-      if (b.hrs === a.hrs) return bSum;
-      return bSum + (aSum - bSum) * (b.hrs - T1_TARGET_HOURS) / (b.hrs - a.hrs);
-    }
-
     function formatT1Value(est) {
       // Two significant figures, his call: below 10 (in magnitude)
       // one decimal place is meaningful, at 10 and above it isn't -
@@ -339,19 +262,15 @@
       return (Math.abs(est) < 10) ? String(Math.round(est * 10) / 10) : String(Math.round(est));
     }
 
-    function formatT1Column(readings, goldenTicketHours) {
-      // One value per reading, aligned row-for-row with the Prev
-      // column's own per-reading lines - each computed using ONLY that
-      // reading and everything older (readings.slice(idx)), i.e. exactly
-      // what the estimate would have shown at that point in time. Lets
-      // him watch the running estimate converge (or not) as the day's
-      // data comes in, top-to-bottom = newest-to-oldest.
+    function formatT1Column(readings) {
+      // Server-computed now (T1Estimator.compute_t1_replay_column) -
+      // each reading already carries its own 't1' value, replay-style
+      // (as of that point in the day). No calculation happens here,
+      // just display formatting - his call, no good reason for real
+      // math to live client-side.
       if (!readings || readings.length === 0) return '';
-      return readings.map(function (rd, idx) {
-        var pool = readings.slice(idx);
-        var est = computeT1EstimateForPool(pool, goldenTicketHours);
-        var text = formatT1Value(est);
-        return '<div class="row t1cell">' + text + '</div>';
+      return readings.map(function (rd) {
+        return '<div class="row t1cell">' + formatT1Value(rd.t1) + '</div>';
       }).join('');
     }
 
@@ -598,7 +517,6 @@
       btnRow.style.display = 'flex';
 
       var anyD1 = batch.rows.some(function (r) { return r.hasD1; });
-      var goldenTicketHours = (batch.settings && batch.settings.goldenTicketHours) || 1.5;
       var columns = buildColumns(anyD1);
 
       var colgroup = document.getElementById('colgroup');
@@ -645,7 +563,7 @@
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="onePS"></div></div>',
           d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="d1"></div></div>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
-          t1: '<div class="prev">' + formatT1Column(row.previousReadings, goldenTicketHours) + '</div>',
+          t1: '<div class="prev">' + formatT1Column(row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
           gap2: '',

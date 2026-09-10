@@ -37,6 +37,7 @@ from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from settings import load_settings
 from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
 from FloorEstimates import load_floor_estimates, estimate_for_floor
+from T1Estimator import compute_t1_replay_column
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -135,9 +136,17 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
 
     Each cabin value is the real actual if one was logged, else a
     FloorEstimates-derived decimal estimate from that same row's cheap
-    glance if there is one, else blank - see resolved_or_estimate. This
-    also automatically feeds the browser's own live T1 column (it sums
-    whatever's in these same fields), with no JS changes needed.
+    glance if there is one, else blank - see resolved_or_estimate.
+
+    Each row also carries 't1': the curve-slide T1 estimate as of that
+    point in the day (see T1Estimator.compute_t1_replay_column) - this
+    is now the ONE T1 value shown anywhere in the dialog (his call - he
+    never wants two different T1 numbers displayed side by side), computed
+    server-side rather than in the browser (his call - no good reason for
+    real calculation to live client-side). None where no estimate is
+    resolvable yet for that row (see T1Estimator's docstring for when
+    that happens) - the client renders that as a blank cell, same as any
+    other missing value.
     """
     rows = conn.execute(
         """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1,
@@ -147,7 +156,7 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
            ORDER BY hoursBeforeDep ASC""",
         (carrier, dep_time, org, dest, flight_date),
     ).fetchall()
-    return [
+    readings = [
         {
             'hrs': r[0],
             'y': resolved_or_estimate(r[1], r[5], 'y', floor_coefficients),
@@ -157,6 +166,10 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
         }
         for r in rows
     ]
+    t1_column = compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings)
+    for reading, t1 in zip(readings, t1_column):
+        reading['t1'] = t1
+    return readings
 
 
 def recent_observations(conn, limit=9):

@@ -311,6 +311,29 @@ def api_save_excluded_date_ranges():
         conn.close()
 
 
+@app.route('/api/getDeclineCurveSettings', methods=['GET'])
+def api_get_decline_curve_settings():
+    conn = get_conn()
+    try:
+        return jsonify(PoolingSettingsDialog.get_decline_curve_settings(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveDeclineCurveSettings', methods=['POST'])
+def api_save_decline_curve_settings():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(PoolingSettingsDialog.save_decline_curve_settings(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
 if __name__ == '__main__':
     print(f"SeatLoggingDialog running at http://localhost:{PORT}")
     app.run(host='localhost', port=PORT, debug=True)

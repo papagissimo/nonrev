@@ -12,7 +12,29 @@ is_date_excluded / excluded_date_where_clause are the shared functions
 other modules should call rather than querying excludedDateRanges
 directly - keeps the "what counts as excluded" logic in one place as
 more pooling consumers start checking it.
+
+Also manages declineCurveSettings (the step-change correction loop's
+RMSE threshold and iteration cap - see DeclineCurveFit.py's docstring for
+what they control) - same settings key/value table as everything else in
+settings.py, just surfaced on this page since decline-curve fitting is
+already a named pooling consumer here.
 """
+
+from settings import load_settings, save_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
+
+
+def get_decline_curve_settings(conn):
+    return load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
+
+
+def save_decline_curve_settings(conn, payload):
+    """payload: {stepChangeRmseThreshold: float, stepChangeMaxIterations: int}"""
+    settings = {
+        'stepChangeRmseThreshold': float(payload['stepChangeRmseThreshold']),
+        'stepChangeMaxIterations': int(payload['stepChangeMaxIterations']),
+    }
+    save_settings(conn, settings, key=DECLINE_CURVE_SETTINGS_KEY)
+    return settings
 
 
 def get_excluded_date_ranges(conn):

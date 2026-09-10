@@ -68,6 +68,27 @@ def load_settings(conn, key=SETTINGS_KEY, defaults=None):
     return merged
 
 
+DECLINE_CURVE_SETTINGS_KEY = 'declineCurveSettings'
+
+# Tunables for DeclineCurveFit.py's step-change correction loop (see that
+# module's docstring for the algorithm itself). Exposed on the Pooling
+# Settings page since decline-curve fitting is one of that page's named
+# pooling consumers - not a separate settings surface.
+DEFAULT_DECLINE_CURVE_SETTINGS = {
+    # RMSE (seats) on an instance's own interior (1-8) readings, below
+    # which the correction loop stops - a round-number pick, not derived,
+    # meant to be tuned by eye against real reports.
+    'stepChangeRmseThreshold': 0.75,
+    # Hard cap on correction passes per instance. Necessary because
+    # nothing about this loop is guaranteed to converge on its own -
+    # correcting a point in place (rather than removing it) means the
+    # candidate set never shrinks, so there's no structural bound on
+    # runtime without one. Not tied to the old duplicate-row issue
+    # (confirmed fixed/pre-server-era) - this is a general safety cap.
+    'stepChangeMaxIterations': 15,
+}
+
+
 def save_settings(conn, settings, key=SETTINGS_KEY):
     ensure_table(conn)
     conn.execute(

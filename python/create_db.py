@@ -152,6 +152,35 @@ CREATE TABLE floorEstimateCoefficients (
     sampleCount  INTEGER NOT NULL,
     PRIMARY KEY (cabin, floorValue)
 );
+
+-- Pooled per-(org, dest, dayOfWeek, depTime, cabin) decline-curve
+-- coefficients - the frozen slope + C1 the live T1 estimator slides to
+-- match today's actual readings. See python/DeclineCurveFit.py for the
+-- fitting/pooling math and python/settings.py's declineCurveSettings for
+-- the tunables. Keyed by every individual depTime actually observed in
+-- the data (not a cluster-representative time), so a read-time consumer
+-- does a plain exact-match lookup - no live reclustering needed to use
+-- these numbers. c1Hours and slopeSeatsPerHour are independently
+-- nullable: a cabin/depTime combination can have a resolvable C1 with no
+-- resolvable slope or vice versa (see refresh_decline_curve_coefficients
+-- docstring) - a NULL means no fit available yet, not zero.
+-- slopeSeatsPerHour is always seats/hour - no other unit is ever used
+-- anywhere in this project for this quantity.
+-- Recomputed from scratch on every refresh (deleted and rewritten
+-- wholesale), never maintained incrementally - same pattern as
+-- floorEstimateCoefficients above.
+CREATE TABLE declineCurveCoefficients (
+    org                 TEXT NOT NULL,
+    dest                TEXT NOT NULL,
+    dayOfWeek           TEXT NOT NULL,
+    depTime             INTEGER NOT NULL,
+    cabin               TEXT NOT NULL,
+    c1Hours             REAL,
+    slopeSeatsPerHour   REAL,
+    nInstancesC1        INTEGER NOT NULL DEFAULT 0,
+    nInstancesSlope     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (org, dest, dayOfWeek, depTime, cabin)
+);
 """
 
 

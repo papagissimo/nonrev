@@ -52,6 +52,29 @@
     <button id="saveBtn" onclick="save()">Save</button>
   </div>
 
+  <h1 style="margin-top:28px;">Decline curve fitting</h1>
+  <div class="subtitle">
+    Tunables for DeclineCurveFit's step-change correction loop - how far an interior reading has to sit
+    off the fitted curve before it's treated as a step change, and how many correction passes an instance
+    gets before the loop gives up on it. See DeclineCurveFit.py's docstring for the algorithm itself.
+  </div>
+  <table style="max-width:420px;">
+    <tbody>
+      <tr>
+        <td style="padding:3px 6px;">RMSE threshold (seats)</td>
+        <td style="padding:3px 6px;"><input type="number" id="dcRmse" step="0.05" min="0" style="width:80px; font-size:12px; padding:3px;"></td>
+      </tr>
+      <tr>
+        <td style="padding:3px 6px;">Max correction passes per instance</td>
+        <td style="padding:3px 6px;"><input type="number" id="dcMaxIter" step="1" min="1" style="width:80px; font-size:12px; padding:3px;"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="btnRow">
+    <span id="dcStatus"></span>
+    <button id="dcSaveBtn" onclick="saveDeclineCurveSettings()">Save</button>
+  </div>
+
   <script>
     var current = { ranges: [] };
 
@@ -156,7 +179,46 @@
         });
     }
 
+    function loadDeclineCurveSettings() {
+      fetch('/api/getDeclineCurveSettings')
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
+          document.getElementById('dcRmse').value = result.stepChangeRmseThreshold;
+          document.getElementById('dcMaxIter').value = result.stepChangeMaxIterations;
+        })
+        .catch(function (err) {
+          document.getElementById('dcStatus').textContent = 'Error: ' + err.message;
+        });
+    }
+
+    function saveDeclineCurveSettings() {
+      var btn = document.getElementById('dcSaveBtn');
+      btn.disabled = true;
+      document.getElementById('dcStatus').textContent = 'Saving\u2026';
+
+      fetch('/api/saveDeclineCurveSettings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stepChangeRmseThreshold: parseFloat(document.getElementById('dcRmse').value),
+          stepChangeMaxIterations: parseInt(document.getElementById('dcMaxIter').value, 10)
+        })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          btn.disabled = false;
+          if (result.error) throw new Error(result.error);
+          document.getElementById('dcStatus').textContent = 'Saved.';
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          document.getElementById('dcStatus').textContent = 'Error: ' + err.message;
+        });
+    }
+
     load();
+    loadDeclineCurveSettings();
   </script>
 </body>
 </html>
