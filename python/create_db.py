@@ -31,12 +31,25 @@ CREATE TABLE aircraftConfigs (
     source       TEXT
 );
 
-CREATE TABLE routeDurations (
+CREATE TABLE routeSettings (
     org               TEXT NOT NULL,
     dest              TEXT NOT NULL,
-    durationMinutes   INTEGER NOT NULL,
-    confirmed         INTEGER NOT NULL DEFAULT 0,
+    durationMinutes   INTEGER,
+    studyThisRoute    INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (org, dest)
+);
+
+-- Global, not per-route - a date range to leave out of every pooling
+-- consumer (verdict/classification, decline-curve fitting, the weekday
+-- chart, dayGroupings stats), not just one graphing tool. Ranges, not
+-- individual dates, since that's how the real cases show up (a
+-- three-day-weekend window, an early-August anomaly window) - a range
+-- collapsing to one day is just startDate=endDate.
+CREATE TABLE excludedDateRanges (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    startDate   TEXT NOT NULL,
+    endDate     TEXT NOT NULL,
+    reason      TEXT
 );
 
 -- Free-text grouping label per (org, dest, dayOfWeek), his own word "day
@@ -44,8 +57,8 @@ CREATE TABLE routeDurations (
 -- same route sharing the same string are pooled together when computing
 -- open/full counts; different strings mean different pools. The string
 -- carries no meaning to the software, only to him - no fixed vocabulary,
--- nothing enumerated. No confirmed flag here (unlike routeDurations/
--- flightSchedule) - tried that once, decided it wasn't earning its keep
+-- nothing enumerated. No confirmed flag here (routeDurations, the old
+-- table this superseded, had one) - tried that once, decided it wasn't earning its keep
 -- for this particular table and dropped it; every row always holds a
 -- real, meaningful label (starts as one of a few sensible defaults, not
 -- a placeholder), so there's no "unreviewed vs reviewed" state worth

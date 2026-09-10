@@ -23,9 +23,7 @@
     input.car { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; text-transform: lowercase; }
     input.dep { font-weight: bold; font-size: 14px; width: 100%; box-sizing: border-box; }
     input.flt, input.airc { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; }
-    .status-icon { font-size: 14px; }
-    .status-icon.confirmed { color: #1a8a3d; }
-    .status-icon.unconfirmed { color: #b06000; font-weight: bold; }
+    #studyThisRouteLabel { display: flex; align-items: center; gap: 4px; margin-left: 6px; cursor: pointer; }
     .delBtn { cursor: pointer; color: #888; font-size: 14px; background: none; border: none; }
     .delBtn:hover { color: #c5221f; }
     #addBtn { margin-top: 8px; font-size: 12px; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
@@ -68,9 +66,12 @@
   </div>
 
   <div class="durationRow" id="durationRow" style="display:none;">
-    <span class="status-icon" id="durationIcon"></span>
     <label for="durationInput" style="margin:0;">flight time (hhmm, route-wide)</label>
     <input type="text" id="durationInput" placeholder="0215">
+    <label id="studyThisRouteLabel" for="studyThisRouteInput">
+      <input type="checkbox" id="studyThisRouteInput">
+      study this route
+    </label>
   </div>
 
   <div class="durationRow" id="dayGroupingRow" style="display:none;">
@@ -208,6 +209,9 @@
     document.getElementById('durationInput').addEventListener('input', function () {
       isDirty = true;
     });
+    document.getElementById('studyThisRouteInput').addEventListener('change', function () {
+      isDirty = true;
+    });
     document.getElementById('dayGroupingInput').addEventListener('input', function () {
       isDirty = true;
     });
@@ -297,13 +301,10 @@
 
     function renderDuration() {
       var row = document.getElementById('durationRow');
-      var icon = document.getElementById('durationIcon');
       var input = document.getElementById('durationInput');
       row.style.display = 'flex';
       input.value = minutesToHHMM(current.durationMinutes);
-      icon.className = 'status-icon ' + (current.durationConfirmed ? 'confirmed' : 'unconfirmed');
-      icon.textContent = current.durationConfirmed ? '\u2713' : '?';
-      icon.title = current.durationConfirmed ? 'confirmed' : 'unconfirmed';
+      document.getElementById('studyThisRouteInput').checked = current.studyThisRoute !== false;
     }
 
     // Free text - no fixed vocabulary. dayGroupingOptions is just a
@@ -533,6 +534,7 @@
           org: current.org, dest: current.dest, dow: current.dow,
           rows: current.rows,
           durationMinutes: durationMinutes,
+          studyThisRoute: document.getElementById('studyThisRouteInput').checked,
           dayGrouping: dayGrouping
         })
       })
@@ -550,7 +552,7 @@
             window.parent.onFlightScheduleSaved();
             return;
           }
-          // Reload this route/day fresh, so the duration icon and any
+          // Reload this route/day fresh, so studyThisRoute and any
           // server-assigned bogus numbers reflect what actually got saved.
           loadSchedule();
         })

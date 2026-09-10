@@ -341,8 +341,11 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         flight_date_str = schedule_date.isoformat()
 
         sched_rows = conn.execute(
-            """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, depTime, aircraftConfig, verdict, verdictType
-               FROM flightSchedule WHERE dayOfWeek = ? AND ignore = 0""",
+            """SELECT fs.rowid, fs.carrier, fs.carriersFltNum_notStable_DO_NOT_USE, fs.org, fs.dest,
+                      fs.depTime, fs.aircraftConfig, fs.verdict, fs.verdictType
+               FROM flightSchedule fs
+               LEFT JOIN routeSettings rs ON rs.org = fs.org AND rs.dest = fs.dest
+               WHERE fs.dayOfWeek = ? AND fs.ignore = 0 AND COALESCE(rs.studyThisRoute, 1) = 1""",
             (dow,),
         ).fetchall()
 

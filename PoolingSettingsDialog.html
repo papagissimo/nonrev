@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>Pooling Settings</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    h1 { font-size: 18px; margin: 0 0 4px 0; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 14px; max-width: 520px; }
+    a.back { color: #1a73e8; text-decoration: none; font-size: 12px; }
+    table { border-collapse: collapse; width: 100%; max-width: 620px; margin-top: 6px; }
+    th { text-align: left; font-size: 11px; color: #888; padding: 3px 6px; }
+    td { padding: 3px 6px; vertical-align: middle; }
+    input.startDate, input.endDate { width: 120px; font-size: 12px; padding: 3px; }
+    input.reason { width: 100%; box-sizing: border-box; font-size: 12px; padding: 3px; }
+    .delBtn { cursor: pointer; color: #888; font-size: 14px; background: none; border: none; }
+    .delBtn:hover { color: #c5221f; }
+    #addBtn { margin-top: 8px; font-size: 12px; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+    #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; }
+    .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; border-top: 1px solid #eee; padding-top: 10px; max-width: 620px; }
+    #status { color: #666; font-size: 12px; }
+    #saveBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    #saveBtn:disabled { background: #a9c6f2; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Launcher</a>
+  <h1>Pooling Settings</h1>
+  <div class="subtitle">
+    Date ranges to leave out of every pooling analysis (verdicts, decline-curve fitting, the weekday chart) -
+    not tied to any one route. A flight date inside any of these ranges is skipped wherever historical data gets pooled.
+  </div>
+
+  <div id="emptyMsg" style="display:none;">No excluded date ranges yet - add one below.</div>
+
+  <table id="rangesTable">
+    <thead>
+      <tr>
+        <th>start date</th>
+        <th>end date</th>
+        <th>reason</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="rangesBody"></tbody>
+  </table>
+
+  <button id="addBtn" onclick="addRow()">+ Add excluded range</button>
+
+  <div class="btnRow">
+    <span id="status"></span>
+    <button id="saveBtn" onclick="save()">Save</button>
+  </div>
+
+  <script>
+    var current = { ranges: [] };
+
+    function load() {
+      fetch('/api/getExcludedDateRanges')
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
+          current.ranges = result.ranges;
+          current.ranges.forEach(function (r) { r.deleted = false; });
+          render();
+        })
+        .catch(function (err) {
+          document.getElementById('status').textContent = 'Error: ' + err.message;
+        });
+    }
+
+    function addRow() {
+      current.ranges.push({ id: null, startDate: '', endDate: '', reason: '', deleted: false });
+      render();
+    }
+
+    function deleteRow(i) {
+      if (current.ranges[i].id) {
+        current.ranges[i].deleted = true;
+      } else {
+        current.ranges.splice(i, 1);
+      }
+      render();
+    }
+
+    function render() {
+      var body = document.getElementById('rangesBody');
+      body.innerHTML = '';
+      var visible = current.ranges.filter(function (r) { return !r.deleted; });
+      document.getElementById('emptyMsg').style.display = visible.length === 0 ? 'block' : 'none';
+      document.getElementById('rangesTable').style.display = visible.length === 0 ? 'none' : 'table';
+
+      current.ranges.forEach(function (r, i) {
+        if (r.deleted) return;
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="date" class="startDate" data-i="' + i + '" value="' + r.startDate + '"></td>' +
+          '<td><input type="date" class="endDate" data-i="' + i + '" value="' + r.endDate + '"></td>' +
+          '<td><input type="text" class="reason" data-i="' + i + '" placeholder="e.g. Labor Day weekend" value="' + (r.reason || '').replace(/"/g, '&quot;') + '"></td>' +
+          '<td><button class="delBtn" data-i="' + i + '" title="delete">&times;</button></td>';
+        body.appendChild(tr);
+      });
+
+      body.querySelectorAll('.delBtn').forEach(function (btn) {
+        btn.addEventListener('click', function () { deleteRow(parseInt(btn.getAttribute('data-i'), 10)); });
+      });
+    }
+
+    function readFormIntoCurrent() {
+      document.querySelectorAll('#rangesBody .startDate').forEach(function (el) {
+        current.ranges[parseInt(el.getAttribute('data-i'), 10)].startDate = el.value;
+      });
+      document.querySelectorAll('#rangesBody .endDate').forEach(function (el) {
+        current.ranges[parseInt(el.getAttribute('data-i'), 10)].endDate = el.value;
+      });
+      document.querySelectorAll('#rangesBody .reason').forEach(function (el) {
+        current.ranges[parseInt(el.getAttribute('data-i'), 10)].reason = el.value.trim();
+      });
+    }
+
+    function save() {
+      readFormIntoCurrent();
+
+      for (var i = 0; i < current.ranges.length; i++) {
+        var r = current.ranges[i];
+        if (r.deleted) continue;
+        if (!r.startDate || !r.endDate) {
+          document.getElementById('status').textContent = 'Every range needs both a start and end date.';
+          return;
+        }
+        if (r.endDate < r.startDate) {
+          document.getElementById('status').textContent = 'End date is before start date for one range.';
+          return;
+        }
+      }
+
+      var btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      document.getElementById('status').textContent = 'Saving\u2026';
+
+      fetch('/api/saveExcludedDateRanges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ranges: current.ranges })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          btn.disabled = false;
+          if (result.error) throw new Error(result.error);
+          document.getElementById('status').textContent = 'Saved.';
+          load();
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          document.getElementById('status').textContent = 'Error: ' + err.message;
+        });
+    }
+
+    load();
+  </script>
+</body>
+</html>

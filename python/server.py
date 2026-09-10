@@ -22,6 +22,7 @@ import ObservationsBrowser
 import GraphObservations
 import ServiceGrouping
 import FloorEstimates
+import PoolingSettingsDialog
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -60,6 +61,11 @@ def observations():
 @app.route('/graph')
 def graph():
     return send_from_directory(STATIC_DIR, 'GraphObservations.html')
+
+
+@app.route('/pooling')
+def pooling():
+    return send_from_directory(STATIC_DIR, 'PoolingSettingsDialog.html')
 
 
 @app.route('/api/getLauncherSummary', methods=['GET'])
@@ -276,6 +282,29 @@ def api_get_graph_data():
             conn, body['org'], body['dest'], body.get('daysOfWeek'),
             body.get('dateFrom'), body.get('dateTo'),
         ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getExcludedDateRanges', methods=['GET'])
+def api_get_excluded_date_ranges():
+    conn = get_conn()
+    try:
+        return jsonify(PoolingSettingsDialog.get_excluded_date_ranges(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveExcludedDateRanges', methods=['POST'])
+def api_save_excluded_date_ranges():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(PoolingSettingsDialog.save_excluded_date_ranges(conn, payload))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
