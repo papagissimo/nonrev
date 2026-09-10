@@ -304,7 +304,7 @@ def floor_estimates_for_client(floor_coefficients):
     return result
 
 
-def get_next_batch(conn, include_departed=False, forced_route=None):
+def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_route=None):
     settings = load_settings(conn)
     floor_coefficients = load_floor_estimates(conn)
     now = eastern_now()
@@ -417,11 +417,20 @@ def get_next_batch(conn, include_departed=False, forced_route=None):
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
-    # No separate "already handled" tracking needed: eligible_now already
-    # reflects real logged history (via todays_hrs + recheckGapHours
-    # above) and departure has its own hard cutoff (DEP_CUTOFF_MINUTES,
-    # applied earlier). Nothing client-side needs to be remembered between
-    # calls for this to work correctly.
+    # Real logging needs no separate tracking - eligible_now already
+    # reflects it (todays_hrs + recheckGapHours above), and departure has
+    # its own hard cutoff (DEP_CUTOFF_MINUTES, applied earlier). But a
+    # blank submission ("nothing to log here right now") writes no
+    # observation at all, so it leaves eligible_now untouched - without
+    # something to mark that intent, the same route just comes right
+    # back. skip_route_days is that marker: purely session-scoped (client
+    # resets it on reload), keyed on (org, dest, flightDate) so skipping
+    # today's dtw-pdx can never bleed into tomorrow's the way the old
+    # (org, dest)-only version did.
+    skip_set = {
+        (r['org'], r['dest'], r['flightDate']) for r in (skip_route_days or [])
+    }
+
     next_candidate = None
     if forced_route is not None:
         # Used after the schedule-edit modal closes (return to the exact
@@ -438,7 +447,9 @@ def get_next_batch(conn, include_departed=False, forced_route=None):
         )
     if next_candidate is None:
         next_candidate = next(
-            (c for c in candidates if c['eligibleNow']),
+            (c for c in candidates
+             if c['eligibleNow']
+             and (c['org'], c['dest'], c['flightDate']) not in skip_set),
             None,
         )
 
@@ -608,5 +619,5 @@ def save_entry_dialog(conn, payload):
 
 def save_and_get_next_batch(conn, payload, include_departed=False, forced_route=None):
     save_result = save_entry_dialog(conn, payload)
-    next_result = get_next_batch(conn, include_departed, forced_route)
+    next_result = get_next_batch(conn, None, include_departed, forced_route)
     return {'logged': save_result['logged'], 'next': next_result}

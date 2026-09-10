@@ -149,12 +149,19 @@
     var aircraftOptionsRendered = false;
     var showDeparted = false;
 
+    // Route+days explicitly skipped this session ("nothing to log here
+    // right now") - resets on reload. This is separate from ordinary
+    // logging progress: a real log naturally stops being offered again
+    // via the recheck-gap cadence math server-side, no client tracking
+    // needed for that. This only covers the blank-submit case, which
+    // writes no observation and so leaves cadence untouched - without an
+    // explicit marker here that route would just come right back. Keyed
+    // on (org, dest, flightDate) so skipping today's dtw-pdx can never
+    // bleed into tomorrow's.
+    var skippedRouteDays = [];
+
     // The route+day currently on screen, in the shape the backend wants
-    // for a same-route reload (org/dest/flightDate) - null before the
-    // first batch loads. Used only to redisplay the current route+day
-    // unchanged (schedule-edit modal close, show-departed toggle); real
-    // progression to the next route is handled server-side by cadence
-    // eligibility, nothing client-side to track for that.
+    // (org/dest/flightDate) - null before the first batch loads.
     function currentRouteKey() {
       return batch && batch.routeOrg
         ? { org: batch.routeOrg, dest: batch.routeDest, flightDate: batch.flightDate }
@@ -471,7 +478,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          includeDeparted: showDeparted,
+          skipRouteDays: skippedRouteDays, includeDeparted: showDeparted,
           forcedRoute: sameRoute || null
         })
       })
@@ -845,16 +852,23 @@
         renderRecentPanel();
       }
 
-      // Either way (blank or filled in), moving to whatever's actually
-      // due next is entirely the server's call now - cadence eligibility
-      // (recheck gap + departure cutoff) decides it from real logged
-      // data, nothing to signal from here.
+      // Blank submit ("nothing to log here right now") writes no
+      // observation, so it needs the explicit session-skip marker to
+      // move past this route - a real log doesn't (cadence's recheck gap
+      // handles that on its own once there's an actual reading).
       if (!hasAnyData) {
-        status.textContent = 'Nothing entered. Getting next\u2026';
+        var key = currentRouteKey();
+        if (key) {
+          var already = skippedRouteDays.some(function (k) {
+            return k.org === key.org && k.dest === key.dest && k.flightDate === key.flightDate;
+          });
+          if (!already) skippedRouteDays.push(key);
+        }
+        status.textContent = 'Skipped. Getting next\u2026';
         fetch('/api/getNextBatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ includeDeparted: showDeparted })
+          body: JSON.stringify({ skipRouteDays: skippedRouteDays, includeDeparted: showDeparted })
         })
           .then(function (res) { return res.json(); })
           .then(function (nextResult) {
