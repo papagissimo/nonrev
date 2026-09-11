@@ -109,6 +109,42 @@ working around it.
   actual pooling consumers — verdict/classification, decline-curve
   fitting, the weekday chart, dayGroupings. Nothing calls them yet.
 
+## Forward-looking schedule import (not started, on hold)
+
+- **Goal**: replace manual FlightSchedule/AircraftConfigs entry (clicking
+  into Delta's site per flight) with a script pulling scheduled dep time,
+  day-of-week, and aircraft type from an external source. Only wants this
+  1-3 days out, ~90% accuracy is fine — does not care about last-minute
+  equipment swaps or delays, only what's scheduled.
+- **Ruled out, with reasons** (don't re-propose):
+  - OAG/Cirium (the real schedule databases) — enterprise-priced, not
+    self-serve.
+  - BTS Airline On-Time Performance (free government data) — rejected:
+    it's historical/actuals with a ~3-month reporting lag, not
+    forward-looking. Fails the actual requirement even though it's free
+    and ToS-clean.
+  - Scraping a schedule-display site (tested FlightAware — bot-blocked
+    immediately; FlightConnections worked for one manual fetch but is a
+    commercial site with its own ToS) — same risk profile already
+    rejected for automating Delta.com checks. Confirmed data of the right
+    shape (dep time + aircraft type, forward-looking) exists there, just
+    not legally automatable.
+- **Chosen direction**: AeroDataBox via RapidAPI, free "Basic" tier — 600
+  API units/mo, 2,400 requests/mo, 1 req/sec, claims 100% US schedule
+  coverage. Schedule endpoint returns up to 7 days of an airport's flights
+  per call, so plan is to query **per origin airport** (~6-8 airports),
+  not per route (~26), to stay well inside the free quota even run daily.
+  Filter results client-side to Delta + his tracked destinations, map
+  into FlightSchedule (depTime, dayOfWeek) and AircraftConfigs (aircraft
+  type).
+- **Not yet done**: he hasn't signed up for a RapidAPI/AeroDataBox account
+  or gotten a key (has to be him, not Claude). No fetch/parse code written
+  yet. Exact API-unit cost per call for the specific schedule endpoint is
+  unconfirmed — check once a key exists.
+- **Status note (2026-09-11)**: he's deliberately pausing manual aircraft
+  data entry in the meantime, expecting this script to eventually take
+  over that part.
+
 ## Someday / not started
 
 - Long-haul Delta One analysis (Hawaii, Tokyo, New Zealand, Australia) —

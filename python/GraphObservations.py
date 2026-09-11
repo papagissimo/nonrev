@@ -100,11 +100,6 @@ def compute_trajectory(readings, target_hours, golden_ticket_hours):
     between them (still this function's job, not the graph's) would
     stop being a straight line.
 
-    Bracket-nearest-to-target logic, shared with the log dialogue's JS
-    version (see SeatLoggingDialog.html's computeT1EstimateForPool -
-    keep the two in lockstep by hand, since there's no shared module
-    between Python and the browser here).
-
     readings: list of dicts with 'hrs' (hoursBeforeDep) and 'ttl'
     (summed seats). No ceiling exclusion - every reading is eligible.
 
@@ -118,18 +113,24 @@ def compute_trajectory(readings, target_hours, golden_ticket_hours):
     where two flat readings both summing to 5 got dragged down to 2.4
     by a lone 8-seat reading several hours further out).
 
-    Special case: exactly one reading total only counts as an estimate
-    if it's within the golden-ticket threshold (his call) - otherwise a
-    single distant reading implies no trend at all and isn't shown as
-    one.
+    Golden-ticket gate (his call): a date only counts as having an
+    estimate at all if at least one of its readings falls within
+    golden_ticket_hours of target - otherwise every reading that day
+    was far from departure, and a "trend" extrapolated purely from
+    distant readings isn't trustworthy enough to show as one. This
+    applies uniformly regardless of reading count: a lone distant
+    reading was always rejected (the original special case); readings
+    at 2+ can now extrapolate just as confidently wrong if none of
+    them are actually close to target, so the gate applies there too.
     """
     if not readings:
         return None
 
+    if not any(r['hrs'] <= golden_ticket_hours for r in readings):
+        return None
+
     if len(readings) == 1:
         r = readings[0]
-        if r['hrs'] > golden_ticket_hours:
-            return None
         return {'anchors': [r], 'target': {'hrs': target_hours, 'ttl': r['ttl']}}
 
     before = [r for r in readings if r['hrs'] >= target_hours]
