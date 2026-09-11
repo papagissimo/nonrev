@@ -802,12 +802,21 @@
         return;
       }
 
+      // Force back to the SAME route+day just logged (currentRouteKey(),
+      // captured before this call fires) rather than letting getNextBatch
+      // pick whatever's chronologically next-eligible across the whole
+      // day - a real log should land him right back on the route he's
+      // working (prev col updated, O/F refreshed, entries blank) so he
+      // can keep going or opportunistically log another departure on it.
+      // Advancing to a genuinely different route stays the blank-submit
+      // skip path's job (below), which intentionally omits forcedRoute.
       fetch('/api/saveAndGetNextBatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           payload: { flightDate: batch.flightDate, entries: entries },
-          includeDeparted: showDeparted
+          includeDeparted: showDeparted,
+          forcedRoute: currentRouteKey()
         })
       })
         .then(function (res) { return res.json(); })
