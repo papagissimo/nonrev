@@ -32,6 +32,22 @@ working around it.
 
 ## Decline curve / predictor
 
+- **Wall-clock time vs. activity time.** The live estimator currently
+  treats elapsed hours since last reading uniformly, but domestic
+  overnight hours carry near-zero real booking/rebooking activity
+  (checked empirically 2026-09-12 — overnight bracket movement rate
+  came out roughly 3x lower than daytime, but overnight gaps are also
+  much longer on average, ~8.7h vs ~2.9h, which mechanically depresses
+  the rate number on its own; the analysis as run doesn't cleanly
+  separate "genuinely less happens overnight" from "measured in a way
+  biased toward looking quieter" — re-check with a gap-length-matched
+  comparison before trusting the magnitude). Estimator's time-since-last-reading variable
+  should probably be activity-weighted ("effective hours") rather than
+  wall-clock, wherever it drives projection/sliding. Not designed —
+  captured for later. Note: this gets more complicated once
+  international/long-haul routes (Delta One to Australia/NZ/Tokyo/
+  Hawaii) are in scope, since "overnight" stops meaning one thing
+  across timezone-crossing routes — worth remembering, not solving now.
 - **Wire the new curve-fit estimator into the live T1 display.**
   `DeclineCurveFit.py` already does the real work — per-instance
   `scipy.optimize.curve_fit`, pooled into per-service C1 and per-group
