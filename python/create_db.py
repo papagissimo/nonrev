@@ -181,6 +181,91 @@ CREATE TABLE declineCurveCoefficients (
     nInstancesSlope     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (org, dest, dayOfWeek, depTime, cabin)
 );
+
+-- Coefficients hierarchy, tiers 2-4 (tier 1, the global default, is a
+-- settings blob - see settings.DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS).
+-- See DeclineCurveFit.py's "COEFFICIENTS HIERARCHY" docstring section
+-- for the full design.
+
+-- Tier 2: optional hand-set override for a whole route (org, dest),
+-- applying to every dayOfWeek/depTime on it that has nothing more
+-- specific. Sparse by design - a route with no real reason to differ
+-- from the global default simply has no row here. c1Hours/
+-- slopeSeatsPerHour independently nullable, same convention as
+-- declineCurveCoefficients: a NULL means "no override for this
+-- quantity", falls through to the next tier down rather than a literal
+-- zero.
+CREATE TABLE declineCurveRouteOverrides (
+    org                 TEXT NOT NULL,
+    dest                TEXT NOT NULL,
+    cabin               TEXT NOT NULL,
+    c1Hours             REAL,
+    slopeSeatsPerHour   REAL,
+    PRIMARY KEY (org, dest, cabin)
+);
+
+-- Tier 3: optional hand-set override for one specific service (org,
+-- dest, dayOfWeek, depTime) - supersedes a route override where both
+-- exist. Same sparse/nullable convention as the route-override table
+-- above.
+CREATE TABLE declineCurveServiceOverrides (
+    org                 TEXT NOT NULL,
+    dest                TEXT NOT NULL,
+    dayOfWeek           TEXT NOT NULL,
+    depTime             INTEGER NOT NULL,
+    cabin               TEXT NOT NULL,
+    c1Hours             REAL,
+    slopeSeatsPerHour   REAL,
+    PRIMARY KEY (org, dest, dayOfWeek, depTime, cabin)
+);
+
+-- Minimum instance count required before tier 4 (derived, see
+-- declineCurveCoefficients above) is trusted over tiers 1-3, per
+-- (org, dest, dayOfWeek, depTime, cabin). Default is 1 (his homage to
+-- Bayesian updating - trust derived data starting from a single
+-- instance) when no row exists here; setting a row's value very high
+-- (e.g. 1000) is the deliberate escape hatch for a service whose
+-- derived coefficients look unreasonable - it effectively pins that
+-- service to tiers 1-3 while derivation keeps computing and logging
+-- into declineCurveInstanceFits/declineCurveCoefficients regardless,
+-- so it can be watched and the threshold dropped back down once it
+-- looks reasonable. c1Hours and slopeSeatsPerHour use separate
+-- thresholds since one can be well-constrained (C1, even from an
+-- all-9/all-0 instance) while the other isn't (slope, which needs a
+-- real interior reading) - see DeclineCurveFit.py.
+CREATE TABLE declineCurveThresholds (
+    org                   TEXT NOT NULL,
+    dest                  TEXT NOT NULL,
+    dayOfWeek             TEXT NOT NULL,
+    depTime               INTEGER NOT NULL,
+    cabin                 TEXT NOT NULL,
+    minInstancesC1        INTEGER NOT NULL DEFAULT 1,
+    minInstancesSlope     INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (org, dest, dayOfWeek, depTime, cabin)
+);
+
+-- Visibility table: one row per (service, cabin, flight-day instance)'s
+-- OWN independently-fitted coefficients - fit_instance's output,
+-- persisted rather than living only in memory during a refresh run.
+-- Sits alongside the aggregated declineCurveCoefficients row for the
+-- same service/cabin so he can see, at a glance, how the individual
+-- instances that feed a derived aggregate actually look - the direct
+-- fix for "I can't see it work" (his words). Recomputed from scratch on
+-- every refresh, same pattern as declineCurveCoefficients.
+CREATE TABLE declineCurveInstanceFits (
+    org                 TEXT NOT NULL,
+    dest                TEXT NOT NULL,
+    dayOfWeek           TEXT NOT NULL,
+    depTime             INTEGER NOT NULL,
+    flightDate          TEXT NOT NULL,
+    cabin               TEXT NOT NULL,
+    c1Hours             REAL NOT NULL,
+    slopeSeatsPerHour   REAL,
+    nInterior           INTEGER NOT NULL,
+    nPoints             INTEGER NOT NULL,
+    nStepChanges        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (org, dest, dayOfWeek, depTime, flightDate, cabin)
+);
 """
 
 

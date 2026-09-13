@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>Decline Curve Coefficients</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    h1 { font-size: 18px; margin: 24px 0 4px 0; }
+    h1:first-of-type { margin-top: 0; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 12px; max-width: 640px; }
+    a.back { color: #1a73e8; text-decoration: none; font-size: 12px; }
+    table { border-collapse: collapse; width: 100%; max-width: 760px; margin-top: 6px; }
+    th { text-align: left; font-size: 11px; color: #888; padding: 3px 6px; }
+    td { padding: 3px 6px; vertical-align: middle; }
+    input[type=text], input[type=number] { font-size: 12px; padding: 3px; box-sizing: border-box; }
+    .colOrg, .colDest, .colDow { width: 55px; }
+    .colDep { width: 65px; }
+    .colCabin { width: 90px; }
+    .colNum { width: 75px; }
+    .delBtn { cursor: pointer; color: #888; font-size: 14px; background: none; border: none; }
+    .delBtn:hover { color: #c5221f; }
+    .addBtn { margin-top: 8px; font-size: 12px; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+    .emptyMsg { color: #888; font-size: 12px; margin: 10px 0; }
+    .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px; max-width: 760px; }
+    .status { color: #666; font-size: 12px; }
+    .saveBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    .saveBtn:disabled { background: #a9c6f2; }
+    .tierBadge { font-size: 10px; padding: 1px 5px; border-radius: 3px; color: white; }
+    .tier-derived { background: #1e8e3e; }
+    .tier-serviceOverride { background: #e37400; }
+    .tier-routeOverride { background: #c77e00; }
+    .tier-global { background: #999; }
+    .lookupRow { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+    select { font-size: 12px; padding: 4px; }
+    .serviceBlock { border: 1px solid #eee; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; max-width: 760px; }
+    .serviceHead { font-weight: bold; margin-bottom: 6px; }
+    .cabinLabel { font-weight: bold; margin-top: 8px; }
+    .instRow { color: #555; font-size: 11.5px; padding-left: 14px; }
+    .noSlope { color: #aaa; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/pooling">&larr; Pooling Settings</a>
+
+  <h1>Global defaults</h1>
+  <div class="subtitle">
+    Tier 1 - one (C1, slope) pair per cabin, used for any service with nothing more specific.
+    Every route/service inherits this automatically; edit here to change the starting point everywhere at once.
+  </div>
+  <table style="max-width:420px;">
+    <thead><tr><th>cabin</th><th>C1 (hrs before dep)</th><th>slope (seats/hr)</th></tr></thead>
+    <tbody id="globalBody"></tbody>
+  </table>
+  <div class="btnRow" style="max-width:420px;">
+    <span class="status" id="globalStatus"></span>
+    <button class="saveBtn" onclick="saveGlobal()">Save</button>
+  </div>
+
+  <h1>Route overrides</h1>
+  <div class="subtitle">
+    Tier 2 - optional, hand-set, applies to every dayOfWeek/depTime on that route+cabin with nothing more specific.
+    Leave C1 or slope blank to only override the other one. Most routes will never need a row here.
+  </div>
+  <div class="emptyMsg" id="routeEmptyMsg" style="display:none;">No route overrides yet.</div>
+  <table id="routeTable">
+    <thead><tr><th>org</th><th>dest</th><th>cabin</th><th>C1 (hrs)</th><th>slope (seats/hr)</th><th></th></tr></thead>
+    <tbody id="routeBody"></tbody>
+  </table>
+  <button class="addBtn" onclick="addRouteRow()">+ Add route override</button>
+  <div class="btnRow">
+    <span class="status" id="routeStatus"></span>
+    <button class="saveBtn" onclick="saveRoute()">Save</button>
+  </div>
+
+  <h1>Service overrides</h1>
+  <div class="subtitle">
+    Tier 3 - optional, hand-set for one exact (org, dest, dayOfWeek, depTime, cabin) - supersedes a route override for that service.
+  </div>
+  <div class="emptyMsg" id="serviceEmptyMsg" style="display:none;">No service overrides yet.</div>
+  <table id="serviceTable">
+    <thead><tr><th>org</th><th>dest</th><th>dow</th><th>depTime</th><th>cabin</th><th>C1 (hrs)</th><th>slope (seats/hr)</th><th></th></tr></thead>
+    <tbody id="serviceBody"></tbody>
+  </table>
+  <button class="addBtn" onclick="addServiceRow()">+ Add service override</button>
+  <div class="btnRow">
+    <span class="status" id="serviceStatus"></span>
+    <button class="saveBtn" onclick="saveService()">Save</button>
+  </div>
+
+  <h1>Derived-tier thresholds</h1>
+  <div class="subtitle">
+    Minimum instance count before tier 4 (derived, fitted from real data) is trusted over tiers 1-3, per service+cabin.
+    Default is 1 when no row exists here. Set very high (e.g. 1000) as the kill switch for a service whose derived numbers
+    look unreasonable - derivation keeps computing/logging regardless, so it can be watched and dropped back down later.
+  </div>
+  <div class="emptyMsg" id="threshEmptyMsg" style="display:none;">No custom thresholds - everything defaults to 1.</div>
+  <table id="threshTable">
+    <thead><tr><th>org</th><th>dest</th><th>dow</th><th>depTime</th><th>cabin</th><th>min C1</th><th>min slope</th><th></th></tr></thead>
+    <tbody id="threshBody"></tbody>
+  </table>
+  <button class="addBtn" onclick="addThreshRow()">+ Add threshold</button>
+  <div class="btnRow">
+    <span class="status" id="threshStatus"></span>
+    <button class="saveBtn" onclick="saveThresh()">Save</button>
+  </div>
+
+  <h1>Visibility lookup</h1>
+  <div class="subtitle">
+    Pick a route + day to see every depTime's derived aggregate next to the individual instance fits that fed it,
+    plus which tier is currently live for each cabin.
+  </div>
+  <div class="lookupRow">
+    <select id="lookupSelect"></select>
+    <button class="saveBtn" onclick="runLookup()">Look up</button>
+  </div>
+  <div id="lookupResults"></div>
+
+  <script>
+    var routeOv = { overrides: [] };
+    var serviceOv = { overrides: [] };
+    var thresh = { thresholds: [] };
+
+    // ---------- global defaults ----------
+    function loadGlobal() {
+      fetch('/api/getDeclineCurveGlobalDefaults').then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        var body = document.getElementById('globalBody');
+        body.innerHTML = '';
+        ['y', 'cPlus', 'firstOrPS', 'd1'].forEach(function (cabin) {
+          var entry = result[cabin] || { c1Hours: '', slopeSeatsPerHour: '' };
+          var tr = document.createElement('tr');
+          tr.innerHTML =
+            '<td>' + cabin + '</td>' +
+            '<td><input type="number" step="0.1" class="colNum globalC1" data-cabin="' + cabin + '" value="' + entry.c1Hours + '"></td>' +
+            '<td><input type="number" step="0.1" class="colNum globalSlope" data-cabin="' + cabin + '" value="' + entry.slopeSeatsPerHour + '"></td>';
+          body.appendChild(tr);
+        });
+      }).catch(function (err) { document.getElementById('globalStatus').textContent = 'Error: ' + err.message; });
+    }
+
+    function saveGlobal() {
+      var payload = {};
+      document.querySelectorAll('.globalC1').forEach(function (el) {
+        payload[el.getAttribute('data-cabin')] = payload[el.getAttribute('data-cabin')] || {};
+        payload[el.getAttribute('data-cabin')].c1Hours = el.value;
+      });
+      document.querySelectorAll('.globalSlope').forEach(function (el) {
+        payload[el.getAttribute('data-cabin')] = payload[el.getAttribute('data-cabin')] || {};
+        payload[el.getAttribute('data-cabin')].slopeSeatsPerHour = el.value;
+      });
+      document.getElementById('globalStatus').textContent = 'Saving\u2026';
+      fetch('/api/saveDeclineCurveGlobalDefaults', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      }).then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        document.getElementById('globalStatus').textContent = 'Saved.';
+      }).catch(function (err) { document.getElementById('globalStatus').textContent = 'Error: ' + err.message; });
+    }
+
+    // ---------- shared helpers for the three override/threshold tables ----------
+    function bindDelete(bodyId, list, renderFn) {
+      document.getElementById(bodyId).querySelectorAll('.delBtn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var i = parseInt(btn.getAttribute('data-i'), 10);
+          if (list[i].id) { list[i].deleted = true; } else { list.splice(i, 1); }
+          renderFn();
+        });
+      });
+    }
+
+    // ---------- route overrides ----------
+    function loadRoute() {
+      fetch('/api/getDeclineCurveRouteOverrides').then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        routeOv.overrides = result.overrides;
+        routeOv.overrides.forEach(function (r) { r.deleted = false; });
+        renderRoute();
+      }).catch(function (err) { document.getElementById('routeStatus').textContent = 'Error: ' + err.message; });
+    }
+    function addRouteRow() {
+      routeOv.overrides.push({ id: null, org: '', dest: '', cabin: 'y', c1Hours: '', slopeSeatsPerHour: '', deleted: false });
+      renderRoute();
+    }
+    function renderRoute() {
+      var body = document.getElementById('routeBody');
+      body.innerHTML = '';
+      var visible = routeOv.overrides.filter(function (r) { return !r.deleted; });
+      document.getElementById('routeEmptyMsg').style.display = visible.length === 0 ? 'block' : 'none';
+      document.getElementById('routeTable').style.display = visible.length === 0 ? 'none' : 'table';
+      routeOv.overrides.forEach(function (r, i) {
+        if (r.deleted) return;
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="text" class="colOrg rOrg" data-i="' + i + '" value="' + r.org + '"></td>' +
+          '<td><input type="text" class="colDest rDest" data-i="' + i + '" value="' + r.dest + '"></td>' +
+          '<td><input type="text" class="colCabin rCabin" data-i="' + i + '" value="' + r.cabin + '"></td>' +
+          '<td><input type="number" step="0.1" class="colNum rC1" data-i="' + i + '" value="' + (r.c1Hours == null ? '' : r.c1Hours) + '"></td>' +
+          '<td><input type="number" step="0.1" class="colNum rSlope" data-i="' + i + '" value="' + (r.slopeSeatsPerHour == null ? '' : r.slopeSeatsPerHour) + '"></td>' +
+          '<td><button class="delBtn" data-i="' + i + '">&times;</button></td>';
+        body.appendChild(tr);
+      });
+      bindDelete('routeBody', routeOv.overrides, renderRoute);
+    }
+    function saveRoute() {
+      document.querySelectorAll('.rOrg').forEach(el => routeOv.overrides[el.getAttribute('data-i')].org = el.value.trim().toLowerCase());
+      document.querySelectorAll('.rDest').forEach(el => routeOv.overrides[el.getAttribute('data-i')].dest = el.value.trim().toLowerCase());
+      document.querySelectorAll('.rCabin').forEach(el => routeOv.overrides[el.getAttribute('data-i')].cabin = el.value.trim());
+      document.querySelectorAll('.rC1').forEach(el => routeOv.overrides[el.getAttribute('data-i')].c1Hours = el.value);
+      document.querySelectorAll('.rSlope').forEach(el => routeOv.overrides[el.getAttribute('data-i')].slopeSeatsPerHour = el.value);
+      document.getElementById('routeStatus').textContent = 'Saving\u2026';
+      fetch('/api/saveDeclineCurveRouteOverrides', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(routeOv)
+      }).then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        document.getElementById('routeStatus').textContent = 'Saved.';
+        loadRoute();
+      }).catch(function (err) { document.getElementById('routeStatus').textContent = 'Error: ' + err.message; });
+    }
+
+    // ---------- service overrides ----------
+    function loadService() {
+      fetch('/api/getDeclineCurveServiceOverrides').then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        serviceOv.overrides = result.overrides;
+        serviceOv.overrides.forEach(function (r) { r.deleted = false; });
+        renderService();
+      }).catch(function (err) { document.getElementById('serviceStatus').textContent = 'Error: ' + err.message; });
+    }
+    function addServiceRow() {
+      serviceOv.overrides.push({ id: null, org: '', dest: '', dayOfWeek: 'Mon', depTime: '', cabin: 'y', c1Hours: '', slopeSeatsPerHour: '', deleted: false });
+      renderService();
+    }
+    function renderService() {
+      var body = document.getElementById('serviceBody');
+      body.innerHTML = '';
+      var visible = serviceOv.overrides.filter(function (r) { return !r.deleted; });
+      document.getElementById('serviceEmptyMsg').style.display = visible.length === 0 ? 'block' : 'none';
+      document.getElementById('serviceTable').style.display = visible.length === 0 ? 'none' : 'table';
+      serviceOv.overrides.forEach(function (r, i) {
+        if (r.deleted) return;
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="text" class="colOrg sOrg" data-i="' + i + '" value="' + r.org + '"></td>' +
+          '<td><input type="text" class="colDest sDest" data-i="' + i + '" value="' + r.dest + '"></td>' +
+          '<td><input type="text" class="colDow sDow" data-i="' + i + '" value="' + r.dayOfWeek + '"></td>' +
+          '<td><input type="number" class="colDep sDep" data-i="' + i + '" value="' + r.depTime + '" title="minutes since midnight"></td>' +
+          '<td><input type="text" class="colCabin sCabin" data-i="' + i + '" value="' + r.cabin + '"></td>' +
+          '<td><input type="number" step="0.1" class="colNum sC1" data-i="' + i + '" value="' + (r.c1Hours == null ? '' : r.c1Hours) + '"></td>' +
+          '<td><input type="number" step="0.1" class="colNum sSlope" data-i="' + i + '" value="' + (r.slopeSeatsPerHour == null ? '' : r.slopeSeatsPerHour) + '"></td>' +
+          '<td><button class="delBtn" data-i="' + i + '">&times;</button></td>';
+        body.appendChild(tr);
+      });
+      bindDelete('serviceBody', serviceOv.overrides, renderService);
+    }
+    function saveService() {
+      document.querySelectorAll('.sOrg').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].org = el.value.trim().toLowerCase());
+      document.querySelectorAll('.sDest').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].dest = el.value.trim().toLowerCase());
+      document.querySelectorAll('.sDow').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].dayOfWeek = el.value.trim());
+      document.querySelectorAll('.sDep').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].depTime = el.value);
+      document.querySelectorAll('.sCabin').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].cabin = el.value.trim());
+      document.querySelectorAll('.sC1').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].c1Hours = el.value);
+      document.querySelectorAll('.sSlope').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].slopeSeatsPerHour = el.value);
+      document.getElementById('serviceStatus').textContent = 'Saving\u2026';
+      fetch('/api/saveDeclineCurveServiceOverrides', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(serviceOv)
+      }).then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        document.getElementById('serviceStatus').textContent = 'Saved.';
+        loadService();
+      }).catch(function (err) { document.getElementById('serviceStatus').textContent = 'Error: ' + err.message; });
+    }
+
+    // ---------- thresholds ----------
+    function loadThresh() {
+      fetch('/api/getDeclineCurveThresholds').then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        thresh.thresholds = result.thresholds;
+        thresh.thresholds.forEach(function (r) { r.deleted = false; });
+        renderThresh();
+      }).catch(function (err) { document.getElementById('threshStatus').textContent = 'Error: ' + err.message; });
+    }
+    function addThreshRow() {
+      thresh.thresholds.push({ id: null, org: '', dest: '', dayOfWeek: 'Mon', depTime: '', cabin: 'y', minInstancesC1: 1, minInstancesSlope: 1, deleted: false });
+      renderThresh();
+    }
+    function renderThresh() {
+      var body = document.getElementById('threshBody');
+      body.innerHTML = '';
+      var visible = thresh.thresholds.filter(function (r) { return !r.deleted; });
+      document.getElementById('threshEmptyMsg').style.display = visible.length === 0 ? 'block' : 'none';
+      document.getElementById('threshTable').style.display = visible.length === 0 ? 'none' : 'table';
+      thresh.thresholds.forEach(function (r, i) {
+        if (r.deleted) return;
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="text" class="colOrg tOrg" data-i="' + i + '" value="' + r.org + '"></td>' +
+          '<td><input type="text" class="colDest tDest" data-i="' + i + '" value="' + r.dest + '"></td>' +
+          '<td><input type="text" class="colDow tDow" data-i="' + i + '" value="' + r.dayOfWeek + '"></td>' +
+          '<td><input type="number" class="colDep tDep" data-i="' + i + '" value="' + r.depTime + '" title="minutes since midnight"></td>' +
+          '<td><input type="text" class="colCabin tCabin" data-i="' + i + '" value="' + r.cabin + '"></td>' +
+          '<td><input type="number" class="colNum tMinC1" data-i="' + i + '" value="' + r.minInstancesC1 + '"></td>' +
+          '<td><input type="number" class="colNum tMinSlope" data-i="' + i + '" value="' + r.minInstancesSlope + '"></td>' +
+          '<td><button class="delBtn" data-i="' + i + '">&times;</button></td>';
+        body.appendChild(tr);
+      });
+      bindDelete('threshBody', thresh.thresholds, renderThresh);
+    }
+    function saveThresh() {
+      document.querySelectorAll('.tOrg').forEach(el => thresh.thresholds[el.getAttribute('data-i')].org = el.value.trim().toLowerCase());
+      document.querySelectorAll('.tDest').forEach(el => thresh.thresholds[el.getAttribute('data-i')].dest = el.value.trim().toLowerCase());
+      document.querySelectorAll('.tDow').forEach(el => thresh.thresholds[el.getAttribute('data-i')].dayOfWeek = el.value.trim());
+      document.querySelectorAll('.tDep').forEach(el => thresh.thresholds[el.getAttribute('data-i')].depTime = el.value);
+      document.querySelectorAll('.tCabin').forEach(el => thresh.thresholds[el.getAttribute('data-i')].cabin = el.value.trim());
+      document.querySelectorAll('.tMinC1').forEach(el => thresh.thresholds[el.getAttribute('data-i')].minInstancesC1 = el.value);
+      document.querySelectorAll('.tMinSlope').forEach(el => thresh.thresholds[el.getAttribute('data-i')].minInstancesSlope = el.value);
+      document.getElementById('threshStatus').textContent = 'Saving\u2026';
+      fetch('/api/saveDeclineCurveThresholds', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(thresh)
+      }).then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        document.getElementById('threshStatus').textContent = 'Saved.';
+        loadThresh();
+      }).catch(function (err) { document.getElementById('threshStatus').textContent = 'Error: ' + err.message; });
+    }
+
+    // ---------- visibility lookup ----------
+    function loadLookupOptions() {
+      fetch('/api/getDeclineCurveRouteDayOptions').then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        var sel = document.getElementById('lookupSelect');
+        sel.innerHTML = '';
+        result.options.forEach(function (o) {
+          var opt = document.createElement('option');
+          opt.value = JSON.stringify(o);
+          opt.textContent = o.org + '-' + o.dest + ' ' + o.dayOfWeek;
+          sel.appendChild(opt);
+        });
+      }).catch(function (err) { document.getElementById('lookupResults').textContent = 'Error: ' + err.message; });
+    }
+
+    function fmtHrs(h) { return h == null ? '\u2014' : h.toFixed(2) + 'h'; }
+    function fmtSlope(s) { return s == null ? '\u2014' : s.toFixed(2) + '/h'; }
+    function fmtDep(mins) {
+      var hh = Math.floor(mins / 60), mm = mins % 60;
+      return (hh < 10 ? '0' : '') + hh + (mm < 10 ? '0' : '') + mm;
+    }
+
+    function runLookup() {
+      var sel = document.getElementById('lookupSelect');
+      if (!sel.value) return;
+      var picked = JSON.parse(sel.value);
+      document.getElementById('lookupResults').innerHTML = 'Loading\u2026';
+      fetch('/api/getDeclineCurveServiceDetail', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(picked)
+      }).then(r => r.json()).then(function (result) {
+        if (result.error) throw new Error(result.error);
+        renderLookup(result);
+      }).catch(function (err) { document.getElementById('lookupResults').textContent = 'Error: ' + err.message; });
+    }
+
+    function renderLookup(result) {
+      var container = document.getElementById('lookupResults');
+      container.innerHTML = '';
+      if (!result.services.length) {
+        container.innerHTML = '<div class="emptyMsg">No derived data yet for this route/day.</div>';
+        return;
+      }
+      result.services.forEach(function (svc) {
+        var block = document.createElement('div');
+        block.className = 'serviceBlock';
+        var html = '<div class="serviceHead">' + result.org + '-' + result.dest + ' ' + result.dayOfWeek + ' ~' + fmtDep(svc.depTime) + '</div>';
+        svc.cabins.forEach(function (c) {
+          html += '<div class="cabinLabel">[' + c.cabin + ']</div>';
+          html += '<div>derived: C1=' + fmtHrs(c.derivedC1) + ' (n=' + c.nInstancesC1 + ')' +
+                  '&nbsp;&nbsp;slope=' + fmtSlope(c.derivedSlope) + ' (n=' + c.nInstancesSlope + ')' +
+                  '&nbsp;&nbsp;|&nbsp;&nbsp;LIVE: C1=' + fmtHrs(c.liveC1) +
+                  ' <span class="tierBadge tier-' + c.liveC1Tier + '">' + c.liveC1Tier + '</span>' +
+                  '&nbsp; slope=' + fmtSlope(c.liveSlope) +
+                  (c.liveSlopeTier ? ' <span class="tierBadge tier-' + c.liveSlopeTier + '">' + c.liveSlopeTier + '</span>' : '') +
+                  '</div>';
+          c.instances.forEach(function (inst) {
+            var slopeTxt = inst.slopeSeatsPerHour == null
+              ? '<span class="noSlope">slope=\u2014 (no interior reading)</span>'
+              : 'slope=' + fmtSlope(inst.slopeSeatsPerHour);
+            var stepTxt = inst.nStepChanges ? ', ' + inst.nStepChanges + ' step change(s) corrected' : '';
+            html += '<div class="instRow">' + inst.flightDate + ': C1=' + fmtHrs(inst.c1Hours) + '  ' + slopeTxt + stepTxt + '</div>';
+          });
+        });
+        block.innerHTML = html;
+        container.appendChild(block);
+      });
+    }
+
+    loadGlobal();
+    loadRoute();
+    loadService();
+    loadThresh();
+    loadLookupOptions();
+  </script>
+</body>
+</html>

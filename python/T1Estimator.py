@@ -59,7 +59,8 @@ misleading 0.
 
 from datetime import datetime
 
-from DeclineCurveFit import piecewise_model
+from DeclineCurveFit import piecewise_model, CABIN_COLUMNS
+from DeclineCurveHierarchy import resolve_coefficients
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 
 T1_TARGET_HOURS = 1.0
@@ -69,16 +70,19 @@ CABIN_KEY_TO_COLUMN = {'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': '
 
 def load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time):
     """dict cabin_column -> (c1Hours, slopeSeatsPerHour), one entry per
-    cabin that actually has a resolvable slope for this exact flight -
-    a cabin with a NULL slope (see declineCurveCoefficients docstring)
-    is left out entirely rather than included with a None, so callers
-    can just do a plain dict lookup/miss."""
-    rows = conn.execute(
-        """SELECT cabin, c1Hours, slopeSeatsPerHour FROM declineCurveCoefficients
-           WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=?""",
-        (org, dest, day_of_week, dep_time),
-    ).fetchall()
-    return {cabin: (c1, slope) for cabin, c1, slope in rows if slope is not None}
+    cabin - now resolved through the full coefficients hierarchy (see
+    DeclineCurveHierarchy.resolve_coefficients): derived data from
+    declineCurveCoefficients when there's enough of it, else a hand-set
+    service or route override, else the global default. A cabin only
+    ever comes back missing from this dict if EVERY tier including the
+    global default has no slope for it - practically shouldn't happen
+    once the global default is filled in, but not assumed away."""
+    result = {}
+    for cabin_col in CABIN_COLUMNS:
+        resolved = resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin_col)
+        if resolved['slope'] is not None:
+            result[cabin_col] = (resolved['c1'], resolved['slope'])
+    return result
 
 
 def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):

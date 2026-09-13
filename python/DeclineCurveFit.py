@@ -174,10 +174,17 @@ from datetime import datetime
 import numpy as np
 from scipy.optimize import curve_fit, minimize_scalar
 
+import os
+
 from clustering import cluster_services, service_representative
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 
-DB_PATH = "nonrev.db"
+# Anchored to this script's own location, not the current working
+# directory - a bare "nonrev.db" here silently creates a fresh empty
+# db wherever you happen to run the script FROM (e.g. python/nonrev.db
+# if run from inside python/), rather than erroring. Matches the
+# pattern server.py/create_db.py/confirm_airports.py already use.
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nonrev.db')
 
 CABIN_COLUMNS = {
     "y": ("y", "cheapY"),
@@ -718,8 +725,22 @@ def refresh_decline_curve_coefficients(conn):
     result = compute_all_fits(conn, settings["stepChangeRmseThreshold"], settings["stepChangeMaxIterations"])
 
     conn.execute("DELETE FROM declineCurveCoefficients")
+    conn.execute("DELETE FROM declineCurveInstanceFits")
+
+    # declineCurveCoefficients is keyed by every raw depTime observed
+    # (not a cluster-representative time - see its own docstring), and
+    # a wobbly day can put more than one raw depTime under the same
+    # service. declineCurveInstanceFits needs to join against it by
+    # exact (org, dest, dayOfWeek, depTime), so an instance's fit gets
+    # written once per raw depTime its service actually spans, same
+    # duplication declineCurveCoefficients itself already does - not a
+    # new inconsistency, just matching the existing convention.
+    service_to_dep_times = defaultdict(set)
+    for (org, dest, dow, dep_time), sid in result["dep_time_to_service"].items():
+        service_to_dep_times[sid].add((org, dest, dow, dep_time))
 
     rows_written = 0
+    instance_rows_written = 0
     summary_by_cabin = {}
     for cabin, cabin_data in result["by_cabin"].items():
         fits_by_instance = cabin_data["fits_by_instance"]
@@ -742,6 +763,25 @@ def refresh_decline_curve_coefficients(conn):
             )
             rows_written += 1
 
+        # Visibility table: one row per instance that actually fit,
+        # regardless of whether its service ever resolves a pooled
+        # aggregate - this is the "let me see the numbers populate"
+        # fix, so it deliberately doesn't gate on anything above.
+        for (sid, flight_date), fit in fits_by_instance.items():
+            if fit is None:
+                continue
+            for (org, dest, dow, dep_time) in service_to_dep_times.get(sid, ()):
+                conn.execute(
+                    """INSERT OR REPLACE INTO declineCurveInstanceFits
+                       (org, dest, dayOfWeek, depTime, flightDate, cabin,
+                        c1Hours, slopeSeatsPerHour, nInterior, nPoints, nStepChanges)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (org, dest, dow, dep_time, flight_date, cabin,
+                     fit["c1"], fit["slope"] if fit["n_interior"] >= 1 else None,
+                     fit["n_interior"], fit["n_points"], len(fit["step_changes"])),
+                )
+                instance_rows_written += 1
+
         n_fit = sum(1 for f in fits_by_instance.values() if f is not None)
         n_step_changes = sum(len(f["step_changes"]) for f in fits_by_instance.values() if f)
         n_with_step_changes = sum(1 for f in fits_by_instance.values() if f and f["step_changes"])
@@ -756,7 +796,8 @@ def refresh_decline_curve_coefficients(conn):
         }
 
     conn.commit()
-    return {"rowsWritten": rows_written, "byCabin": summary_by_cabin, "raw": result}
+    return {"rowsWritten": rows_written, "instanceRowsWritten": instance_rows_written,
+            "byCabin": summary_by_cabin, "raw": result}
 
 
 def main():
@@ -770,7 +811,8 @@ def main():
           f"({result['dropped_count']} dropped - no depTime or unparsable flightDate).")
     print(f"Built {len(service_info)} day-of-week-specific services (C1 and slope both pooled at this "
           f"granularity now - no separate cross-day grouping).")
-    print(f"Wrote {refreshed['rowsWritten']} rows to declineCurveCoefficients.")
+    print(f"Wrote {refreshed['rowsWritten']} rows to declineCurveCoefficients, "
+          f"{refreshed['instanceRowsWritten']} rows to declineCurveInstanceFits.")
     print()
 
     for cabin, cabin_data in result["by_cabin"].items():

@@ -23,6 +23,7 @@ import GraphObservations
 import ServiceGrouping
 import FloorEstimates
 import PoolingSettingsDialog
+import DeclineCurveDialog
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -66,6 +67,11 @@ def graph():
 @app.route('/pooling')
 def pooling():
     return send_from_directory(STATIC_DIR, 'PoolingSettingsDialog.html')
+
+
+@app.route('/decline-curve')
+def decline_curve():
+    return send_from_directory(STATIC_DIR, 'DeclineCurveDialog.html')
 
 
 @app.route('/api/getLauncherSummary', methods=['GET'])
@@ -328,6 +334,121 @@ def api_save_decline_curve_settings():
     conn = get_conn()
     try:
         return jsonify(PoolingSettingsDialog.save_decline_curve_settings(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getDeclineCurveGlobalDefaults', methods=['GET'])
+def api_get_decline_curve_global_defaults():
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.get_global_defaults(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveDeclineCurveGlobalDefaults', methods=['POST'])
+def api_save_decline_curve_global_defaults():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.save_global_defaults(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getDeclineCurveRouteOverrides', methods=['GET'])
+def api_get_decline_curve_route_overrides():
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.get_route_overrides(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveDeclineCurveRouteOverrides', methods=['POST'])
+def api_save_decline_curve_route_overrides():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.save_route_overrides(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getDeclineCurveServiceOverrides', methods=['GET'])
+def api_get_decline_curve_service_overrides():
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.get_service_overrides(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveDeclineCurveServiceOverrides', methods=['POST'])
+def api_save_decline_curve_service_overrides():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.save_service_overrides(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getDeclineCurveThresholds', methods=['GET'])
+def api_get_decline_curve_thresholds():
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.get_thresholds(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveDeclineCurveThresholds', methods=['POST'])
+def api_save_decline_curve_thresholds():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.save_thresholds(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getDeclineCurveRouteDayOptions', methods=['GET'])
+def api_get_decline_curve_route_day_options():
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.get_route_day_options(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getDeclineCurveServiceDetail', methods=['POST'])
+def api_get_decline_curve_service_detail():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(DeclineCurveDialog.get_service_detail(conn, body['org'], body['dest'], body['dayOfWeek']))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

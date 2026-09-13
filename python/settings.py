@@ -89,6 +89,24 @@ DEFAULT_DECLINE_CURVE_SETTINGS = {
 }
 
 
+DECLINE_CURVE_GLOBAL_DEFAULTS_KEY = 'declineCurveGlobalDefaults'
+
+# Tier 1 of the coefficients hierarchy (see DeclineCurveFit.py's
+# "COEFFICIENTS HIERARCHY" docstring section) - one c1Hours/
+# slopeSeatsPerHour pair per cabin, applied to any (org, dest,
+# dayOfWeek, depTime) with nothing more specific available. Starting
+# values are placeholders (a round c1 of 3h before departure, a round
+# slope of 2 seats/hour) - meant to be edited from the Pooling Settings
+# page once he has a feel for reasonable starting numbers, not derived
+# from anything.
+DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS = {
+    'y':         {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
+    'cPlus':     {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
+    'firstOrPS': {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
+    'd1':        {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
+}
+
+
 def save_settings(conn, settings, key=SETTINGS_KEY):
     ensure_table(conn)
     conn.execute(
