@@ -147,10 +147,15 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
 
         {'measured': n, 'open': n, 'full': n}
 
-    measured = qualifying flight-date instances with a computable t1Old
+    measured = qualifying flight-date instances with a computable t1
     for this service on a grouped day, within the date range. open/full
     are classified against the settings' openThreshold/fullThreshold -
-    a t1Old between them counts toward measured but neither bucket.
+    a t1 between them counts toward measured but neither bucket. (t1
+    is now the curve-slide estimate via T1Estimator, not the old
+    two-point method - see GraphObservations.py's module docstring;
+    this function didn't need to change beyond the field's name, since
+    it only ever consumed whatever get_flight_points called its single
+    point estimate.)
 
     Matched against get_flight_points' own depTimeMinutes - which is
     ITSELF a cluster representative (rounded to the nearest 15 min from
@@ -181,9 +186,9 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
         if p['depTimeMinutes'] != target_service['repMinutes']:
             continue
         measured += 1
-        if p['t1Old'] >= settings['openThreshold']:
+        if p['t1'] >= settings['openThreshold']:
             open_count += 1
-        elif p['t1Old'] <= settings['fullThreshold']:
+        elif p['t1'] <= settings['fullThreshold']:
             full_count += 1
 
     return {'measured': measured, 'open': open_count, 'full': full_count}

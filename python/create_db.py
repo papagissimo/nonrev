@@ -139,12 +139,13 @@ CREATE TABLE routeDayFlag (
 -- glance and a real actual value are present for that cabin on the same
 -- row/session. Recomputed from scratch (never maintained incrementally)
 -- whenever refreshed - see python/FloorEstimates.py for the math and the
--- refresh triggers. Powers the decimal-valued "estimate" shown wherever
--- only a glance is available (Previous readings, the live T1 column, and
--- GraphObservations' t1New) - deliberately distinct from a real actual
--- value, which is always a whole number; the decimal point alone is the
--- signal a consumer needs to tell the two apart, no separate flag/column
--- required.
+-- refresh triggers. No longer feeds the T1 estimator anywhere (his call -
+-- the estimator anchors on real actual values or the raw cheap-glance
+-- value itself, never this laundered substitute; see
+-- T1Estimator.resolved_actual_or_raw_cheap) - still computed and still
+-- shown as informational reference in the logging dialog (floorEstimates
+-- on the client payload), since the cheap-glance columns it's derived
+-- from haven't been removed from the schema.
 CREATE TABLE floorEstimateCoefficients (
     cabin        TEXT NOT NULL,
     floorValue   INTEGER NOT NULL,

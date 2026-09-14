@@ -111,8 +111,9 @@ ends included:
   instance in the service's own pool contributes one squared-error term
   - bracket that instance's own (step-change-corrected) readings at T-4
   hours (his real workflow checkpoint, not an arbitrary number - same
-  bracket-nearest-target selection GraphObservations.compute_trajectory
-  already uses), slide the curve through each bracketing reading at the
+  bracket-nearest-target selection pattern used across this project,
+  see bracket_with_weight below), slide the curve through each bracketing
+  reading at the
   candidate slope, predict forward to T-1 (the live estimator's own
   target), interpolate the two resulting PREDICTIONS (not the raw
   readings - his explicit call, since the two aren't quite identical
@@ -431,24 +432,22 @@ T1_TARGET_HOURS_FOR_POOLING = 1.0
 
 
 def bracket_with_weight(readings, target_hours):
-    """Same bracket-nearest-target reading selection as
-    GraphObservations.compute_trajectory (straddle the target with the
-    nearest reading on each side when a real straddle exists; otherwise
-    the two nearest readings on whichever side has everything) - kept as
-    its own copy here rather than imported, since this operates on this
-    module's plain (hbd, value) tuples, not the dict shape
-    GraphObservations uses, and pooling shouldn't need to import the
-    graphing module.
+    """Bracket-nearest-target reading selection (straddle the target
+    with the nearest reading on each side when a real straddle exists;
+    otherwise the two nearest readings on whichever side has everything)
+    - kept as its own copy here rather than imported from elsewhere,
+    since this operates on this module's plain (hbd, value) tuples, not
+    the dict shape T1Estimator/GraphObservations use, and pooling
+    shouldn't need to import either of those.
 
     Returns None if readings is empty. ('single', reading) if only one
     reading is available on its own (exactly one reading total, or one
     side is empty with fewer than two candidates there). Otherwise
     ('pair', b, a, weight) where b/a are the two bracketing (or
     two-nearest-same-side) readings and weight = (b[0] - target_hours) /
-    (b[0] - a[0]) - the exact interpolation weight compute_trajectory
-    itself uses, handed back so a caller can apply it to whatever it
-    computed FROM b and a (predictions, here - not the raw readings
-    themselves)."""
+    (b[0] - a[0]) - the interpolation weight, handed back so a caller
+    can apply it to whatever it computed FROM b and a (predictions, here
+    - not the raw readings themselves)."""
     if not readings:
         return None
     if len(readings) == 1:

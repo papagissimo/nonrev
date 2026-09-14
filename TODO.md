@@ -32,30 +32,6 @@ working around it.
 
 ## Decline curve / predictor
 
-- **Wall-clock time vs. activity time.** The live estimator currently
-  treats elapsed hours since last reading uniformly, but domestic
-  overnight hours carry near-zero real booking/rebooking activity
-  (checked empirically 2026-09-12 — overnight bracket movement rate
-  came out roughly 3x lower than daytime, but overnight gaps are also
-  much longer on average, ~8.7h vs ~2.9h, which mechanically depresses
-  the rate number on its own; the analysis as run doesn't cleanly
-  separate "genuinely less happens overnight" from "measured in a way
-  biased toward looking quieter" — re-check with a gap-length-matched
-  comparison before trusting the magnitude). Estimator's time-since-last-reading variable
-  should probably be activity-weighted ("effective hours") rather than
-  wall-clock, wherever it drives projection/sliding. Not designed —
-  captured for later. Note: this gets more complicated once
-  international/long-haul routes (Delta One to Australia/NZ/Tokyo/
-  Hawaii) are in scope, since "overnight" stops meaning one thing
-  across timezone-crossing routes — worth remembering, not solving now.
-- **Wire the new curve-fit estimator into the live T1 display.**
-  `DeclineCurveFit.py` already does the real work — per-instance
-  `scipy.optimize.curve_fit`, pooled into per-service C1 and per-group
-  slope — but it's a standalone script that only prints to console.
-  `GraphObservations.compute_t1_estimate` (what the dialogs actually show)
-  still runs the old two-point trajectory extrapolation and has no
-  connection to this at all. This is the actual next step, not a from-
-  scratch build.
 - C1 right-censoring / golden-ticket window: analyze historically how far
   out from departure the estimator still reliably predicts the eventual T1
   value — i.e. at what hours-before-departure does it stop being
@@ -63,12 +39,8 @@ working around it.
   golden-ticket window; a flight with a good/stable estimator might only
   need checking 3h out, an erratic one might still need the tight window.
   Delta's own cutoff is T-45min (not T-30) — the hard floor either way.
-  Needs the live estimator wired in (above) before this can be run.
-- Cadence window-start for previously-observed C1: probably moot — once
-  cadence is driven by the nonlinear fit instead of needing to catch a live
-  C1 crossing, there's no reason to search for where C1 happened at all.
-  Leaving open pending confirmation from real data, expecting to just
-  delete it once that's checked.
+  Live estimator is wired in now (GraphObservations.py calls
+  T1Estimator.compute_t1_replay_column) — this can be run.
 - "Service" isn't a persisted/queryable entity yet — only exists via
   ad-hoc clustering in DeclineCurveFit.py. Cadence needs per-service
   earliest-checked/earliest-crossing lookups; undecided whether that's live
@@ -171,6 +143,22 @@ working around it.
 
 ## Dead ideas — do not re-propose
 
+- GraphObservations' t1Old/t1New side-by-side (old two-point method vs.
+  floor-substituted variant) comparison feature — never actually used it;
+  GraphObservations now calls the same curve-slide estimator
+  (T1Estimator.compute_t1_replay_column) SeatLoggingDialog already uses,
+  one estimator only.
+- Feeding cheap-glance data through FloorEstimates' conditional-mean
+  substitution to anchor the T1 estimator — real actual value or the raw
+  cheap-glance value itself now, never a laundered decimal guess.
+- Cheap-glancing (as a cadence habit) for the purpose of catching C1/C2
+  corners — the curve fit doesn't need the corner observed at all
+  (left/right-censored instances fit fine from interior data alone);
+  precise interior (1-8) readings are what it actually needs, and cheap
+  glances were displacing the time to get those. Cadence window-start for
+  previously-observed C1 (searching for where a service's corner
+  happened, to aim cadence at it) is dead for the same reason — nothing
+  needs to search for a corner anymore.
 - Automating overnight Delta.com checks (scripted page loads, VPN/bot
   variant) — ToS/detection risk.
 - Cadence-from-slope, curve-shape decimation, T-4-predicts-T-1 modeling —

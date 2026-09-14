@@ -36,8 +36,8 @@ from zoneinfo import ZoneInfo
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from settings import load_settings
 from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
-from FloorEstimates import load_floor_estimates, estimate_for_floor
-from T1Estimator import compute_t1_replay_column
+from FloorEstimates import load_floor_estimates
+from T1Estimator import compute_t1_replay_column, compute_t1_baseline, resolved_actual_or_raw_cheap
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -103,24 +103,7 @@ def load_d1_map(conn):
     }
 
 
-def resolved_or_estimate(actual, cheap, cabin, floor_coefficients):
-    """
-    Real actual (binary-search-confirmed) value if present - always a
-    whole number. Otherwise a decimal-valued estimate derived from the
-    cheap-side glance via the cached FloorEstimates coefficients, rounded
-    to one decimal place (his call - visible at a glance, not fake
-    precision). None (blank) if neither is present. The two cases are
-    self-distinguishing by shape alone (whole number vs one-decimal
-    number) - no separate flag needed anywhere downstream.
-    """
-    if actual is not None:
-        return actual
-    if cheap is not None:
-        return round(estimate_for_floor(floor_coefficients, cabin, int(cheap)), 1)
-    return None
-
-
-def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor_coefficients):
+def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, hours_until_dep=None):
     """
     Every reading logged today for this exact flight, sorted
     most-recent-check first (ascending hoursBeforeDep, since it counts
@@ -134,19 +117,42 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
     and without org/dest in the filter this would silently pull the
     OTHER route's readings in as if they were this flight's own history.
 
-    Each cabin value is the real actual if one was logged, else a
-    FloorEstimates-derived decimal estimate from that same row's cheap
-    glance if there is one, else blank - see resolved_or_estimate.
+    Each cabin value is the real actual if one was logged, else the raw
+    cheap-glance floor value itself if there is one, else blank - see
+    T1Estimator.resolved_actual_or_raw_cheap. No longer runs a glance
+    through FloorEstimates (his call - the estimator should anchor on
+    real numbers or honest floors, not a laundered guess); phasing out
+    the cheap-glancing habit itself going forward makes this mostly
+    moot anyway, but the fallback stays for whatever glance data still
+    shows up.
 
     Each row also carries 't1': the curve-slide T1 estimate as of that
     point in the day (see T1Estimator.compute_t1_replay_column) - this
-    is now the ONE T1 value shown anywhere in the dialog (his call - he
+    is the ONE T1 value shown anywhere in the dialog (his call - he
     never wants two different T1 numbers displayed side by side), computed
     server-side rather than in the browser (his call - no good reason for
     real calculation to live client-side). None where no estimate is
     resolvable yet for that row (see T1Estimator's docstring for when
     that happens) - the client renders that as a blank cell, same as any
     other missing value.
+
+    If nothing has been logged today for this flight at all, this
+    returns a single SYNTHETIC row instead of an empty list (his direct
+    ask - "on the very first flight that doesn't have a single
+    observation, I want to see where it's going to end up"): all four
+    cabin values blank (nothing was actually read), hrs set to
+    hours_until_dep (the live hours-to-departure right now, not a real
+    check time), and t1 set to T1Estimator.compute_t1_baseline - the
+    pooled curve alone, no anchor. Applies equally to a flight that's
+    already departed with no readings logged (his correction - showing
+    it only for still-eligible candidates missed the actual point: a
+    missed golden-ticket check is exactly when he wants to see what the
+    estimator WOULD have said, both as a consolation and as a real check
+    on whether pooled coefficients fit this particular instance well or
+    not). Requires hours_until_dep to be passed in (both callers already
+    compute this for the row regardless); with it omitted (or if the
+    baseline itself can't resolve to anything), falls back to the old
+    empty-list behavior.
     """
     rows = conn.execute(
         """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1,
@@ -156,13 +162,26 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
            ORDER BY hoursBeforeDep ASC""",
         (carrier, dep_time, org, dest, flight_date),
     ).fetchall()
+
+    if not rows:
+        if hours_until_dep is None:
+            return []
+        baseline = compute_t1_baseline(conn, org, dest, flight_date, dep_time)
+        if baseline is None:
+            return []
+        return [{
+            'hrs': hours_until_dep,
+            'y': None, 'cplus': None, 'onePS': None, 'd1': None,
+            't1': round(baseline, 2),
+        }]
+
     readings = [
         {
             'hrs': r[0],
-            'y': resolved_or_estimate(r[1], r[5], 'y', floor_coefficients),
-            'cplus': resolved_or_estimate(r[2], r[6], 'cPlus', floor_coefficients),
-            'onePS': resolved_or_estimate(r[3], r[7], 'firstOrPS', floor_coefficients),
-            'd1': resolved_or_estimate(r[4], r[8], 'd1', floor_coefficients),
+            'y': resolved_actual_or_raw_cheap(r[1], r[5]),
+            'cplus': resolved_actual_or_raw_cheap(r[2], r[6]),
+            'onePS': resolved_actual_or_raw_cheap(r[3], r[7]),
+            'd1': resolved_actual_or_raw_cheap(r[4], r[8]),
         }
         for r in rows
     ]
@@ -508,7 +527,10 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
-            'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'], floor_coefficients),
+            'previousReadings': previous_readings_for(
+                conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'],
+                hours_until_dep=c['hoursUntilDep'],
+            ),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'verdict': c['verdict'], 'verdictType': c['verdictType'],
             'openFull': format_open_full(
@@ -529,7 +551,10 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'hoursUntilDep': round(c['hoursUntilDep'], 1),
                 'isNext': False,
                 'departed': True,
-                'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'], floor_coefficients),
+                'previousReadings': previous_readings_for(
+                    conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'],
+                    hours_until_dep=c['hoursUntilDep'],
+                ),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'verdict': c['verdict'], 'verdictType': c['verdictType'],
                 'openFull': format_open_full(

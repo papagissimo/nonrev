@@ -1,9 +1,10 @@
 """
-The live, curve-slide T1 estimator - replaces the two-point extrapolation
-as the one T1 value shown anywhere in the app (his call: he never wants
-to see two different T1 numbers side by side; the two-point method
-survives only as GraphObservations' own t1Old, kept for the graph's
-side-by-side comparison, not shown in the live dialog).
+The live, curve-slide T1 estimator - the one T1 value shown anywhere in
+the app (his call: he never wants to see two different T1 numbers side
+by side). GraphObservations used to keep the old two-point method alive
+as a separate t1Old/t1New comparison column - that was killed outright
+once he confirmed he'd never actually used the comparison; GraphObservations
+now calls this same module rather than its own copy of the math.
 
 Per cabin, independently: take the pooled (c1, slope) for this exact
 (org, dest, dayOfWeek, depTime, cabin) from declineCurveCoefficients
@@ -55,6 +56,12 @@ since that's the only usable information left) contributes NOTHING to
 the total, not zero, if truly nothing is resolvable. A row where every
 cabin is unresolvable has no estimate at all (None), rather than a
 misleading 0.
+
+Two entry points: compute_t1_replay_column (above) needs at least one
+reading to replay against; compute_t1_baseline (below) needs none at
+all - the pooled curve alone, for a flight that hasn't been checked yet
+today. Same coefficients lookup, same cabins, just no anchor to slide
+on in the baseline case.
 """
 
 from datetime import datetime
@@ -66,6 +73,31 @@ from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_
 T1_TARGET_HOURS = 1.0
 
 CABIN_KEY_TO_COLUMN = {'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': 'd1'}
+
+
+def resolved_actual_or_raw_cheap(actual, cheap):
+    """
+    The one per-cabin reading-resolution rule for anchoring this
+    estimator (his call, superseding the earlier FloorEstimates-based
+    substitution): real actual (binary-search-confirmed) value if
+    present, else the raw cheap-glance floor value itself, unmassaged,
+    if that's all there is - NOT run through FloorEstimates' conditional-
+    mean substitution. A confirmed "at least 3" floor glance is fed in
+    as a plain 3, which will understate the true value whenever the real
+    count is higher - an accepted, deliberate trade (real numbers matter
+    more to the fit than a laundered decimal guess the fit never actually
+    observed), not an oversight. None if neither was logged - the caller
+    treats that cabin as unresolved, not zero (see this module's own
+    docstring). Shared by every caller that constructs readings for this
+    estimator (SeatLoggingDialog, GraphObservations) - the resolution
+    rule itself, not just the slide math, only gets to exist in one
+    place.
+    """
+    if actual is not None:
+        return actual
+    if cheap is not None:
+        return cheap
+    return None
 
 
 def load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time):
@@ -157,3 +189,35 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
 
         results.append(total if any_resolved else None)
     return results
+
+
+def compute_t1_baseline(conn, org, dest, flight_date, dep_time):
+    """
+    The T1 estimate before a single reading has been logged today for
+    this flight - the pooled curve alone, evaluated at T1_TARGET_HOURS,
+    with nothing to anchor/slide against yet (his call: he wants to see
+    where a flight is expected to land the moment it shows up as a
+    candidate, not only once he's checked it at least once - the pooled
+    coefficients don't care whether today has any data).
+
+    Same coefficients lookup as compute_t1_replay_column (same
+    hierarchy, same cabins), just with no reading to anchor on - every
+    cabin that resolves both a c1 and a slope contributes
+    piecewise_model(T1_TARGET_HOURS, c1, slope) directly, summed.
+    Returns None only if no cabin resolves both - should essentially
+    never happen once the global default tier is filled in (see
+    DeclineCurveHierarchy), same edge case compute_t1_replay_column
+    already accepts.
+    """
+    day_of_week = datetime.strptime(flight_date, "%Y-%m-%d").strftime("%a")
+    coeffs = load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time)
+    if not coeffs:
+        return None
+    total = 0.0
+    any_resolved = False
+    for c1, slope in coeffs.values():
+        if c1 is None:
+            continue
+        total += float(piecewise_model(T1_TARGET_HOURS, c1, slope))
+        any_resolved = True
+    return total if any_resolved else None

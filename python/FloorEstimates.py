@@ -36,8 +36,9 @@ other cadence code.
 
 The estimate itself is never stored on an observation row - always
 computed live from these cached coefficients, at whatever moment a
-consumer (Previous readings, the live T1 column, GraphObservations'
-t1New) needs it.
+consumer needs it. No longer feeds the T1 estimator anywhere (his call
+- see T1Estimator.resolved_actual_or_raw_cheap); still surfaced as
+informational reference in the logging dialog only.
 """
 
 CABIN_COLUMNS = {

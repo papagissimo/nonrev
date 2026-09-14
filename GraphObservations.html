@@ -26,7 +26,6 @@
   .confBar { stroke: #999; stroke-width: 1.5; opacity: 0.55; }
   .curve { fill: none; stroke-width: 1.3; opacity: 0.55; }
   .curve:hover { opacity: 1; stroke-width: 2.2; }
-  .trajLine { stroke-width: 1.3; stroke-dasharray: 4 3; opacity: 0.7; }
   .trajDot { stroke: #333; stroke-width: 0.5; cursor: pointer; }
   #tooltip {
     position: fixed; display: none; background: #222; color: #fff; font-size: 11px;
@@ -76,7 +75,7 @@
     <h2>Seats vs hours-to-departure</h2>
     <div class="chartOpts">
       One curve per flight-instance (date + flight). Solid = actual readings (precise, no uncertainty).
-      Dashed = trajectory to the 1-hour-before-departure estimate, with confidence bar.<br>
+      Dot at 1h-before-departure = the T1 estimate, with confidence bar.<br>
       Show <input type="number" step="0.25" id="xMinHrs" style="width:46px" value="0.75">
       to <input type="number" step="0.5" id="xMaxHrs" style="width:46px" value="6">
       hours before departure
@@ -254,11 +253,11 @@ function renderHeatMap(data) {
     var cy = MARGIN.top + dateIndex[p.flightDate] * rowH + rowH / 2;
     var r = Math.max(3, Math.min(rowH / 2 - 1, 4 + p.numReadings));
     var dot = svgEl('circle', {
-      class: 'dot', cx: cx, cy: cy, r: r, fill: t1Color(p.t1Old),
+      class: 'dot', cx: cx, cy: cy, r: r, fill: t1Color(p.t1),
     });
     dot.addEventListener('mousemove', function (evt) {
       showTip(evt, p.flightDate + ' (' + p.dow + ')<br>' + minutesTo12h(p.depTimeMinutes) +
-        ' &middot; T1 old ' + p.t1Old + ' &middot; T1 new ' + (p.t1New === null ? '-' : p.t1New) +
+        ' &middot; T1 ' + p.t1 +
         ' &middot; ' + p.numReadings + ' reading' + (p.numReadings === 1 ? '' : 's'));
     });
     dot.addEventListener('mouseleave', hideTip);
@@ -295,7 +294,7 @@ function renderCurveChart(data) {
   var showConf = document.getElementById('showConf').checked;
 
   var maxT1 = 0;
-  data.points.forEach(function (p) { maxT1 = Math.max(maxT1, p.t1Old + p.confidenceHalfRange); });
+  data.points.forEach(function (p) { maxT1 = Math.max(maxT1, p.t1 + p.confidenceHalfRange); });
   maxT1 = Math.max(maxT1, 8);
   var yMax = Math.ceil(maxT1 / 2) * 2;
 
@@ -315,13 +314,13 @@ function renderCurveChart(data) {
   dateList.forEach(function (d, di) {
     var pts = byDate[d].slice().sort(function (a, b) { return a.depTimeMinutes - b.depTimeMinutes; });
     var color = palette[di % palette.length];
-    var coords = pts.map(function (p) { return [xScale(p.depTimeMinutes), yScale(p.t1Old)]; });
+    var coords = pts.map(function (p) { return [xScale(p.depTimeMinutes), yScale(p.t1)]; });
 
     if (showConf) {
       pts.forEach(function (p, i) {
         var x = coords[i][0];
-        var yTop = yScale(p.t1Old + p.confidenceHalfRange);
-        var yBot = yScale(Math.max(0, p.t1Old - p.confidenceHalfRange));
+        var yTop = yScale(p.t1 + p.confidenceHalfRange);
+        var yBot = yScale(Math.max(0, p.t1 - p.confidenceHalfRange));
         svg.appendChild(svgEl('line', {
           class: 'confBar', x1: x, x2: x, y1: yTop, y2: yBot, stroke: color,
         }));
@@ -345,7 +344,7 @@ function renderCurveChart(data) {
         });
         dot.addEventListener('mousemove', function (evt) {
           showTip(evt, p.flightDate + ' (' + p.dow + ')<br>' + minutesTo12h(p.depTimeMinutes) +
-            ' &middot; T1 old ' + p.t1Old + ' / new ' + (p.t1New === null ? '-' : p.t1New) +
+            ' &middot; T1 ' + p.t1 +
             ' &plusmn; ' + p.confidenceHalfRange.toFixed(1) +
             ' &middot; ' + p.numReadings + ' reading' + (p.numReadings === 1 ? '' : 's'));
         });
@@ -389,12 +388,16 @@ function renderSeatsChart(data) {
   // interesting to him right now and shouldn't stretch anything.
   function inRange(hrs) { return hrs >= minHrs && hrs <= maxHrs; }
 
+  // T1 target sits at 1h-before-departure - matches T1Estimator.T1_TARGET_HOURS
+  // (Python side); not sent over the wire since it's a fixed constant, not
+  // per-point data.
+  var T1_TARGET_HOURS = 1.0;
+
   var maxTtl = 0;
   data.points.forEach(function (p) {
     p.readings.forEach(function (r) { if (inRange(r.hrs)) maxTtl = Math.max(maxTtl, r.ttl); });
-    if (p.trajectory && inRange(p.trajectory.targetHrs)) {
-      maxTtl = Math.max(maxTtl, p.trajectory.targetTtl + p.trajectory.confidenceHalfRange);
-      p.trajectory.anchors.forEach(function (a) { if (inRange(a.hrs)) maxTtl = Math.max(maxTtl, a.ttl); });
+    if (inRange(T1_TARGET_HOURS)) {
+      maxTtl = Math.max(maxTtl, p.t1 + p.confidenceHalfRange);
     }
   });
   maxTtl = Math.max(maxTtl, 8);
@@ -457,32 +460,25 @@ function renderSeatsChart(data) {
       svg.appendChild(dot);
     });
 
-    // Trajectory: dashed connector from the anchor reading(s) through
-    // to the target point at 1h-before-departure - a straight line by
-    // construction of today's linear estimator (see
-    // compute_trajectory's docstring in GraphObservations.py). Anchors
-    // are already sorted furthest-out first by the backend. Skipped
-    // entirely if the target itself falls outside the visible window.
-    if (p.trajectory && p.trajectory.anchors.length && inRange(p.trajectory.targetHrs)) {
-      var anchors = p.trajectory.anchors.filter(function (a) { return inRange(a.hrs); });
-      var tx = xScaleHrs(p.trajectory.targetHrs, minHrs, maxHrs), ty = yScale(p.trajectory.targetTtl);
-      if (anchors.length) {
-        var trajPts = anchors.map(function (a) { return [xScaleHrs(a.hrs, minHrs, maxHrs), yScale(a.ttl)]; });
-        trajPts.push([tx, ty]);
-        var dt = 'M ' + trajPts[0][0] + ' ' + trajPts[0][1];
-        for (var ti = 1; ti < trajPts.length; ti++) dt += ' L ' + trajPts[ti][0] + ' ' + trajPts[ti][1];
-        svg.appendChild(svgEl('path', { class: 'trajLine', d: dt, stroke: color, fill: 'none' }));
-      }
-
-      var half = p.trajectory.confidenceHalfRange;
-      var yTop = yScale(p.trajectory.targetTtl + half);
-      var yBot = yScale(Math.max(0, p.trajectory.targetTtl - half));
+    // T1 estimate marker at 1h-before-departure - just the point value
+    // and its confidence bar now, no connecting line. The curve-slide
+    // estimator doesn't have a "two points and a line" shape the way
+    // the old two-point method did, so there's nothing honest to draw
+    // between the readings and this marker - see GraphObservations.py's
+    // module docstring. Drawing the actual piecewise curve is a real
+    // future graphing feature, not this pass. Skipped if the target
+    // itself falls outside the visible window.
+    if (inRange(T1_TARGET_HOURS)) {
+      var tx = xScaleHrs(T1_TARGET_HOURS, minHrs, maxHrs), ty = yScale(p.t1);
+      var half = p.confidenceHalfRange;
+      var yTop = yScale(p.t1 + half);
+      var yBot = yScale(Math.max(0, p.t1 - half));
       svg.appendChild(svgEl('line', { class: 'confBar', x1: tx, x2: tx, y1: yTop, y2: yBot, stroke: color }));
 
       var tdot = svgEl('circle', { class: 'trajDot', cx: tx, cy: ty, r: 4, fill: color, opacity: 0.9 });
       tdot.addEventListener('mousemove', function (evt) {
         showTip(evt, p.flightDate + ' (' + p.dow + ') fl' + p.flightNumber + '<br>T1 estimate: ' +
-          p.trajectory.targetTtl + ' &plusmn; ' + half.toFixed(1) + ' seats at 1h before dep');
+          p.t1 + ' &plusmn; ' + half.toFixed(1) + ' seats at 1h before dep');
       });
       tdot.addEventListener('mouseleave', hideTip);
       svg.appendChild(tdot);
