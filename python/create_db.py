@@ -71,16 +71,17 @@ CREATE TABLE dayGroupings (
     PRIMARY KEY (org, dest, dayOfWeek)
 );
 
--- y/cPlus/firstOrPS/d1 are the actual/resolved cabin values (unchanged
--- meaning - a real binary-search result, or a locked-in 9/0 auto-filled
--- from the matching cheap* column). cheapY/cheapCPlus/cheapFirstOrPS/
--- cheapD1 hold whatever was free to glance off Delta's all-flights page
--- before the binary search: a 9 (ceiling - industry-wide hard cap, Delta
--- never displays past 9) or a confirmed floor (0, or a genuine "at least
--- N" for N up to 5 in practice, sometimes higher). NULL in a cheap*
--- column means no glance was taken that reading, not "floor of zero" -
--- a genuine confirmed zero is written directly as 0, same in both the
--- cheap and actual column for that cabin, never left implicit.
+-- y/cPlus/firstOrPS/d1 are the actual/resolved cabin values (a real
+-- binary-search result). cheapY/cheapCPlus/cheapFirstOrPS/cheapD1 are a
+-- FROZEN HISTORICAL ARTIFACT as of 2026-09-14: the old glance-entry
+-- workflow (a free ceiling/floor glance off Delta's all-flights page
+-- before the binary search) is fully retired, "every whiff of it, gone"
+-- (his call) - nothing anywhere in this codebase writes to these columns
+-- anymore, and no live code path reads them either. They're kept, not
+-- dropped, purely to preserve rows logged before this date - a genuine
+-- confirmed zero from back then is still 0 in both the cheap and actual
+-- column for that cabin, never left implicit; NULL meant no glance was
+-- taken that reading.
 CREATE TABLE observations (
     observationId   INTEGER PRIMARY KEY AUTOINCREMENT,
     carrier         TEXT NOT NULL,
@@ -134,25 +135,12 @@ CREATE TABLE routeDayFlag (
     PRIMARY KEY (carrier, org, dest, flightDate)
 );
 
--- Cached per-(cabin, cheap-floor-value) mean of the actual (binary-search-
--- confirmed) value, computed from every historical row where both a cheap
--- glance and a real actual value are present for that cabin on the same
--- row/session. Recomputed from scratch (never maintained incrementally)
--- whenever refreshed - see python/FloorEstimates.py for the math and the
--- refresh triggers. No longer feeds the T1 estimator anywhere (his call -
--- the estimator anchors on real actual values or the raw cheap-glance
--- value itself, never this laundered substitute; see
--- T1Estimator.resolved_actual_or_raw_cheap) - still computed and still
--- shown as informational reference in the logging dialog (floorEstimates
--- on the client payload), since the cheap-glance columns it's derived
--- from haven't been removed from the schema.
-CREATE TABLE floorEstimateCoefficients (
-    cabin        TEXT NOT NULL,
-    floorValue   INTEGER NOT NULL,
-    meanActual   REAL NOT NULL,
-    sampleCount  INTEGER NOT NULL,
-    PRIMARY KEY (cabin, floorValue)
-);
+-- floorEstimateCoefficients (the cached glance-floor -> mean-actual
+-- table) retired 2026-09-14 along with FloorEstimates.py itself and all
+-- glance-derived estimation - "every whiff of it, gone" (his call).
+-- Table dropped from this schema entirely; an existing live db from
+-- before this date may still have the table sitting around unused -
+-- harmless, nothing reads or writes it anymore.
 
 -- Pooled per-(org, dest, dayOfWeek, depTime, cabin) decline-curve
 -- coefficients - the frozen slope + C1 the live T1 estimator slides to
@@ -168,18 +156,27 @@ CREATE TABLE floorEstimateCoefficients (
 -- slopeSeatsPerHour is always seats/hour - no other unit is ever used
 -- anywhere in this project for this quantity.
 -- Recomputed from scratch on every refresh (deleted and rewritten
--- wholesale), never maintained incrementally - same pattern as
--- floorEstimateCoefficients above.
+-- wholesale), never maintained incrementally.
+-- nightSlopeRatio/nInstancesNightSlope: tier-4 derived night/day slope
+-- ratio (see settings.DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS's
+-- nightSlopeRatio for what this means). Independently nullable/counted
+-- exactly like c1Hours/slopeSeatsPerHour - the pooling function that
+-- would populate these (parallel to pool_slope) isn't built yet, so
+-- these stay NULL/0 for now and resolution falls through to tiers 1-3;
+-- the column exists so DeclineCurveHierarchy.resolve_coefficients
+-- already checks it and picks it up the moment it's populated.
 CREATE TABLE declineCurveCoefficients (
-    org                 TEXT NOT NULL,
-    dest                TEXT NOT NULL,
-    dayOfWeek           TEXT NOT NULL,
-    depTime             INTEGER NOT NULL,
-    cabin               TEXT NOT NULL,
-    c1Hours             REAL,
-    slopeSeatsPerHour   REAL,
-    nInstancesC1        INTEGER NOT NULL DEFAULT 0,
-    nInstancesSlope     INTEGER NOT NULL DEFAULT 0,
+    org                     TEXT NOT NULL,
+    dest                    TEXT NOT NULL,
+    dayOfWeek               TEXT NOT NULL,
+    depTime                 INTEGER NOT NULL,
+    cabin                   TEXT NOT NULL,
+    c1Hours                 REAL,
+    slopeSeatsPerHour       REAL,
+    nightSlopeRatio         REAL,
+    nInstancesC1            INTEGER NOT NULL DEFAULT 0,
+    nInstancesSlope         INTEGER NOT NULL DEFAULT 0,
+    nInstancesNightSlope    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (org, dest, dayOfWeek, depTime, cabin)
 );
 
@@ -202,6 +199,7 @@ CREATE TABLE declineCurveRouteOverrides (
     cabin               TEXT NOT NULL,
     c1Hours             REAL,
     slopeSeatsPerHour   REAL,
+    nightSlopeRatio     REAL,
     PRIMARY KEY (org, dest, cabin)
 );
 
@@ -217,6 +215,7 @@ CREATE TABLE declineCurveServiceOverrides (
     cabin               TEXT NOT NULL,
     c1Hours             REAL,
     slopeSeatsPerHour   REAL,
+    nightSlopeRatio     REAL,
     PRIMARY KEY (org, dest, dayOfWeek, depTime, cabin)
 );
 
@@ -235,13 +234,14 @@ CREATE TABLE declineCurveServiceOverrides (
 -- all-9/all-0 instance) while the other isn't (slope, which needs a
 -- real interior reading) - see DeclineCurveFit.py.
 CREATE TABLE declineCurveThresholds (
-    org                   TEXT NOT NULL,
-    dest                  TEXT NOT NULL,
-    dayOfWeek             TEXT NOT NULL,
-    depTime               INTEGER NOT NULL,
-    cabin                 TEXT NOT NULL,
-    minInstancesC1        INTEGER NOT NULL DEFAULT 1,
-    minInstancesSlope     INTEGER NOT NULL DEFAULT 1,
+    org                     TEXT NOT NULL,
+    dest                    TEXT NOT NULL,
+    dayOfWeek               TEXT NOT NULL,
+    depTime                 INTEGER NOT NULL,
+    cabin                   TEXT NOT NULL,
+    minInstancesC1          INTEGER NOT NULL DEFAULT 1,
+    minInstancesSlope       INTEGER NOT NULL DEFAULT 1,
+    minInstancesNightSlope  INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (org, dest, dayOfWeek, depTime, cabin)
 );
 

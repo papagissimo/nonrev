@@ -33,8 +33,6 @@
     <a class="tool" href="/pooling">Pooling Settings</a>
     <a class="tool" href="/decline-curve">Decline Curve Coefficients</a>
   </div>
-  <button id="refreshEstimatesBtn" onclick="refreshFloorEstimates()">Refresh floor estimates</button>
-  <div id="refreshStatus"></div>
   <script>
     fetch('/api/getLauncherSummary')
       .then(function (res) { return res.json(); })
@@ -50,28 +48,6 @@
       .catch(function () {
         document.getElementById('summary').textContent = '';
       });
-
-    function refreshFloorEstimates() {
-      var btn = document.getElementById('refreshEstimatesBtn');
-      var status = document.getElementById('refreshStatus');
-      btn.disabled = true;
-      status.textContent = 'Refreshing\u2026';
-      fetch('/api/refreshFloorEstimates', { method: 'POST' })
-        .then(function (res) { return res.json(); })
-        .then(function (result) {
-          if (result.error) throw new Error(result.error);
-          var totalPairs = Object.keys(result).reduce(function (sum, cabin) {
-            return sum + result[cabin];
-          }, 0);
-          status.textContent = 'Refreshed (' + totalPairs + ' floor/cabin pairs).';
-        })
-        .catch(function (err) {
-          status.textContent = 'Error: ' + err.message;
-        })
-        .finally(function () {
-          btn.disabled = false;
-        });
-    }
   </script>
 </body>
 </html>

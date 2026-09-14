@@ -86,6 +86,17 @@ DEFAULT_DECLINE_CURVE_SETTINGS = {
     # runtime without one. Not tied to the old duplicate-row issue
     # (confirmed fixed/pre-server-era) - this is a general safety cap.
     'stepChangeMaxIterations': 15,
+    # Day/night decline-rate split (see DeclineCurveFit.py's
+    # piecewise_model / effective_hours_between): the nightly window,
+    # local clock hours, during which decline runs at slope *
+    # nightSlopeRatio (below) instead of the full daytime slope. A step,
+    # not a smooth curve - his call, confirmed by real data (2026-09-13
+    # analysis: overnight interior-to-interior gaps decline at roughly
+    # 1/4 daytime speed, often exactly zero) that the effect is real and
+    # large enough to model, but not worth a shape more elaborate than a
+    # flat rate change at these two clock times.
+    'nightStartHour': 22,
+    'nightEndHour': 7,
 }
 
 
@@ -99,11 +110,20 @@ DECLINE_CURVE_GLOBAL_DEFAULTS_KEY = 'declineCurveGlobalDefaults'
 # slope of 2 seats/hour) - meant to be edited from the Pooling Settings
 # page once he has a feel for reasonable starting numbers, not derived
 # from anything.
+#
+# nightSlopeRatio: fraction of the daytime slope that applies overnight
+# (see nightStartHour/nightEndHour above) - 0.25 is his starting number
+# from the 2026-09-13 same-instance day-vs-night comparison, applied
+# globally to every cabin until a service has enough of its own
+# overnight-spanning instances to derive its own (tier 4 - not built
+# yet, see DeclineCurveFit.py module docstring). d1 has essentially no
+# data on his current routes either way, so its number is a placeholder
+# like everything else about d1 here.
 DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS = {
-    'y':         {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
-    'cPlus':     {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
-    'firstOrPS': {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
-    'd1':        {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0},
+    'y':         {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0, 'nightSlopeRatio': 0.25},
+    'cPlus':     {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0, 'nightSlopeRatio': 0.25},
+    'firstOrPS': {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0, 'nightSlopeRatio': 0.25},
+    'd1':        {'c1Hours': 3.0, 'slopeSeatsPerHour': 2.0, 'nightSlopeRatio': 0.25},
 }
 
 

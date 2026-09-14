@@ -44,13 +44,19 @@ THE FOUR TIERS, most general to most specific:
      watched and the threshold dropped back down once it looks
      reasonable.
 
-  c1Hours and slopeSeatsPerHour are resolved INDEPENDENTLY through
-  these tiers, not as a pair - matches how declineCurveCoefficients
-  already treats them (a service/cabin can have a resolvable C1 with
+  c1Hours, slopeSeatsPerHour, and nightSlopeRatio (the night/day decline-
+  rate ratio - see settings.DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS and
+  DeclineCurveFit.py's piecewise_model) are resolved INDEPENDENTLY
+  through these tiers, not as a group - matches how declineCurveCoefficients
+  already treats c1/slope (a service/cabin can have a resolvable C1 with
   no resolvable slope or vice versa) and how the override tables are
-  shaped (both columns independently nullable). It's entirely possible
-  for c1 to come from tier 4 while slope for the same cabin comes from
-  tier 1, if only one of the two has enough instances yet.
+  shaped (all three columns independently nullable). It's entirely
+  possible for c1 to come from tier 4 while slope or nightSlopeRatio for
+  the same cabin comes from tier 1, if only some of the three have
+  enough instances yet. nightSlopeRatio's tier-4 derivation isn't built
+  yet as of this writing (no pooling function populates it), so it
+  currently always resolves through tiers 1-3 - the plumbing is real,
+  just waiting on data.
 
   A tier is "available" for a given quantity when it has a non-NULL
   value for that quantity - the resolver walks tiers 4 -> 3 -> 2 -> 1
@@ -70,81 +76,108 @@ from settings import (
 
 DEFAULT_MIN_INSTANCES = 1
 
+# Maps each resolvable quantity to (global-default settings key, derived/
+# override column name, derived instance-count column name, threshold
+# column name) - one place that knows how the three quantities line up
+# across every table, so adding a fourth quantity later is one entry
+# here instead of a new set of parallel functions.
+QUANTITY_COLUMNS = {
+    "c1":         ("c1Hours", "c1Hours", "nInstancesC1", "minInstancesC1"),
+    "slope":      ("slopeSeatsPerHour", "slopeSeatsPerHour", "nInstancesSlope", "minInstancesSlope"),
+    "nightRatio": ("nightSlopeRatio", "nightSlopeRatio", "nInstancesNightSlope", "minInstancesNightSlope"),
+}
+
 
 def _load_threshold(conn, org, dest, day_of_week, dep_time, cabin):
     row = conn.execute(
-        """SELECT minInstancesC1, minInstancesSlope FROM declineCurveThresholds
+        """SELECT minInstancesC1, minInstancesSlope, minInstancesNightSlope
+           FROM declineCurveThresholds
            WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
         (org, dest, day_of_week, dep_time, cabin),
     ).fetchone()
     if row is None:
-        return DEFAULT_MIN_INSTANCES, DEFAULT_MIN_INSTANCES
-    min_c1, min_slope = row
-    return (min_c1 if min_c1 is not None else DEFAULT_MIN_INSTANCES,
-            min_slope if min_slope is not None else DEFAULT_MIN_INSTANCES)
+        return {"c1": DEFAULT_MIN_INSTANCES, "slope": DEFAULT_MIN_INSTANCES,
+                "nightRatio": DEFAULT_MIN_INSTANCES}
+    min_c1, min_slope, min_night = row
+    return {
+        "c1": min_c1 if min_c1 is not None else DEFAULT_MIN_INSTANCES,
+        "slope": min_slope if min_slope is not None else DEFAULT_MIN_INSTANCES,
+        "nightRatio": min_night if min_night is not None else DEFAULT_MIN_INSTANCES,
+    }
 
 
 def _load_derived(conn, org, dest, day_of_week, dep_time, cabin):
     row = conn.execute(
-        """SELECT c1Hours, slopeSeatsPerHour, nInstancesC1, nInstancesSlope
+        """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio,
+                  nInstancesC1, nInstancesSlope, nInstancesNightSlope
            FROM declineCurveCoefficients
            WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
         (org, dest, day_of_week, dep_time, cabin),
     ).fetchone()
     if row is None:
         return None
-    return {"c1": row[0], "slope": row[1], "nC1": row[2], "nSlope": row[3]}
+    c1, slope, night, n_c1, n_slope, n_night = row
+    return {"c1": c1, "slope": slope, "nightRatio": night,
+            "nC1": n_c1, "nSlope": n_slope, "nNightRatio": n_night}
 
 
 def _load_service_override(conn, org, dest, day_of_week, dep_time, cabin):
     row = conn.execute(
-        """SELECT c1Hours, slopeSeatsPerHour FROM declineCurveServiceOverrides
+        """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio
+           FROM declineCurveServiceOverrides
            WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
         (org, dest, day_of_week, dep_time, cabin),
     ).fetchone()
-    return {"c1": row[0], "slope": row[1]} if row else None
+    return {"c1": row[0], "slope": row[1], "nightRatio": row[2]} if row else None
 
 
 def _load_route_override(conn, org, dest, cabin):
     row = conn.execute(
-        """SELECT c1Hours, slopeSeatsPerHour FROM declineCurveRouteOverrides
+        """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio
+           FROM declineCurveRouteOverrides
            WHERE org=? AND dest=? AND cabin=?""",
         (org, dest, cabin),
     ).fetchone()
-    return {"c1": row[0], "slope": row[1]} if row else None
+    return {"c1": row[0], "slope": row[1], "nightRatio": row[2]} if row else None
 
 
 def resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin):
-    """Returns {'c1': float, 'slope': float, 'c1Tier': str, 'slopeTier':
-    str} - the tier string is one of 'derived', 'serviceOverride',
-    'routeOverride', 'global', purely informational (e.g. for a future
-    UI badge showing which tier is live for a service) and not required
-    by callers that just want the numbers.
+    """Returns {'c1': float, 'slope': float, 'nightRatio': float,
+    'c1Tier': str, 'slopeTier': str, 'nightRatioTier': str} - each tier
+    string is one of 'derived', 'serviceOverride', 'routeOverride',
+    'global', purely informational (e.g. for a future UI badge showing
+    which tier is live for a service) and not required by callers that
+    just want the numbers.
 
-    slope can legitimately come back None if every tier including the
-    global default has a null/zero slope for this cabin - practically
-    shouldn't happen once the global default is filled in with real
-    starting numbers, but not assumed away here."""
+    slope/nightRatio can legitimately come back None if every tier
+    including the global default has a null value for this cabin -
+    practically shouldn't happen once the global default is filled in
+    with real starting numbers, but not assumed away here."""
     global_defaults = load_settings(
         conn, key=DECLINE_CURVE_GLOBAL_DEFAULTS_KEY, defaults=DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS
     )
     global_entry = global_defaults.get(cabin, {})
 
     derived = _load_derived(conn, org, dest, day_of_week, dep_time, cabin)
-    min_c1, min_slope = _load_threshold(conn, org, dest, day_of_week, dep_time, cabin)
+    min_n = _load_threshold(conn, org, dest, day_of_week, dep_time, cabin)
     service_ov = _load_service_override(conn, org, dest, day_of_week, dep_time, cabin)
     route_ov = _load_route_override(conn, org, dest, cabin)
 
-    def resolve_one(quantity, derived_key, n_key, min_n):
-        if derived and derived[derived_key] is not None and derived[n_key] >= min_n:
-            return derived[derived_key], "derived"
+    derived_n_key = {"c1": "nC1", "slope": "nSlope", "nightRatio": "nNightRatio"}
+
+    def resolve_one(quantity):
+        global_key = QUANTITY_COLUMNS[quantity][0]
+        if derived and derived[quantity] is not None and derived[derived_n_key[quantity]] >= min_n[quantity]:
+            return derived[quantity], "derived"
         if service_ov and service_ov[quantity] is not None:
             return service_ov[quantity], "serviceOverride"
         if route_ov and route_ov[quantity] is not None:
             return route_ov[quantity], "routeOverride"
-        return global_entry.get(f"{'c1Hours' if quantity == 'c1' else 'slopeSeatsPerHour'}"), "global"
+        return global_entry.get(global_key), "global"
 
-    c1_val, c1_tier = resolve_one("c1", "c1", "nC1", min_c1)
-    slope_val, slope_tier = resolve_one("slope", "slope", "nSlope", min_slope)
+    c1_val, c1_tier = resolve_one("c1")
+    slope_val, slope_tier = resolve_one("slope")
+    night_val, night_tier = resolve_one("nightRatio")
 
-    return {"c1": c1_val, "slope": slope_val, "c1Tier": c1_tier, "slopeTier": slope_tier}
+    return {"c1": c1_val, "slope": slope_val, "nightRatio": night_val,
+            "c1Tier": c1_tier, "slopeTier": slope_tier, "nightRatioTier": night_tier}

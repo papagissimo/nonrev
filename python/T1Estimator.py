@@ -1,10 +1,9 @@
 """
-The live, curve-slide T1 estimator - the one T1 value shown anywhere in
-the app (his call: he never wants to see two different T1 numbers side
-by side). GraphObservations used to keep the old two-point method alive
-as a separate t1Old/t1New comparison column - that was killed outright
-once he confirmed he'd never actually used the comparison; GraphObservations
-now calls this same module rather than its own copy of the math.
+The live, curve-slide T1 estimator - replaces the two-point extrapolation
+as the one T1 value shown anywhere in the app (his call: he never wants
+to see two different T1 numbers side by side; the two-point method
+survives only as GraphObservations' own t1Old, kept for the graph's
+side-by-side comparison, not shown in the live dialog).
 
 Per cabin, independently: take the pooled (c1, slope) for this exact
 (org, dest, dayOfWeek, depTime, cabin) from declineCurveCoefficients
@@ -56,17 +55,11 @@ since that's the only usable information left) contributes NOTHING to
 the total, not zero, if truly nothing is resolvable. A row where every
 cabin is unresolvable has no estimate at all (None), rather than a
 misleading 0.
-
-Two entry points: compute_t1_replay_column (above) needs at least one
-reading to replay against; compute_t1_baseline (below) needs none at
-all - the pooled curve alone, for a flight that hasn't been checked yet
-today. Same coefficients lookup, same cabins, just no anchor to slide
-on in the baseline case.
 """
 
 from datetime import datetime
 
-from DeclineCurveFit import piecewise_model, CABIN_COLUMNS
+from DeclineCurveFit import piecewise_model, solve_c1_from_reading, CABIN_COLUMNS
 from DeclineCurveHierarchy import resolve_coefficients
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 
@@ -75,54 +68,31 @@ T1_TARGET_HOURS = 1.0
 CABIN_KEY_TO_COLUMN = {'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': 'd1'}
 
 
-def resolved_actual_or_raw_cheap(actual, cheap):
-    """
-    The one per-cabin reading-resolution rule for anchoring this
-    estimator (his call, superseding the earlier FloorEstimates-based
-    substitution): real actual (binary-search-confirmed) value if
-    present, else the raw cheap-glance floor value itself, unmassaged,
-    if that's all there is - NOT run through FloorEstimates' conditional-
-    mean substitution. A confirmed "at least 3" floor glance is fed in
-    as a plain 3, which will understate the true value whenever the real
-    count is higher - an accepted, deliberate trade (real numbers matter
-    more to the fit than a laundered decimal guess the fit never actually
-    observed), not an oversight. None if neither was logged - the caller
-    treats that cabin as unresolved, not zero (see this module's own
-    docstring). Shared by every caller that constructs readings for this
-    estimator (SeatLoggingDialog, GraphObservations) - the resolution
-    rule itself, not just the slide math, only gets to exist in one
-    place.
-    """
-    if actual is not None:
-        return actual
-    if cheap is not None:
-        return cheap
-    return None
-
-
 def load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time):
-    """dict cabin_column -> (c1Hours, slopeSeatsPerHour), one entry per
-    cabin - now resolved through the full coefficients hierarchy (see
-    DeclineCurveHierarchy.resolve_coefficients): derived data from
-    declineCurveCoefficients when there's enough of it, else a hand-set
-    service or route override, else the global default. A cabin only
-    ever comes back missing from this dict if EVERY tier including the
-    global default has no slope for it - practically shouldn't happen
-    once the global default is filled in, but not assumed away."""
+    """dict cabin_column -> (c1Hours, slopeSeatsPerHour, nightSlopeRatio),
+    one entry per cabin - resolved through the full coefficients
+    hierarchy (see DeclineCurveHierarchy.resolve_coefficients): derived
+    data from declineCurveCoefficients when there's enough of it, else a
+    hand-set service or route override, else the global default (for
+    nightSlopeRatio, currently always the global default - tier 4
+    derivation for it isn't built yet). A cabin only ever comes back
+    missing from this dict if EVERY tier including the global default
+    has no slope for it - practically shouldn't happen once the global
+    default is filled in, but not assumed away."""
     result = {}
     for cabin_col in CABIN_COLUMNS:
         resolved = resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin_col)
         if resolved['slope'] is not None:
-            result[cabin_col] = (resolved['c1'], resolved['slope'])
+            result[cabin_col] = (resolved['c1'], resolved['slope'], resolved.get('nightRatio') or 1.0)
     return result
 
 
 def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
     """readings: as returned by SeatLoggingDialog.previous_readings_for -
     most-recent-first (ascending hrs), each {'hrs':, 'y':, 'cplus':,
-    'onePS':, 'd1':}, values already resolved (real actual, or a
-    FloorEstimates-derived decimal glance estimate) or None if that
-    cabin wasn't touched on that particular check.
+    'onePS':, 'd1':}, values already resolved (real actual only - the
+    old glance-derived decimal fallback was retired 2026-09-14) or None
+    if that cabin wasn't touched on that particular check.
 
     Returns a list the same length as readings - one curve-slide T1
     estimate per row, replay-style: computed using only that row and
@@ -134,7 +104,17 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
 
     See module docstring for the per-cabin carry-forward, the rail
     expected-vs-unexpected slide decision, and the missing-means-omit-
-    not-zero rule."""
+    not-zero rule.
+
+    Day/night decline-rate split: each cabin's resolved nightSlopeRatio
+    (see load_decline_curve_coefficients_for_flight) and this flight's
+    real departure timestamp (built from flight_date + dep_time) get
+    threaded into every piecewise_model/solve_c1_from_reading call below,
+    so both the "does this rail reading match what the pooled curve
+    already expects" check and the actual slide-and-project-to-T1 step
+    know that overnight hours decline slower - see DeclineCurveFit.py's
+    module docstring for why this is a flat rate change, not a smooth
+    curve."""
     day_of_week = datetime.strptime(flight_date, "%Y-%m-%d").strftime("%a")
     coeffs = load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time)
     if not coeffs:
@@ -142,6 +122,14 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
 
     settings = load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
     unexpected_threshold = settings['stepChangeRmseThreshold']
+    night_start_hour = settings['nightStartHour']
+    night_end_hour = settings['nightEndHour']
+
+    departure_dt = None
+    try:
+        departure_dt = datetime.strptime(f"{flight_date} {dep_time:04d}", "%Y-%m-%d %H%M")
+    except (ValueError, TypeError):
+        departure_dt = None
 
     results = []
     for idx in range(len(readings)):
@@ -149,10 +137,10 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
         total = 0.0
         any_resolved = False
         for cabin_key, cabin_col in CABIN_KEY_TO_COLUMN.items():
-            c1_slope = coeffs.get(cabin_col)
-            if c1_slope is None:
+            c1_slope_night = coeffs.get(cabin_col)
+            if c1_slope_night is None:
                 continue
-            pooled_c1, slope = c1_slope
+            pooled_c1, slope, night_ratio = c1_slope_night
 
             anchor = None
             for row in pool:
@@ -167,57 +155,34 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
             if 1 <= val_r <= 8:
                 # Interior reading - well-determined, solve for the C1
                 # that makes the curve pass through it exactly.
-                c1_prime = hbd_r + (9.0 - val_r) / slope
+                c1_prime = solve_c1_from_reading(hbd_r, val_r, slope, night_ratio, departure_dt,
+                                                  night_start_hour, night_end_hour)
             elif pooled_c1 is None:
                 # Rail reading, but nothing to compare it against -
                 # slide anyway, it's the only information available.
-                c1_prime = hbd_r + (9.0 - val_r) / slope
+                c1_prime = solve_c1_from_reading(hbd_r, val_r, slope, night_ratio, departure_dt,
+                                                  night_start_hour, night_end_hour)
             else:
-                pooled_val_at_hbd_r = float(piecewise_model(hbd_r, pooled_c1, slope))
+                pooled_val_at_hbd_r = float(piecewise_model(
+                    hbd_r, pooled_c1, slope, night_ratio, departure_dt,
+                    night_start_hour, night_end_hour,
+                ))
                 if abs(val_r - pooled_val_at_hbd_r) > unexpected_threshold:
                     # Unexpected - genuinely surprising given the pooled
                     # curve, slide on it (his terms: "unexpectedly early
                     # zero" / "unexpectedly late nine").
-                    c1_prime = hbd_r + (9.0 - val_r) / slope
+                    c1_prime = solve_c1_from_reading(hbd_r, val_r, slope, night_ratio, departure_dt,
+                                                      night_start_hour, night_end_hour)
                 else:
                     # Expected - the pooled curve already explains this
                     # reading, nothing new to slide on.
                     c1_prime = pooled_c1
 
-            total += float(piecewise_model(T1_TARGET_HOURS, c1_prime, slope))
+            total += float(piecewise_model(
+                T1_TARGET_HOURS, c1_prime, slope, night_ratio, departure_dt,
+                night_start_hour, night_end_hour,
+            ))
             any_resolved = True
 
         results.append(total if any_resolved else None)
     return results
-
-
-def compute_t1_baseline(conn, org, dest, flight_date, dep_time):
-    """
-    The T1 estimate before a single reading has been logged today for
-    this flight - the pooled curve alone, evaluated at T1_TARGET_HOURS,
-    with nothing to anchor/slide against yet (his call: he wants to see
-    where a flight is expected to land the moment it shows up as a
-    candidate, not only once he's checked it at least once - the pooled
-    coefficients don't care whether today has any data).
-
-    Same coefficients lookup as compute_t1_replay_column (same
-    hierarchy, same cabins), just with no reading to anchor on - every
-    cabin that resolves both a c1 and a slope contributes
-    piecewise_model(T1_TARGET_HOURS, c1, slope) directly, summed.
-    Returns None only if no cabin resolves both - should essentially
-    never happen once the global default tier is filled in (see
-    DeclineCurveHierarchy), same edge case compute_t1_replay_column
-    already accepts.
-    """
-    day_of_week = datetime.strptime(flight_date, "%Y-%m-%d").strftime("%a")
-    coeffs = load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time)
-    if not coeffs:
-        return None
-    total = 0.0
-    any_resolved = False
-    for c1, slope in coeffs.values():
-        if c1 is None:
-            continue
-        total += float(piecewise_model(T1_TARGET_HOURS, c1, slope))
-        any_resolved = True
-    return total if any_resolved else None

@@ -22,13 +22,13 @@
     .hrs { font-size: 15px; color: #666; }
     .hrs.soon { color: #c5221f; font-weight: bold; }
     input.seat { width: 38px; font-size: 16px; text-align: center; box-sizing: border-box; }
-    input.seat.cheapSeat { background: #fafbfe; }
-    input.seat.locked { background: #eee; color: #888; }
     .seatCellWrap { display: flex; flex-direction: column; align-items: center; }
     .estimateLine {
-      font-size: 10px; color: #bbb; line-height: 1.3; min-height: 13px;
-      font-style: italic;
+      font-size: 13px; color: #888; line-height: 1.3; min-height: 16px;
+      font-style: italic; margin-top: 4px;
     }
+    .stepCell { font-style: italic; color: #555; }
+    td.col-stepY { border-left: 2px solid #ddd; padding-left: 12px; }
     td.col-y { border-left: 2px solid #ddd; }
     .flt { font-size: 14px; color: #666; }
     .verdictNote { cursor: help; font-size: 18px; font-weight: bold; }
@@ -136,16 +136,7 @@
   <script>
     var initData = {}; // aircraftOptions now arrives on the batch result itself, see renderAircraftOptions
     var batch = null;
-    var SEAT_FIELDS = ['cheapY', 'cheapCplus', 'cheapOnePS', 'cheapD1', 'y', 'cplus', 'onePS', 'd1'];
-    var CHEAP_TO_ACTUAL = { cheapY: 'y', cheapCplus: 'cplus', cheapOnePS: 'onePS', cheapD1: 'd1' };
-    // Actual-field JS names use his dialog's own casing (cplus, onePS);
-    // FloorEstimates' coefficients are keyed by the Python-side cabin
-    // names (cPlus, firstOrPS) - this is just that naming translation,
-    // not a different concept.
-    var FIELD_TO_CABIN = { y: 'y', cplus: 'cPlus', onePS: 'firstOrPS', d1: 'd1' };
-    // {cabin: {floorValue: meanActual}} - sent fresh on every getNextBatch
-    // response (see renderBatch), never fetched separately.
-    var floorEstimates = {};
+    var SEAT_FIELDS = ['y', 'cplus', 'onePS', 'd1'];
     var aircraftOptionsRendered = false;
     var showDeparted = false;
 
@@ -222,16 +213,28 @@
 
     function buildColumns(anyD1) {
       var cols = [
-        { key: 'dep', label: 'Dep', width: 92 },
-        { key: 'cheapY', label: 'Y', width: 40 },
-        { key: 'cheapCplus', label: 'C+', width: 40 },
-        { key: 'cheapOnePS', label: '1/PS', width: 40 }
+        { key: 'dep', label: 'Dep', width: 92 }
       ];
-      if (anyD1) cols.push({ key: 'cheapD1', label: 'D1', width: 40 });
+      // Glance ("cheap") columns fully retired 2026-09-14 (his call: not
+      // just hidden from the UI as of the first pass - eliminated from
+      // the code entirely, backend included, to stop being a source of
+      // confusion). No trace of them left here now.
       cols.push({ key: 'y', label: 'Y', width: 48 });
       cols.push({ key: 'cplus', label: 'C+', width: 48 });
       cols.push({ key: 'onePS', label: '1/PS', width: 48 });
       if (anyD1) cols.push({ key: 'd1', label: 'D1', width: 48 });
+      // Step-change columns (his call, 2026-09-14) - actual vs. what the
+      // pooled slope alone predicted from this cabin's own previous
+      // reading (see SeatLoggingDialog.py's previous_readings_for). A
+      // second four-column group, same shape as Actual, so he can watch
+      // a whole day's worth of a cabin's step changes at a glance and
+      // judge "is this cabin jumpy today" - not a hint about right now,
+      // a history of how well the estimator's rate has been tracking
+      // reality so far.
+      cols.push({ key: 'stepY', label: 'Y', width: 34 });
+      cols.push({ key: 'stepCplus', label: 'C+', width: 34 });
+      cols.push({ key: 'stepOnePS', label: '1/PS', width: 34 });
+      if (anyD1) cols.push({ key: 'stepD1', label: 'D1', width: 34 });
       // Hrs sits right next to the seat-input columns (the current
       // reading), with Prev pushed past a small gap - his call, so the
       // "what I'm about to log" block reads as one unit. Hrs/Prev
@@ -253,6 +256,18 @@
       return cols;
     }
 
+    function formatCurveEstimate(v) {
+      // The pooled decline curve's own predicted seat count for this
+      // cabin, right now - static, server-computed (see
+      // SeatLoggingDialog.py's curve_estimates_for_row), never reactive
+      // to typing. One decimal, always, his explicit call - unlike
+      // formatT1Value's magnitude-dependent precision below, this
+      // number never exceeds 9 (a seat count clamped to [0,9]), so
+      // there's no "fake precision at high magnitude" concern here.
+      if (v === undefined || v === null) return '';
+      return v.toFixed(1);
+    }
+
     function formatT1Value(est) {
       // Two significant figures, his call: below 10 (in magnitude)
       // one decimal place is meaningful, at 10 and above it isn't -
@@ -260,6 +275,24 @@
       // the estimate actually supports.
       if (est === null || est === undefined) return '';
       return (Math.abs(est) < 10) ? String(Math.round(est * 10) / 10) : String(Math.round(est));
+    }
+
+    function formatStepColumn(readings, cabinKey) {
+      // Step change per reading: actual vs. what the pooled SLOPE alone
+      // predicted from this cabin's own previous actual reading -
+      // server-computed (see SeatLoggingDialog.py's previous_readings_for
+      // for the exact comparison and why it's slope-only, no C1). His
+      // explicit sign convention: positive means more seats opened up
+      // than the slope predicted (a cancellation); negative means fewer.
+      // Blank where the backend has nothing to compare against for this
+      // row/cabin. No calculation here, matching formatT1Column - display
+      // only, real math stays server-side.
+      if (!readings || readings.length === 0) return '';
+      return readings.map(function (rd) {
+        var v = rd.steps ? rd.steps[cabinKey] : undefined;
+        var display = (v === undefined || v === null) ? '' : (v > 0 ? '+' + v : String(v));
+        return '<div class="row stepCell">' + display + '</div>';
+      }).join('');
     }
 
     function formatT1Column(readings) {
@@ -442,8 +475,6 @@
         }
         var vals = {
           y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
-          cheapY: val('cheapY'), cheapCplus: val('cheapCplus'),
-          cheapOnePS: val('cheapOnePS'), cheapD1: val('cheapD1'),
         };
         var hasAny = SEAT_FIELDS.some(function (f) { return vals[f]; });
         if (hasAny) map[row.scheduleRow] = vals;
@@ -455,27 +486,16 @@
       batch.rows.forEach(function (row, i) {
         var vals = map[row.scheduleRow];
         if (!vals) return;
-        // Actual fields first (plain restore), then cheap fields -
-        // restoring a cheap value re-runs the lock logic, which is
-        // what puts a 9/0-locked actual field back into its correct
-        // locked state (overriding whatever raw value the actual
-        // restore above just set, same as it would if freshly typed).
         ['y', 'cplus', 'onePS', 'd1'].forEach(function (f) {
           if (!vals[f]) return;
           var el = document.querySelector('input[data-field="' + f + '"][data-i="' + i + '"]');
           if (el) el.value = vals[f];
-        });
-        ['cheapY', 'cheapCplus', 'cheapOnePS', 'cheapD1'].forEach(function (f) {
-          if (!vals[f]) return;
-          var el = document.querySelector('input[data-field="' + f + '"][data-i="' + i + '"]');
-          if (el) { el.value = vals[f]; applyCheapAutoFill(el); }
         });
       });
     }
 
     function renderBatch(result) {
       batch = result;
-      floorEstimates = result.floorEstimates || {};
       renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
       if (batch.settings) populateSettingsForm(batch.settings);
       if (batch.openFullSettings) populateOpenFullSettingsForm(batch.openFullSettings);
@@ -529,18 +549,20 @@
         return '<th>' + c.label + '</th>';
       }).join('');
 
-      // Group-label row above the field labels, spanning the cheap
-      // (glance) columns and the actual (binary-search) columns
-      // separately - both groups reuse the same short labels (Y, C+,
-      // 1/PS[, D1]) so this is the only thing telling them apart at a
-      // glance besides the divider line (see td.col-y border-left).
-      var cheapCount = anyD1 ? 4 : 3;
+      // Group-label row above the field labels - Actual and the new
+      // Steps group (see buildColumns) are the only two groups now that
+      // Glance is gone, so this is a straight port of the old
+      // Glance/Actual split with Steps taking Glance's old visual slot,
+      // just repositioned to the right of Actual instead of the left
+      // (his explicit call - not reusing the vacated Glance column
+      // space).
       var actualCount = anyD1 ? 4 : 3;
-      var restCount = columns.length - 1 - cheapCount - actualCount;
+      var stepCount = anyD1 ? 4 : 3;
+      var restCount = columns.length - 1 - actualCount - stepCount;
       document.getElementById('groupHeaderRow').innerHTML =
         '<th></th>' +
-        '<th class="groupHead" colspan="' + cheapCount + '">Glance</th>' +
         '<th class="groupHead" colspan="' + actualCount + '">Actual</th>' +
+        '<th class="groupHead" colspan="' + stepCount + '">Steps</th>' +
         '<th colspan="' + restCount + '"></th>';
 
       var tbody = document.getElementById('rows');
@@ -554,14 +576,14 @@
 
         var cellHtml = {
           dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>',
-          cheapY: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapY" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          cheapCplus: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapCplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          cheapOnePS: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapOnePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          cheapD1: '<input class="seat cheapSeat" data-i="' + i + '" data-field="cheapD1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>',
-          y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="y"></div></div>',
-          cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="cplus"></div></div>',
-          onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="onePS"></div></div>',
-          d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine" data-i="' + i + '" data-field="d1"></div></div>',
+          y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.y) + '</div></div>',
+          cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.cplus) + '</div></div>',
+          onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.onePS) + '</div></div>',
+          d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.d1) + '</div></div>',
+          stepY: '<div class="prev">' + formatStepColumn(row.previousReadings, 'y') + '</div>',
+          stepCplus: '<div class="prev">' + formatStepColumn(row.previousReadings, 'cplus') + '</div>',
+          stepOnePS: '<div class="prev">' + formatStepColumn(row.previousReadings, 'onePS') + '</div>',
+          stepD1: '<div class="prev">' + formatStepColumn(row.previousReadings, 'd1') + '</div>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           t1: '<div class="prev">' + formatT1Column(row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
@@ -607,66 +629,6 @@
       if (!el.classList || !el.classList.contains('seat')) return;
       var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, 1);
       if (cleaned !== el.value) el.value = cleaned;
-      if (el.classList.contains('cheapSeat')) applyCheapAutoFill(el);
-    }
-
-    function estimateForFloor(cabin, floorValue) {
-      // Mirrors FloorEstimates.estimate_for_floor (python/FloorEstimates.py)
-      // - falls back to the raw floor value itself when no coefficient
-      // exists yet for this exact (cabin, floor) pair.
-      var byCabin = floorEstimates[cabin];
-      if (byCabin && byCabin[floorValue] !== undefined) return byCabin[floorValue];
-      return floorValue;
-    }
-
-    function updateEstimateLine(i, actualField, cheapValue) {
-      // Dimmed preview of what the actual value is likely to resolve to,
-      // shown UNDER the actual input, never inside it - a placeholder
-      // would vanish the instant a binary-search guess gets typed,
-      // right when comparing against it matters most. This is a plain
-      // separate element, not part of the input's value in any way, so
-      // there's nothing for the save path to ever pick up by accident -
-      // no flag/state needed, unlike an earlier version of this idea.
-      // Deliberately keyed off "whatever the cheap field currently
-      // holds" rather than wired to a keystroke event specifically, so
-      // a future estimator that can supply a number with no glance
-      // input at all (his stated plan) only requires a change inside
-      // estimateForFloor, not to this call site.
-      var lineEl = document.querySelector('.estimateLine[data-field="' + actualField + '"][data-i="' + i + '"]');
-      if (!lineEl) return;
-      if (cheapValue === '') { lineEl.textContent = ''; return; }
-      var cabin = FIELD_TO_CABIN[actualField];
-      var est = estimateForFloor(cabin, parseInt(cheapValue, 10));
-      lineEl.textContent = est.toFixed(1);
-    }
-
-    function applyCheapAutoFill(cheapEl) {
-      // A cheap 9 (ceiling) or confirmed cheap 0 auto-fills and
-      // permanently locks the matching actual field - both are already
-      // certain, no binary search needed. A nonzero floor (1-8) never
-      // auto-fills - his explicit call, so the actual field must be
-      // retyped by hand to prove the binary search actually happened,
-      // rather than silently promoting a floor guess into a resolved
-      // value. Only ever clears/unlocks the actual field if THIS
-      // function was the one that locked it - a manually-typed actual
-      // value must never be clobbered just because the cheap field
-      // next to it changes afterward.
-      var i = cheapEl.getAttribute('data-i');
-      var actualField = CHEAP_TO_ACTUAL[cheapEl.getAttribute('data-field')];
-      if (!actualField) return;
-      var actualEl = document.querySelector('input[data-field="' + actualField + '"][data-i="' + i + '"]');
-      if (!actualEl) return;
-      var v = cheapEl.value;
-      if (v === '9' || v === '0') {
-        actualEl.value = v;
-        actualEl.disabled = true;
-        actualEl.classList.add('locked');
-      } else if (actualEl.classList.contains('locked')) {
-        actualEl.value = '';
-        actualEl.disabled = false;
-        actualEl.classList.remove('locked');
-      }
-      updateEstimateLine(i, actualField, v);
     }
 
     function handleArrowNav(e) {
@@ -743,21 +705,17 @@
           scheduleRow: row.scheduleRow, org: row.org, dest: row.dest, car: row.car,
           dep: row.dep, aircraftConfig: row.aircraftConfig, flightNumber: row.flightNumber,
           y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
-          cheapY: val('cheapY'), cheapCplus: val('cheapCplus'),
-          cheapOnePS: val('cheapOnePS'), cheapD1: val('cheapD1'),
           hoursUntilDep: row.hoursUntilDep,
           depDisplay: row.depDisplay
         };
       });
 
       var hasAnyData = entries.some(function (e) {
-        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '' ||
-          e.cheapY !== '' || e.cheapCplus !== '' || e.cheapOnePS !== '' || e.cheapD1 !== '';
+        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
       });
 
       var loggedEntries = entries.filter(function (e) {
-        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '' ||
-          e.cheapY !== '' || e.cheapCplus !== '' || e.cheapOnePS !== '' || e.cheapD1 !== '';
+        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
       });
       function recordRecentlyLogged() {
         loggedEntries.forEach(function (e) {
@@ -864,17 +822,10 @@
       saveRouteDayFlag(e.target.value);
     });
 
-    // One-time refresh of the floor->actual estimate coefficients, right
-    // before the first batch loads - see FloorEstimates.py. Deliberately
-    // only here (page load), not inside loadBatch() itself, since
-    // loadBatch also runs on every "get next"/toggle/settings-save
-    // within an already-open session and this isn't meant to re-fire on
-    // any of those. If the refresh fails for any reason, still proceed
-    // to loadBatch() with whatever coefficients (or none) already
-    // exist - a stale/missing estimate table should never block logging.
-    fetch('/api/refreshFloorEstimates', { method: 'POST' })
-      .catch(function (err) { console.error('Floor-estimate refresh failed:', err); })
-      .then(function () { loadBatch(); });
+    // Floor->actual estimate refresh (FloorEstimates.py) retired
+    // 2026-09-14 along with all glance/cheap-derived estimation - just
+    // load the batch directly now.
+    loadBatch();
   </script>
 </body>
 </html>

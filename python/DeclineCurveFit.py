@@ -111,9 +111,8 @@ ends included:
   instance in the service's own pool contributes one squared-error term
   - bracket that instance's own (step-change-corrected) readings at T-4
   hours (his real workflow checkpoint, not an arbitrary number - same
-  bracket-nearest-target selection pattern used across this project,
-  see bracket_with_weight below), slide the curve through each bracketing
-  reading at the
+  bracket-nearest-target selection GraphObservations.compute_trajectory
+  already uses), slide the curve through each bracketing reading at the
   candidate slope, predict forward to T-1 (the live estimator's own
   target), interpolate the two resulting PREDICTIONS (not the raw
   readings - his explicit call, since the two aren't quite identical
@@ -150,7 +149,7 @@ ends included:
 Coefficient PERSISTENCE: refresh_decline_curve_coefficients() writes the
 pooled per-(org,dest,dayOfWeek,depTime,cabin) results to the
 declineCurveCoefficients table, same recompute-from-scratch/manual-
-launcher-button/startup-refresh pattern as FloorEstimates.py. Keyed by
+launcher-button/startup-refresh pattern FloorEstimates.py used to. Keyed by
 every individual observed depTime (not a cluster-representative time),
 mirroring dep_time_to_service/dep_time_to_group directly - a read-time
 consumer does an exact-match lookup by (org, dest, dayOfWeek, depTime,
@@ -170,15 +169,16 @@ Run directly for a console report:
 
 import sqlite3
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, time as dt_time
 
 import numpy as np
-from scipy.optimize import curve_fit, minimize_scalar
+from scipy.optimize import curve_fit, minimize_scalar, brentq
 
 import os
 
 from clustering import cluster_services, service_representative
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
+from DeclineCurveHierarchy import resolve_coefficients
 
 # Anchored to this script's own location, not the current working
 # directory - a bare "nonrev.db" here silently creates a fresh empty
@@ -188,10 +188,10 @@ from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nonrev.db')
 
 CABIN_COLUMNS = {
-    "y": ("y", "cheapY"),
-    "cPlus": ("cPlus", "cheapCPlus"),
-    "firstOrPS": ("firstOrPS", "cheapFirstOrPS"),
-    "d1": ("d1", "cheapD1"),
+    "y": "y",
+    "cPlus": "cPlus",
+    "firstOrPS": "firstOrPS",
+    "d1": "d1",
 }
 
 
@@ -207,8 +207,7 @@ def load_observations(conn):
         """
         SELECT observationId, carrier, org, dest, flightDate,
                checkTimestamp, hoursBeforeDep, depTime, readingType,
-               y, cPlus, firstOrPS, d1,
-               cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
+               y, cPlus, firstOrPS, d1
         FROM observations
         WHERE readingType = 'avail'
         """
@@ -266,18 +265,19 @@ def build_service_map(rows):
     return dep_time_to_service, service_info
 
 
-def resolved_cabin_value(row, real_col, cheap_col):
-    """Real (binary-search) value takes precedence; falls back to glance
-    value; None if neither present. Coerces stray blank/whitespace cells."""
-    for col in (real_col, cheap_col):
-        v = row.get(col)
-        if v is None:
-            continue
-        try:
-            return int(v)
-        except (ValueError, TypeError):
-            continue
-    return None
+def resolved_cabin_value(row, real_col):
+    """The real (binary-search-confirmed) value, or None if this cabin
+    wasn't logged on this reading. No glance/cheap fallback - retired
+    2026-09-14 (his call: the fit uses only real actual readings now,
+    never a glance-derived substitute of any kind). Coerces stray
+    blank/whitespace cells."""
+    v = row.get(real_col)
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return None
 
 
 def gather_instances(rows, dep_time_to_service, cabin):
@@ -286,12 +286,22 @@ def gather_instances(rows, dep_time_to_service, cabin):
     (ascending real time = descending hoursBeforeDep).
 
     Returns dict: (serviceId, flightDate) -> {"readings":
-    [(hoursBeforeDep, value), ...] sorted chronologically}."""
-    real_col, cheap_col = CABIN_COLUMNS[cabin]
+    [(hoursBeforeDep, value), ...] sorted chronologically, "depTime":
+    this instance's own actual departure time (HHMM int) - needed to
+    convert a reading's hoursBeforeDep into a real calendar timestamp
+    for day/night classification (see piecewise_model). Taken from
+    whichever contributing reading has the SMALLEST hoursBeforeDep (the
+    most recently logged check for this instance), on the same
+    least-likely-to-be-stale reasoning already used elsewhere for depTime
+    drift (see nonrev-hoursbeforeDep-hardening). This is scoped to this
+    cabin's own subset of rows, so it can differ by a few minutes across
+    cabins on the same flight-day - irrelevant at the day/night
+    granularity this is used for."""
+    real_col = CABIN_COLUMNS[cabin]
 
-    instances = defaultdict(lambda: {"readings": []})
+    instances = defaultdict(lambda: {"readings": [], "depTime": None, "_minHbd": None})
     for r in rows:
-        val = resolved_cabin_value(r, real_col, cheap_col)
+        val = resolved_cabin_value(r, real_col)
         if val is None:
             continue
         service_id = dep_time_to_service.get((r["org"], r["dest"], r["dayOfWeek"], r["depTime"]))
@@ -304,19 +314,128 @@ def gather_instances(rows, dep_time_to_service, cabin):
         except (ValueError, TypeError):
             continue
         key = (service_id, r["flightDate"])
-        instances[key]["readings"].append((hbd, val))
+        inst = instances[key]
+        inst["readings"].append((hbd, val))
+        if inst["_minHbd"] is None or hbd < inst["_minHbd"]:
+            inst["_minHbd"] = hbd
+            inst["depTime"] = r["depTime"]
 
     for inst in instances.values():
         inst["readings"].sort(key=lambda x: -x[0])  # descending hoursBeforeDep = chronological
+        del inst["_minHbd"]
 
     return instances
 
 
-def piecewise_model(hbd, c1, slope):
-    """Flat at 9 until C1, linear decline (rate = slope, seats per hour)
-    from there, flat at 0 once it's fully declined. hbd = hoursBeforeDep;
-    larger hbd = further from departure."""
-    return np.clip(9 - slope * (c1 - hbd), 0, 9)
+def _night_overlap_hours(t_start, t_end, night_start_hour, night_end_hour):
+    """Total hours of [t_start, t_end) that fall inside the recurring
+    daily night window [night_start_hour:00, next-day night_end_hour:00)
+    - e.g. 22:00-07:00. t_start/t_end are naive local datetimes (domestic
+    only - no timezone crossing, see effective_hours_between); assumes
+    t_start <= t_end."""
+    if t_end <= t_start:
+        return 0.0
+    total = 0.0
+    day = t_start.date() - timedelta(days=1)
+    while day <= t_end.date():
+        night_open = datetime.combine(day, dt_time(night_start_hour, 0))
+        night_close = night_open + timedelta(hours=(24 - night_start_hour) + night_end_hour)
+        lo = max(t_start, night_open)
+        hi = min(t_end, night_close)
+        if hi > lo:
+            total += (hi - lo).total_seconds() / 3600.0
+        day += timedelta(days=1)
+    return total
+
+
+def effective_hours_between(t_start, t_end, night_ratio, night_start_hour=22, night_end_hour=7):
+    """Elapsed hours between two real local timestamps, with hours
+    inside the nightly [night_start_hour, night_end_hour) window counted
+    at night_ratio instead of 1.0 - the day/night decline-rate split
+    (see settings.DEFAULT_DECLINE_CURVE_SETTINGS: his call was a step
+    change at these two clock times, not a smooth curve - a real thing
+    the world does (mostly asleep, then mostly not), not smoothing
+    something that's actually gradual). Order of t_start/t_end doesn't
+    matter - always returns a non-negative value; the caller
+    (piecewise_model) handles which direction is "forward"."""
+    lo, hi = (t_start, t_end) if t_start <= t_end else (t_end, t_start)
+    total_hours = (hi - lo).total_seconds() / 3600.0
+    night_hours = _night_overlap_hours(lo, hi, night_start_hour, night_end_hour)
+    day_hours = total_hours - night_hours
+    return day_hours + night_ratio * night_hours
+
+
+def piecewise_model(hbd, c1, slope, night_ratio=1.0, departure_dt=None,
+                     night_start_hour=22, night_end_hour=7):
+    """Flat at 9 until C1, then declines - slope seats/hour during the
+    day, slope*night_ratio seats/hour overnight - flat at 0 once fully
+    declined. hbd = hoursBeforeDep; larger hbd = further from departure.
+
+    night_ratio/departure_dt default to (1.0, None), which collapses
+    this back to the original uniform-rate model exactly (departure_dt
+    is irrelevant when ratio=1, so a caller that hasn't been updated to
+    pass real calendar context keeps working unchanged). A caller that
+    DOES want the day/night split must pass a real departure_dt (the
+    flight's actual local departure timestamp) - hbd and c1 are both
+    "hours before THIS departure", converted internally to real
+    timestamps via departure_dt so effective_hours_between can tell
+    which portion of the gap was day vs. night.
+
+    Vectorized hbd (a numpy array, as scipy.optimize.curve_fit passes)
+    is supported via an explicit per-element loop when night_ratio != 1,
+    since datetime/timedelta arithmetic doesn't vectorize the way plain
+    subtraction does - the uniform-rate fast path (ratio == 1) is
+    unaffected and stays fully vectorized."""
+    if night_ratio == 1.0 or departure_dt is None:
+        return np.clip(9 - slope * (c1 - hbd), 0, 9)
+
+    hbd_arr = np.atleast_1d(np.asarray(hbd, dtype=float))
+    t_c1 = departure_dt - timedelta(hours=float(c1))
+    out = np.empty_like(hbd_arr)
+    for i, h in enumerate(hbd_arr):
+        t_h = departure_dt - timedelta(hours=float(h))
+        elapsed = effective_hours_between(t_c1, t_h, night_ratio, night_start_hour, night_end_hour)
+        if h > c1:
+            elapsed = -elapsed
+        out[i] = 9 - slope * elapsed
+    result = np.clip(out, 0, 9)
+    return result if np.ndim(hbd) > 0 else float(result[0])
+
+
+def solve_c1_from_reading(hbd_r, val_r, slope, night_ratio=1.0, departure_dt=None,
+                           night_start_hour=22, night_end_hour=7):
+    """Given a reading (hbd_r, val_r) known to sit at or past the C1
+    corner, solves for the C1 that makes the model pass through it
+    exactly - i.e. the "slide the curve through this reading" anchor
+    step used throughout predict_t1_via_slide and T1Estimator.
+
+    Closed-form when night_ratio == 1 (the original uniform-rate
+    algebra: c1 = hbd_r + (9 - val_r) / slope). Otherwise this can't be
+    solved algebraically anymore, because the day/night split of the
+    span between C1 and the reading depends on where C1 itself falls -
+    a numeric root-find instead (scipy.optimize.brentq), bounded
+    between the uniform-rate answer (a lower bound - the true C1 can
+    only be further out, since night hours count for less) and the
+    all-night worst case."""
+    target_elapsed = (9.0 - val_r) / slope
+    if night_ratio == 1.0 or departure_dt is None:
+        return hbd_r + target_elapsed
+
+    def f(c1_candidate):
+        t_c1 = departure_dt - timedelta(hours=c1_candidate)
+        t_r = departure_dt - timedelta(hours=hbd_r)
+        return effective_hours_between(t_c1, t_r, night_ratio, night_start_hour, night_end_hour) - target_elapsed
+
+    lo = hbd_r
+    hi = hbd_r + target_elapsed / max(night_ratio, 1e-6)
+    if hi <= lo:
+        hi = lo + 1e-3
+    try:
+        return brentq(f, lo, hi, xtol=1e-4)
+    except ValueError:
+        # Bracket failed (shouldn't happen given the bounds above, but
+        # falling back to the uniform-rate answer beats crashing).
+        return hbd_r + target_elapsed
 
 
 def find_c1_bracket(readings):
@@ -334,7 +453,9 @@ def find_c1_bracket(readings):
     return (first_non9_hbd, last_nine_hbd)  # (lower, upper)
 
 
-def fit_instance(readings, rmse_threshold, max_iterations):
+def fit_instance(readings, rmse_threshold, max_iterations,
+                  night_ratio=1.0, departure_dt=None,
+                  night_start_hour=22, night_end_hour=7):
     """Fits the piecewise model to one flight-day instance via
     scipy.optimize.curve_fit against its FULL set of raw readings (9s and
     0s included), with C1's search range bounded by this instance's own
@@ -350,6 +471,16 @@ def fit_instance(readings, rmse_threshold, max_iterations):
     below this. max_iterations: hard cap on correction passes - required
     here since correcting in place doesn't shrink the candidate set the
     way removal did, so there's no structural convergence guarantee.
+
+    night_ratio/departure_dt/night_start_hour/night_end_hour: this
+    instance's resolved day/night decline-rate split and its real
+    departure timestamp, passed straight through to piecewise_model - c1
+    and slope are still what's fit here (2 free parameters, unchanged);
+    night_ratio is a FIXED input to this fit, not a third thing curve_fit
+    solves for, since a single instance rarely has enough of its own
+    night-side readings to identify a ratio on its own (see module
+    docstring for why this stays a pooled/hierarchy-resolved quantity
+    instead).
 
     Returns a dict with c1, slope, n_interior (count of interior readings
     in the FINAL fit - 0 means this instance's slope is unidentifiable,
@@ -368,6 +499,10 @@ def fit_instance(readings, rmse_threshold, max_iterations):
     originals = [v for h, v in readings]
     pts = list(readings)  # values mutate in place; never shrinks
     corrections = defaultdict(int)
+
+    def model_fixed(hbd, c1, slope):
+        return piecewise_model(hbd, c1, slope, night_ratio, departure_dt,
+                                night_start_hour, night_end_hour)
 
     def build_result(c1, slope, n_interior):
         step_changes = [
@@ -390,7 +525,7 @@ def fit_instance(readings, rmse_threshold, max_iterations):
         c1_guess = (c1_lo + c1_hi) / 2
         try:
             popt, _ = curve_fit(
-                piecewise_model, xs, ys, p0=[c1_guess, 1.0],
+                model_fixed, xs, ys, p0=[c1_guess, 1.0],
                 bounds=([c1_lo, 1e-4], [c1_hi, 50]), maxfev=2000,
             )
         except (RuntimeError, ValueError):
@@ -401,7 +536,9 @@ def fit_instance(readings, rmse_threshold, max_iterations):
         if not interior_idx:
             return build_result(c1, slope, 0)
 
-        residuals = [ys[i] - piecewise_model(xs[i], c1, slope) for i in interior_idx]
+        residuals = [ys[i] - piecewise_model(xs[i], c1, slope, night_ratio, departure_dt,
+                                              night_start_hour, night_end_hour)
+                     for i in interior_idx]
         rmse = float(np.sqrt(np.mean(np.square(residuals))))
         if rmse <= rmse_threshold or iterations >= max_iterations:
             return build_result(c1, slope, len(interior_idx))
@@ -432,22 +569,24 @@ T1_TARGET_HOURS_FOR_POOLING = 1.0
 
 
 def bracket_with_weight(readings, target_hours):
-    """Bracket-nearest-target reading selection (straddle the target
-    with the nearest reading on each side when a real straddle exists;
-    otherwise the two nearest readings on whichever side has everything)
-    - kept as its own copy here rather than imported from elsewhere,
-    since this operates on this module's plain (hbd, value) tuples, not
-    the dict shape T1Estimator/GraphObservations use, and pooling
-    shouldn't need to import either of those.
+    """Same bracket-nearest-target reading selection as
+    GraphObservations.compute_trajectory (straddle the target with the
+    nearest reading on each side when a real straddle exists; otherwise
+    the two nearest readings on whichever side has everything) - kept as
+    its own copy here rather than imported, since this operates on this
+    module's plain (hbd, value) tuples, not the dict shape
+    GraphObservations uses, and pooling shouldn't need to import the
+    graphing module.
 
     Returns None if readings is empty. ('single', reading) if only one
     reading is available on its own (exactly one reading total, or one
     side is empty with fewer than two candidates there). Otherwise
     ('pair', b, a, weight) where b/a are the two bracketing (or
     two-nearest-same-side) readings and weight = (b[0] - target_hours) /
-    (b[0] - a[0]) - the interpolation weight, handed back so a caller
-    can apply it to whatever it computed FROM b and a (predictions, here
-    - not the raw readings themselves)."""
+    (b[0] - a[0]) - the exact interpolation weight compute_trajectory
+    itself uses, handed back so a caller can apply it to whatever it
+    computed FROM b and a (predictions, here - not the raw readings
+    themselves)."""
     if not readings:
         return None
     if len(readings) == 1:
@@ -499,28 +638,42 @@ def nearest_reading(readings, target_hours):
     return min(readings, key=lambda r: abs(r[0] - target_hours))
 
 
-def predict_t1_via_slide(readings, slope, t4_hours, t1_hours):
+def predict_t1_via_slide(readings, slope, t4_hours, t1_hours,
+                          night_ratio=1.0, departure_dt=None,
+                          night_start_hour=22, night_end_hour=7):
     """What the live sliding estimator would predict at t1_hours, using
     only readings available at/around t4_hours and the given candidate
     slope - the core of the slope-pooling objective (see pool_slope).
     Brackets readings at t4_hours; for each bracketing reading, slides
-    the curve through it (solves for the C1 that makes the frozen curve
-    at this slope pass through that reading) and predicts forward to
-    t1_hours; if there were two bracketing readings, interpolates the
-    two resulting T1 PREDICTIONS using the bracket's own distance
-    weighting (his explicit call - not interpolating the readings before
-    sliding; the two aren't quite identical near a 0/9 clamp, and he
-    wants the version that matches what the live estimator would
-    actually have shown at each moment). Returns None if readings is
-    empty (nothing to anchor on this side)."""
+    the curve through it (solve_c1_from_reading - the C1 that makes the
+    frozen curve at this slope, day/night split included, pass through
+    that reading) and predicts forward to t1_hours; if there were two
+    bracketing readings, interpolates the two resulting T1 PREDICTIONS
+    using the bracket's own distance weighting (his explicit call - not
+    interpolating the readings before sliding; the two aren't quite
+    identical near a 0/9 clamp, and he wants the version that matches
+    what the live estimator would actually have shown at each moment).
+    Returns None if readings is empty (nothing to anchor on this side).
+
+    night_ratio/departure_dt/night_start_hour/night_end_hour: this
+    instance's resolved night split and real departure timestamp -
+    same fixed context fit_instance's own curve_fit used, so the
+    slide-and-predict here stays consistent with how the instance was
+    originally fit."""
     bracket = bracket_with_weight(readings, t4_hours)
     if bracket is None:
         return None
 
     def slide_predict(reading):
         hbd_r, val_r = reading
-        c1_prime = hbd_r + (9.0 - val_r) / slope
-        return float(piecewise_model(t1_hours, c1_prime, slope))
+        c1_prime = solve_c1_from_reading(
+            hbd_r, val_r, slope, night_ratio, departure_dt,
+            night_start_hour, night_end_hour,
+        )
+        return float(piecewise_model(
+            t1_hours, c1_prime, slope, night_ratio, departure_dt,
+            night_start_hour, night_end_hour,
+        ))
 
     if bracket[0] == "single":
         return slide_predict(bracket[1])
@@ -531,7 +684,7 @@ def predict_t1_via_slide(readings, slope, t4_hours, t1_hours):
     return b_pred + (a_pred - b_pred) * weight
 
 
-def pool_slope(fits_by_instance):
+def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
     """Pooled per-(day-of-week-specific) SERVICE slope via direct
     optimization against real predictive accuracy - his call, replacing
     an earlier plain-mean-of-per-instance-slopes approach, which
@@ -596,7 +749,18 @@ def pool_slope(fits_by_instance):
     shape as the old groupId-keyed version, just keyed by service now;
     n_instances counts the bound/fallback-eligible instances (matching
     what this return value has always meant here), not the narrower
-    optimization-eligible subset."""
+    optimization-eligible subset. gap_hours (9.0 / slope) is the
+    daytime-rate crossing time only - it's a reported/console-summary
+    number, not persisted or used anywhere else, so it doesn't attempt
+    to account for night_ratio.
+
+    night_start_hour/night_end_hour: passed straight through to every
+    predict_t1_via_slide call in the optimization objective, alongside
+    each instance's OWN resolved night_ratio/departureDt (stashed on its
+    fit dict by compute_all_fits - see that function) - a service's
+    night_ratio is constant across its own instances, but each instance
+    still needs its own real calendar departure_dt (different
+    flightDate)."""
     by_service = defaultdict(list)
     for (service_id, flight_date), fit in fits_by_instance.items():
         if fit is None or fit["n_interior"] < 1:
@@ -631,6 +795,9 @@ def pool_slope(fits_by_instance):
                         pred = predict_t1_via_slide(
                             readings, candidate_slope,
                             T4_TARGET_HOURS_FOR_POOLING, T1_TARGET_HOURS_FOR_POOLING,
+                            night_ratio=f.get("nightRatio", 1.0) or 1.0,
+                            departure_dt=f.get("departureDt"),
+                            night_start_hour=night_start_hour, night_end_hour=night_end_hour,
                         )
                         truth = nearest_reading(readings, T1_TARGET_HOURS_FOR_POOLING)
                         total += (pred - truth[1]) ** 2
@@ -666,11 +833,27 @@ def pool_c1(fits_by_instance):
     return {sid: (float(np.median(c1s)), len(c1s)) for sid, c1s in by_service.items()}
 
 
-def compute_all_fits(conn, rmse_threshold, max_iterations):
+def compute_all_fits(conn, rmse_threshold, max_iterations,
+                      night_start_hour=22, night_end_hour=7):
     """Shared fitting work for all four cabins - the expensive part
     (curve_fit per instance), factored out so both the console report
     (main()) and the persistence step (refresh_decline_curve_coefficients)
     run it exactly once rather than twice.
+
+    Each (day-of-week-specific) SERVICE's night_ratio is resolved once,
+    via the real coefficients hierarchy (DeclineCurveHierarchy.
+    resolve_coefficients) - at the SAME granularity slope/C1 are pooled
+    at (per service, using its representative depTime), not per raw
+    depTime, matching how pool_slope/pool_c1 already treat a service as
+    one unit despite declineCurveCoefficients persisting one row per raw
+    depTime afterward. Currently this always resolves to the global
+    default (tier 4 derivation for night_ratio isn't built yet - see
+    module docstring), but it's wired through the real hierarchy now so
+    a hand-set route/service override already works the moment one
+    exists. Each instance's own departure_dt is reconstructed from its
+    gathered depTime + flightDate and stashed on its fit dict, so
+    downstream consumers (pool_slope's objective) don't need to
+    reconstruct it themselves.
 
     Returns a dict: dep_time_to_service, service_info, and by_cabin:
     {cabin: {instances, fits_by_instance, service_slopes, c1_by_service}}."""
@@ -679,15 +862,38 @@ def compute_all_fits(conn, rmse_threshold, max_iterations):
 
     by_cabin = {}
     for cabin in ["y", "cPlus", "firstOrPS", "d1"]:
+        night_ratio_by_service = {}
+        for sid, (org, dest, dow, rep_time, _cluster_size) in service_info.items():
+            resolved = resolve_coefficients(conn, org, dest, dow, rep_time, cabin)
+            night_ratio_by_service[sid] = resolved.get("nightRatio") or 1.0
+
         instances = gather_instances(matched_rows, dep_time_to_service, cabin)
-        fits_by_instance = {
-            key: fit_instance(inst["readings"], rmse_threshold, max_iterations)
-            for key, inst in instances.items()
-        }
+        fits_by_instance = {}
+        for key, inst in instances.items():
+            sid, flight_date = key
+            night_ratio = night_ratio_by_service.get(sid, 1.0)
+            departure_dt = None
+            if inst["depTime"] is not None:
+                try:
+                    departure_dt = datetime.strptime(
+                        f"{flight_date} {inst['depTime']:04d}", "%Y-%m-%d %H%M"
+                    )
+                except ValueError:
+                    departure_dt = None
+            fit = fit_instance(
+                inst["readings"], rmse_threshold, max_iterations,
+                night_ratio=night_ratio, departure_dt=departure_dt,
+                night_start_hour=night_start_hour, night_end_hour=night_end_hour,
+            )
+            if fit is not None:
+                fit["nightRatio"] = night_ratio
+                fit["departureDt"] = departure_dt
+            fits_by_instance[key] = fit
+
         by_cabin[cabin] = {
             "instances": instances,
             "fits_by_instance": fits_by_instance,
-            "service_slopes": pool_slope(fits_by_instance),
+            "service_slopes": pool_slope(fits_by_instance, night_start_hour, night_end_hour),
             "c1_by_service": pool_c1(fits_by_instance),
         }
 
@@ -703,8 +909,10 @@ def compute_all_fits(conn, rmse_threshold, max_iterations):
 def refresh_decline_curve_coefficients(conn):
     """Recomputes declineCurveCoefficients from scratch (deletes and
     rewrites the whole table, never incremental - same
-    recompute-from-scratch/manual-launcher-button/startup-refresh pattern
-    as FloorEstimates.refresh_floor_estimates). One row per (org, dest,
+    recompute-from-scratch/manual-launcher-button/startup-refresh
+    pattern FloorEstimates.refresh_floor_estimates used to (that module
+    was retired 2026-09-14 along with all glance/cheap-derived
+    estimation - see resolved_cabin_value). One row per (org, dest,
     dayOfWeek, depTime, cabin) actually observed in the data - keyed by
     every individual depTime seen, not a cluster-representative time, so
     a read-time consumer does a plain exact-match lookup with no live
@@ -721,7 +929,10 @@ def refresh_decline_curve_coefficients(conn):
     result, for callers (like main()'s console report) that want the
     underlying per-service numbers without re-running the fit}."""
     settings = load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
-    result = compute_all_fits(conn, settings["stepChangeRmseThreshold"], settings["stepChangeMaxIterations"])
+    result = compute_all_fits(
+        conn, settings["stepChangeRmseThreshold"], settings["stepChangeMaxIterations"],
+        night_start_hour=settings["nightStartHour"], night_end_hour=settings["nightEndHour"],
+    )
 
     conn.execute("DELETE FROM declineCurveCoefficients")
     conn.execute("DELETE FROM declineCurveInstanceFits")
