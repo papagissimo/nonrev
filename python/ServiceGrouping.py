@@ -186,9 +186,9 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
         if p['depTimeMinutes'] != target_service['repMinutes']:
             continue
         measured += 1
-        if p['t1'] >= settings['openThreshold']:
+        if p['t1Old'] >= settings['openThreshold']:
             open_count += 1
-        elif p['t1'] <= settings['fullThreshold']:
+        elif p['t1Old'] <= settings['fullThreshold']:
             full_count += 1
 
     return {'measured': measured, 'open': open_count, 'full': full_count}
