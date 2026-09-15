@@ -104,6 +104,24 @@ def load_d1_map(conn):
     }
 
 
+def resolved_coefficients_for_row(conn, org, dest, dow, dep_time):
+    """Raw resolved coefficients per cabin - c1, slope, nightRatio, and
+    which hierarchy tier each came from (see DeclineCurveHierarchy) -
+    exposed to the client purely for the diagnostic snapshot (see
+    SeatLoggingDialog.html's copyDialogSnapshot). Nothing else consumes
+    this; curve_estimates_for_row does its own separate resolve_coefficients
+    calls rather than sharing these, since the two serve different
+    purposes and there's no meaningful cost to resolving twice here."""
+    result = {}
+    for cabin_key, cabin_col in CABIN_KEY_TO_COLUMN.items():
+        resolved = resolve_coefficients(conn, org, dest, dow, dep_time, cabin_col)
+        result[cabin_key] = {
+            'c1': resolved['c1'], 'slope': resolved['slope'], 'nightRatio': resolved.get('nightRatio'),
+            'c1Tier': resolved['c1Tier'], 'slopeTier': resolved['slopeTier'], 'nightRatioTier': resolved.get('nightRatioTier'),
+        }
+    return result
+
+
 def curve_estimates_for_row(conn, org, dest, dow, dep_time, hours_until_dep, departure_dt,
                              night_start_hour, night_end_hour):
     """The pooled decline curve's own predicted seat count per cabin at
@@ -581,6 +599,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
                 night_start_hour, night_end_hour,
             ),
+            'resolvedCoefficients': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'verdict': c['verdict'], 'verdictType': c['verdictType'],
             'openFull': format_open_full(
@@ -606,6 +625,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                     conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
                     night_start_hour, night_end_hour,
                 ),
+                'resolvedCoefficients': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'verdict': c['verdict'], 'verdictType': c['verdictType'],
                 'openFull': format_open_full(

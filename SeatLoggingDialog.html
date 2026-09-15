@@ -107,7 +107,7 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span>
     </div>
     <div id="routeFlagRow">
       <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
@@ -293,6 +293,90 @@
         var display = (v === undefined || v === null) ? '' : (v > 0 ? '+' + v : String(v));
         return '<div class="row stepCell">' + display + '</div>';
       }).join('');
+    }
+
+    function copyDialogSnapshot() {
+      // Plain-text dump of everything on screen right now, PLUS a few
+      // things that aren't shown but matter for tracking down a real
+      // calculation mistake (his distinction, 2026-09-15: not just fit/
+      // calibration quality) - the resolved c1/slope/nightRatio per
+      // cabin and which hierarchy tier each came from, and whatever's
+      // currently typed but not yet saved. Pulled straight from the
+      // batch data model (row.previousReadings, row.curveEstimate,
+      // row.resolvedCoefficients), never from the rendered HTML or his
+      // compact on-screen encoding - avoids any ambiguity in what a
+      // pasted number actually means, which was the whole point.
+      if (!batch || !batch.rows) return;
+      var btn = document.getElementById('copySnapshotBtn');
+
+      function blankDash(v) {
+        return (v === undefined || v === null || v === '') ? '-' : v;
+      }
+      function round2(v) {
+        return (typeof v === 'number') ? Math.round(v * 100) / 100 : v;
+      }
+
+      var lines = [];
+      lines.push('SeatLoggingDialog snapshot - ' + batch.routeOrg + ' \u2192 ' + batch.routeDest +
+        ', ' + batch.dowDisplay + ' ' + batch.dateDisplay + ' (' + batch.flightDate + ')');
+      lines.push('generated ' + new Date().toString());
+      lines.push('');
+
+      batch.rows.forEach(function (row, i) {
+        lines.push('=== ' + row.depDisplay + '  ' + row.flightNumber +
+          '  hoursUntilDep=' + row.hoursUntilDep +
+          '  aircraftConfig=' + row.aircraftConfig + '  hasD1=' + row.hasD1 +
+          '  departed=' + row.departed + ' ===');
+        lines.push('  flag: ' + blankDash(row.flag));
+        lines.push('  verdict: ' + blankDash(row.verdict) + ' (' + row.verdictType + ')');
+        lines.push('  openFull: open ' + (row.openFull ? row.openFull.openDisplay : '?') +
+          ', full ' + (row.openFull ? row.openFull.fullDisplay : '?'));
+
+        var cur = {};
+        ['y', 'cplus', 'onePS', 'd1'].forEach(function (f) {
+          var el = document.querySelector('input[data-field="' + f + '"][data-i="' + i + '"]');
+          cur[f] = el ? el.value : '';
+        });
+        lines.push('  current input (unsaved): y=' + blankDash(cur.y) + ' cplus=' + blankDash(cur.cplus) +
+          ' onePS=' + blankDash(cur.onePS) + ' d1=' + blankDash(cur.d1));
+
+        var ce = row.curveEstimate || {};
+        lines.push('  curve estimate hint (right now): y=' + blankDash(ce.y) + ' cplus=' + blankDash(ce.cplus) +
+          ' onePS=' + blankDash(ce.onePS) + ' d1=' + blankDash(ce.d1));
+
+        var rc = row.resolvedCoefficients || {};
+        ['y', 'cplus', 'onePS', 'd1'].forEach(function (cabin) {
+          var r = rc[cabin] || {};
+          lines.push('  resolved coefficients [' + cabin + ']: c1=' + blankDash(round2(r.c1)) + ' (' + blankDash(r.c1Tier) + ')' +
+            '  slope=' + blankDash(round2(r.slope)) + ' (' + blankDash(r.slopeTier) + ')' +
+            '  nightRatio=' + blankDash(round2(r.nightRatio)) + ' (' + blankDash(r.nightRatioTier) + ')');
+        });
+
+        lines.push('  previous readings (oldest first):');
+        var readings = (row.previousReadings || []).slice().reverse(); // stored newest-first
+        if (readings.length === 0) {
+          lines.push('    (none logged yet today)');
+        }
+        readings.forEach(function (rd) {
+          var steps = rd.steps || {};
+          lines.push('    hrs=' + rd.hrs.toFixed(2) +
+            '  y=' + blankDash(rd.y) + ' cplus=' + blankDash(rd.cplus) +
+            ' onePS=' + blankDash(rd.onePS) + ' d1=' + blankDash(rd.d1) +
+            '  t1=' + blankDash(round2(rd.t1)) +
+            '  steps: y=' + blankDash(steps.y) + ' cplus=' + blankDash(steps.cplus) +
+            ' onePS=' + blankDash(steps.onePS) + ' d1=' + blankDash(steps.d1));
+        });
+        lines.push('');
+      });
+
+      var text = lines.join('\n');
+      navigator.clipboard.writeText(text).then(function () {
+        var orig = btn.textContent;
+        btn.textContent = '\u2713';
+        setTimeout(function () { btn.textContent = orig; }, 1200);
+      }).catch(function (err) {
+        alert('Copy failed: ' + err.message);
+      });
     }
 
     function formatT1Column(readings) {
