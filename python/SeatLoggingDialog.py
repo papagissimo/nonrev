@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
-from DeclineCurveFit import piecewise_model, effective_hours_between
+from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
 
@@ -104,29 +104,22 @@ def load_d1_map(conn):
     }
 
 
-def resolved_coefficients_for_row(conn, org, dest, dow, dep_time):
-    """Raw resolved coefficients per cabin - c1, slope, nightRatio, and
-    which hierarchy tier each came from (see DeclineCurveHierarchy) -
-    exposed to the client purely for the diagnostic snapshot (see
-    SeatLoggingDialog.html's copyDialogSnapshot). Nothing else consumes
-    this; curve_estimates_for_row does its own separate resolve_coefficients
-    calls rather than sharing these, since the two serve different
-    purposes and there's no meaningful cost to resolving twice here."""
-    result = {}
-    for cabin_key, cabin_col in CABIN_KEY_TO_COLUMN.items():
-        resolved = resolve_coefficients(conn, org, dest, dow, dep_time, cabin_col)
-        result[cabin_key] = {
-            'c1': resolved['c1'], 'slope': resolved['slope'], 'nightRatio': resolved.get('nightRatio'),
-            'c1Tier': resolved['c1Tier'], 'slopeTier': resolved['slopeTier'], 'nightRatioTier': resolved.get('nightRatioTier'),
-        }
-    return result
-
-
 def curve_estimates_for_row(conn, org, dest, dow, dep_time, hours_until_dep, departure_dt,
-                             night_start_hour, night_end_hour):
-    """The pooled decline curve's own predicted seat count per cabin at
-    this exact hoursUntilDep - independent of anything logged or typed
-    so far today. His call, replacing the old glance-driven hint: the
+                             night_start_hour, night_end_hour, today_c1_by_cabin=None):
+    """The decline curve's predicted seat count per cabin at this exact
+    hoursUntilDep. His call (2026-09-15): anchors off today's own
+    readings when there are any - today_c1_by_cabin (from
+    previous_readings_for) is each cabin's C1 as of the most recent
+    reading actually logged today, already slid to stay consistent with
+    that history (see DeclineCurveFit.slide_c1_through_readings) - so
+    the hint can't contradict a reading that's already on the board the
+    way it used to (a real gap, not a design choice: this used to always
+    show the plain pooled curve regardless of today's evidence, which
+    could show a rising hint after a lower actual reading was already
+    logged).
+
+    Falls back to the plain pooled C1 for any cabin with nothing logged
+    yet today, or when today_c1_by_cabin isn't supplied at all - the
     coefficients hierarchy always resolves SOMETHING (falls all the way
     back to the global default if nothing more specific exists yet - see
     DeclineCurveHierarchy), so this always has a number to show, even
@@ -146,13 +139,15 @@ def curve_estimates_for_row(conn, org, dest, dow, dep_time, hours_until_dep, dep
         # detail onto every caller.
         departure_dt = departure_dt.replace(tzinfo=None)
 
+    today_c1_by_cabin = today_c1_by_cabin or {}
     result = {}
     for cabin_key, cabin_col in CABIN_KEY_TO_COLUMN.items():
         resolved = resolve_coefficients(conn, org, dest, dow, dep_time, cabin_col)
         if resolved['slope'] is None or resolved['c1'] is None:
             continue
+        c1 = today_c1_by_cabin.get(cabin_key, resolved['c1'])
         night_ratio = resolved.get('nightRatio') or 1.0
-        val = piecewise_model(hours_until_dep, resolved['c1'], resolved['slope'],
+        val = piecewise_model(hours_until_dep, c1, resolved['slope'],
                                night_ratio, departure_dt, night_start_hour, night_end_hour)
         result[cabin_key] = round(float(val), 1)
     return result
@@ -188,20 +183,30 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     other missing value.
 
     Each row also carries 'steps': a dict cabin_key -> integer step
-    change, one per cabin, his call (2026-09-14) - deliberately NOT the
-    curve fit's own C1-anchored comparison (see DeclineCurveFit.py's
-    step-change detection, or T1Estimator's pooled-curve "expected vs
-    surprising" check): this compares each real actual reading against
-    only the PREVIOUS real actual reading for that same cabin, projected
-    forward by the pooled SLOPE alone (day/night-weighted elapsed time,
-    no C1 anywhere in this calculation) - "given the rate the estimator
-    thinks this cabin declines at, and where it actually was last check,
-    where should it be now, and how far off was the real reading."
-    Positive means more seats opened up than the slope predicted (his
-    example: cancellation); negative means fewer. A cabin's first real
-    actual reading of the day (nothing earlier to compare against) or an
-    unresolvable slope leaves that cabin's entry out of the dict for that
-    row entirely - the client renders that as a blank cell.
+    change, one per cabin - his design (2026-09-15), see
+    DeclineCurveFit.slide_c1_through_readings for the exact mechanism:
+    each cabin's C1 starts at the service's pooled value and slides as
+    needed to stay consistent with that cabin's own readings so far
+    today, in order. An interior reading always pins C1 exactly (the
+    step is however far the PRE-update C1 was predicting). A rail
+    reading (9 or 0) only bounds C1 - if the current running C1 is
+    already consistent with it, the step is 0 regardless of how long
+    the gap since the last reading was; only an inconsistent rail forces
+    a slide, and only in the one direction that resolves it (a 9 can
+    only pull C1 down, a 0 can only push it up). Positive means more
+    seats than the running curve predicted (his example: a
+    cancellation); negative means fewer. A cabin's first reading of the
+    day still gets a real step (measured against the pooled C1, not
+    against nothing) - only a genuinely unresolvable slope leaves that
+    cabin's entry out of the dict entirely, for every row of that cabin.
+
+    Returns (readings, today_c1_by_cabin) - the second element is each
+    cabin's running C1 after folding in every reading logged so far
+    today (or the plain pooled C1 for a cabin with nothing logged yet) -
+    feed this to curve_estimates_for_row to make the hint agree with
+    today's own evidence instead of ignoring it (see that function's
+    docstring for why it used to ignore it and why that was a real gap,
+    not by design past today).
     """
     rows = conn.execute(
         """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1
@@ -224,50 +229,57 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     for reading, t1 in zip(readings, t1_column):
         reading['t1'] = t1
 
-    # Step changes - see docstring above for the exact comparison.
-    # raw_actuals stays index-aligned with readings/rows (built from the
-    # same query, same order).
-    raw_actuals = [{'y': r[1], 'cplus': r[2], 'onePS': r[3], 'd1': r[4]} for r in rows]
-
     day_of_week = datetime.strptime(flight_date, "%Y-%m-%d").strftime("%a")
     decline_settings = load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
     night_start_hour = decline_settings['nightStartHour']
     night_end_hour = decline_settings['nightEndHour']
     try:
-        departure_dt = datetime.strptime(f"{flight_date} {dep_time:04d}", "%Y-%m-%d %H%M")
-    except (ValueError, TypeError):
+        # dep_time is minutes-since-midnight ORIGIN-local (see
+        # et_equivalent_datetime) - NOT HHMM digits, a bug that lived
+        # here from 2026-09-14 to 2026-09-15. ET, not origin-local,
+        # because that's the zone checkTimestamp is actually logged in
+        # (eastern_now()) - what the night-ratio default was calibrated
+        # against.
+        flight_date_obj = datetime.strptime(flight_date, "%Y-%m-%d").date()
+        departure_dt = et_equivalent_datetime(conn, dep_time, org, flight_date_obj).replace(tzinfo=None)
+    except (ValueError, TypeError, UnconfirmedAirportError):
         departure_dt = None
 
-    slope_and_ratio = {}
+    coeffs_by_cabin = {}
     for cabin_key, cabin_col in CABIN_KEY_TO_COLUMN.items():
         resolved = resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin_col)
-        if resolved['slope']:
-            slope_and_ratio[cabin_key] = (resolved['slope'], resolved.get('nightRatio') or 1.0)
+        if resolved['slope'] and resolved['c1'] is not None:
+            coeffs_by_cabin[cabin_key] = (resolved['c1'], resolved['slope'], resolved.get('nightRatio') or 1.0)
 
     for reading in readings:
         reading['steps'] = {}
+    today_c1_by_cabin = {}
 
     if departure_dt is not None:
-        last_seen = {}  # cabin_key -> (hrs, raw actual value)
-        for idx in range(len(readings) - 1, -1, -1):  # oldest to newest
-            hrs = readings[idx]['hrs']
-            for cabin_key in CABIN_KEY_TO_COLUMN:
-                raw_val = raw_actuals[idx][cabin_key]
-                if raw_val is None:
-                    continue
-                prev = last_seen.get(cabin_key)
-                if prev is not None and cabin_key in slope_and_ratio:
-                    prev_hrs, prev_val = prev
-                    slope, night_ratio = slope_and_ratio[cabin_key]
-                    t_prev = departure_dt - timedelta(hours=prev_hrs)
-                    t_now = departure_dt - timedelta(hours=hrs)
-                    elapsed = effective_hours_between(t_prev, t_now, night_ratio,
-                                                       night_start_hour, night_end_hour)
-                    expected = max(0.0, min(9.0, prev_val - slope * elapsed))
-                    readings[idx]['steps'][cabin_key] = int(round(raw_val - expected))
-                last_seen[cabin_key] = (hrs, raw_val)
+        for cabin_key, (pooled_c1, slope, night_ratio) in coeffs_by_cabin.items():
+            # readings is newest-first; slide_c1_through_readings needs
+            # chronological order, and needs to know each pair's
+            # original index to write its step back to the right row.
+            pairs = [
+                (idx, readings[idx]['hrs'], readings[idx][cabin_key])
+                for idx in range(len(readings) - 1, -1, -1)
+                if readings[idx][cabin_key] is not None
+            ]
+            if not pairs:
+                today_c1_by_cabin[cabin_key] = pooled_c1
+                continue
+            slid = slide_c1_through_readings(
+                [(hrs, val) for _, hrs, val in pairs], pooled_c1, slope, night_ratio,
+                departure_dt, night_start_hour, night_end_hour,
+            )
+            for (idx, _, _), (_, step, _) in zip(pairs, slid):
+                readings[idx]['steps'][cabin_key] = step
+            today_c1_by_cabin[cabin_key] = slid[-1][2]  # c1_after of the most recent reading
+    else:
+        for cabin_key, (pooled_c1, _, _) in coeffs_by_cabin.items():
+            today_c1_by_cabin[cabin_key] = pooled_c1
 
-    return readings
+    return readings, today_c1_by_cabin
 
 
 def recent_observations(conn, limit=9):
@@ -586,6 +598,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         # DEP_CUTOFF_MINUTES check above, by construction - nothing here
         # can still be departed. (departed_by_route, computed above, is
         # the one and only place that count is real.)
+        prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'])
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
             'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
@@ -594,12 +607,11 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
-            'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
+            'previousReadings': prev_readings,
             'curveEstimate': curve_estimates_for_row(
                 conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
-                night_start_hour, night_end_hour,
+                night_start_hour, night_end_hour, today_c1,
             ),
-            'resolvedCoefficients': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'verdict': c['verdict'], 'verdictType': c['verdictType'],
             'openFull': format_open_full(
@@ -612,6 +624,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             if c['org'] != next_candidate['org'] or c['dest'] != next_candidate['dest'] \
                     or c['flightDate'] != next_candidate['flightDate']:
                 continue
+            prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'])
             route_rows.append({
                 'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
                 'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
@@ -620,12 +633,11 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'hoursUntilDep': round(c['hoursUntilDep'], 1),
                 'isNext': False,
                 'departed': True,
-                'previousReadings': previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
+                'previousReadings': prev_readings,
                 'curveEstimate': curve_estimates_for_row(
                     conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
-                    night_start_hour, night_end_hour,
+                    night_start_hour, night_end_hour, today_c1,
                 ),
-                'resolvedCoefficients': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'verdict': c['verdict'], 'verdictType': c['verdictType'],
                 'openFull': format_open_full(

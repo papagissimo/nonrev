@@ -179,6 +179,7 @@ import os
 from clustering import cluster_services, service_representative
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from DeclineCurveHierarchy import resolve_coefficients
+from timezones import et_equivalent_datetime, UnconfirmedAirportError
 
 # Anchored to this script's own location, not the current working
 # directory - a bare "nonrev.db" here silently creates a fresh empty
@@ -263,6 +264,100 @@ def build_service_map(rows):
                 dep_time_to_service[(org, dest, dow, t)] = service_id
 
     return dep_time_to_service, service_info
+
+
+def slide_c1_through_readings(readings, pooled_c1, slope, night_ratio, departure_dt,
+                                night_start_hour=22, night_end_hour=7):
+    """Walks one cabin's readings in CHRONOLOGICAL order, starting from
+    pooled_c1 (the service's own resolved anchor - "what the coefficient
+    says"), sliding C1 as needed to stay consistent with each actual
+    reading in turn - his design (2026-09-15), replacing the earlier
+    previous-reading-only projection that both the live Steps column and
+    the curve-estimate hint used to rely on.
+
+    An INTERIOR reading (1-8) pins C1 exactly - only one C1 is
+    consistent with an exact interior value at a known hbd, given a
+    fixed slope - so C1 always moves to match it, and the step is
+    however far the pre-update C1 was predicting.
+
+    A RAIL reading (9 or 0) only BOUNDS C1, it doesn't pin it - a 9 is
+    consistent with any C1 <= this reading's hbd, a 0 with any C1large
+    enough that decline has already completed by this hbd. If the
+    CURRENT running C1 already satisfies that bound, nothing moves and
+    the step is 0 - a rail reading that matches what's already assumed
+    isn't a surprise, no matter how long the gap since the last one was.
+    If it doesn't, C1 slides to the boundary value (the MINIMAL
+    correction that restores consistency) - and each rail type can only
+    ever push C1 in ONE direction: an inconsistent 9 always pulls C1
+    down (the corner must be later than currently modeled - still full
+    when the curve expected some decline), an inconsistent 0 always
+    pushes C1 up (the corner must be earlier - fully declined sooner
+    than the curve expected) - never the reverse for that same rail
+    type, since a rail sits at one of piecewise_model's two clips.
+
+    This is the fix for the old rail-to-rail bug: two honest 9s in a row
+    separated by a long gap used to report a large fabricated step
+    (projecting forward from the first 9 at the pooled slope predicted a
+    big decline that never had to happen, since a rail never actually
+    pinned that decline in the first place) - now correctly reports 0.
+
+    A rail-driven slide is only reported as a step once the cabin has
+    already shown at least one interior reading so far today (his
+    refinement, 2026-09-16: "C1 is allowed to slide without calling that
+    a step change, unless we're already on the slope part"). Before that
+    point, a rail correcting C1 is just ordinary calibration - the
+    running C1 wasn't well-anchored yet anyway, so there's nothing
+    genuinely surprising about it moving; the step is suppressed to 0
+    even when C1 itself still slides underneath. Once an interior
+    reading has confirmed the cabin is genuinely mid-decline, every
+    later inconsistency - rail or interior - is a real step, since by
+    then there's an actual established curve to be surprised against.
+
+    Returns a list, same length/order as readings, of (predicted_before,
+    step, c1_after) - predicted_before is what the running C1 said
+    BEFORE this reading was folded in (the actual "surprise" baseline),
+    step is the rounded seat-equivalent correction (0 for an
+    already-consistent rail, or for a pre-slope rail correction even
+    when C1 does move), c1_after is the running C1 once this reading has
+    been folded in. The LAST entry's c1_after is "today's current best
+    estimate of C1," suitable for projecting forward to right now (see
+    curve_estimates_for_row) - unaffected by the reporting rule above,
+    since C1 itself always slides the same way regardless of whether
+    that slide gets shown as a step."""
+    current_c1 = pooled_c1
+    on_slope = False  # flips true on the first interior reading
+    out = []
+    for hbd, val in readings:
+        predicted = float(piecewise_model(hbd, current_c1, slope, night_ratio, departure_dt,
+                                           night_start_hour, night_end_hour))
+        if val >= 9:
+            if predicted >= 9 - 1e-9:
+                step = 0
+                # already consistent - current_c1 unchanged, a rail
+                # never tightens itself further, no evidence it should.
+            else:
+                step = int(round(val - predicted)) if on_slope else 0
+                current_c1 = solve_c1_from_reading(hbd, 9, slope, night_ratio, departure_dt,
+                                                    night_start_hour, night_end_hour)
+        elif val <= 0:
+            if predicted <= 1e-9:
+                step = 0
+            else:
+                step = int(round(val - predicted)) if on_slope else 0
+                current_c1 = solve_c1_from_reading(hbd, 0, slope, night_ratio, departure_dt,
+                                                    night_start_hour, night_end_hour)
+        else:
+            # Interior - exact pin, always moves, regardless of whether
+            # it happens to be numerically close to the old prediction.
+            # Also the trigger that puts the cabin "on the slope" for
+            # every reading after this one, gating whether a later rail
+            # correction gets reported (see docstring).
+            step = int(round(val - predicted))
+            current_c1 = solve_c1_from_reading(hbd, val, slope, night_ratio, departure_dt,
+                                                night_start_hour, night_end_hour)
+            on_slope = True
+        out.append((predicted, step, current_c1))
+    return out
 
 
 def resolved_cabin_value(row, real_col):
@@ -416,8 +511,15 @@ def solve_c1_from_reading(hbd_r, val_r, slope, night_ratio=1.0, departure_dt=Non
     a numeric root-find instead (scipy.optimize.brentq), bounded
     between the uniform-rate answer (a lower bound - the true C1 can
     only be further out, since night hours count for less) and the
-    all-night worst case."""
+    all-night worst case. A val_r of exactly 9 (target_elapsed == 0) is
+    a trivial closed-form case regardless of night_ratio - c1 == hbd_r,
+    zero elapsed needed - handled directly rather than risking brentq on
+    a degenerate zero-width bracket (this case comes up often now that
+    slide_c1_through_readings calls this for every inconsistent-rail
+    reading, not just interior ones)."""
     target_elapsed = (9.0 - val_r) / slope
+    if target_elapsed <= 0:
+        return hbd_r
     if night_ratio == 1.0 or departure_dt is None:
         return hbd_r + target_elapsed
 
@@ -875,10 +977,20 @@ def compute_all_fits(conn, rmse_threshold, max_iterations,
             departure_dt = None
             if inst["depTime"] is not None:
                 try:
-                    departure_dt = datetime.strptime(
-                        f"{flight_date} {inst['depTime']:04d}", "%Y-%m-%d %H%M"
-                    )
-                except ValueError:
+                    # depTime is minutes-since-midnight ORIGIN-local (see
+                    # timezones.et_equivalent_datetime) - NOT HHMM digits,
+                    # a bug that lived here from 2026-09-14 to 2026-09-15
+                    # and corrupted every night/day classification the
+                    # actual curve fitting made in that window (this is
+                    # THE fitting call site - the one place this bug
+                    # mattered most). ET, not origin-local, because
+                    # that's the zone checkTimestamp is actually logged
+                    # in (eastern_now(), see SeatLoggingDialog.py) - what
+                    # the night-ratio default was calibrated against.
+                    flight_date_obj = datetime.strptime(flight_date, "%Y-%m-%d").date()
+                    org = service_info[sid][0]
+                    departure_dt = et_equivalent_datetime(conn, inst["depTime"], org, flight_date_obj).replace(tzinfo=None)
+                except (ValueError, TypeError, UnconfirmedAirportError):
                     departure_dt = None
             fit = fit_instance(
                 inst["readings"], rmse_threshold, max_iterations,

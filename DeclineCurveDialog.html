@@ -48,7 +48,7 @@
     Every route/service inherits this automatically; edit here to change the starting point everywhere at once.
   </div>
   <table style="max-width:420px;">
-    <thead><tr><th>cabin</th><th>C1 (hrs before dep)</th><th>slope (seats/hr)</th></tr></thead>
+    <thead><tr><th>cabin</th><th>C1 (hrs before dep)</th><th>slope (seats/hr)</th><th>night ratio</th></tr></thead>
     <tbody id="globalBody"></tbody>
   </table>
   <div class="btnRow" style="max-width:420px;">
@@ -63,7 +63,7 @@
   </div>
   <div class="emptyMsg" id="routeEmptyMsg" style="display:none;">No route overrides yet.</div>
   <table id="routeTable">
-    <thead><tr><th>org</th><th>dest</th><th>cabin</th><th>C1 (hrs)</th><th>slope (seats/hr)</th><th></th></tr></thead>
+    <thead><tr><th>org</th><th>dest</th><th>cabin</th><th>C1 (hrs)</th><th>slope (seats/hr)</th><th>night ratio</th><th></th></tr></thead>
     <tbody id="routeBody"></tbody>
   </table>
   <button class="addBtn" onclick="addRouteRow()">+ Add route override</button>
@@ -78,7 +78,7 @@
   </div>
   <div class="emptyMsg" id="serviceEmptyMsg" style="display:none;">No service overrides yet.</div>
   <table id="serviceTable">
-    <thead><tr><th>org</th><th>dest</th><th>dow</th><th>depTime</th><th>cabin</th><th>C1 (hrs)</th><th>slope (seats/hr)</th><th></th></tr></thead>
+    <thead><tr><th>org</th><th>dest</th><th>dow</th><th>depTime</th><th>cabin</th><th>C1 (hrs)</th><th>slope (seats/hr)</th><th>night ratio</th><th></th></tr></thead>
     <tbody id="serviceBody"></tbody>
   </table>
   <button class="addBtn" onclick="addServiceRow()">+ Add service override</button>
@@ -95,7 +95,7 @@
   </div>
   <div class="emptyMsg" id="threshEmptyMsg" style="display:none;">No custom thresholds - everything defaults to 1.</div>
   <table id="threshTable">
-    <thead><tr><th>org</th><th>dest</th><th>dow</th><th>depTime</th><th>cabin</th><th>min C1</th><th>min slope</th><th></th></tr></thead>
+    <thead><tr><th>org</th><th>dest</th><th>dow</th><th>depTime</th><th>cabin</th><th>min C1</th><th>min slope</th><th>min night ratio</th><th></th></tr></thead>
     <tbody id="threshBody"></tbody>
   </table>
   <button class="addBtn" onclick="addThreshRow()">+ Add threshold</button>
@@ -127,12 +127,13 @@
         var body = document.getElementById('globalBody');
         body.innerHTML = '';
         ['y', 'cPlus', 'firstOrPS', 'd1'].forEach(function (cabin) {
-          var entry = result[cabin] || { c1Hours: '', slopeSeatsPerHour: '' };
+          var entry = result[cabin] || { c1Hours: '', slopeSeatsPerHour: '', nightSlopeRatio: '' };
           var tr = document.createElement('tr');
           tr.innerHTML =
             '<td>' + cabin + '</td>' +
             '<td><input type="number" step="0.1" class="colNum globalC1" data-cabin="' + cabin + '" value="' + entry.c1Hours + '"></td>' +
-            '<td><input type="number" step="0.1" class="colNum globalSlope" data-cabin="' + cabin + '" value="' + entry.slopeSeatsPerHour + '"></td>';
+            '<td><input type="number" step="0.1" class="colNum globalSlope" data-cabin="' + cabin + '" value="' + entry.slopeSeatsPerHour + '"></td>' +
+            '<td><input type="number" step="0.01" class="colNum globalNight" data-cabin="' + cabin + '" value="' + entry.nightSlopeRatio + '"></td>';
           body.appendChild(tr);
         });
       }).catch(function (err) { document.getElementById('globalStatus').textContent = 'Error: ' + err.message; });
@@ -147,6 +148,10 @@
       document.querySelectorAll('.globalSlope').forEach(function (el) {
         payload[el.getAttribute('data-cabin')] = payload[el.getAttribute('data-cabin')] || {};
         payload[el.getAttribute('data-cabin')].slopeSeatsPerHour = el.value;
+      });
+      document.querySelectorAll('.globalNight').forEach(function (el) {
+        payload[el.getAttribute('data-cabin')] = payload[el.getAttribute('data-cabin')] || {};
+        payload[el.getAttribute('data-cabin')].nightSlopeRatio = el.value;
       });
       document.getElementById('globalStatus').textContent = 'Saving\u2026';
       fetch('/api/saveDeclineCurveGlobalDefaults', {
@@ -178,7 +183,7 @@
       }).catch(function (err) { document.getElementById('routeStatus').textContent = 'Error: ' + err.message; });
     }
     function addRouteRow() {
-      routeOv.overrides.push({ id: null, org: '', dest: '', cabin: 'y', c1Hours: '', slopeSeatsPerHour: '', deleted: false });
+      routeOv.overrides.push({ id: null, org: '', dest: '', cabin: 'y', c1Hours: '', slopeSeatsPerHour: '', nightSlopeRatio: '', deleted: false });
       renderRoute();
     }
     function renderRoute() {
@@ -196,6 +201,7 @@
           '<td><input type="text" class="colCabin rCabin" data-i="' + i + '" value="' + r.cabin + '"></td>' +
           '<td><input type="number" step="0.1" class="colNum rC1" data-i="' + i + '" value="' + (r.c1Hours == null ? '' : r.c1Hours) + '"></td>' +
           '<td><input type="number" step="0.1" class="colNum rSlope" data-i="' + i + '" value="' + (r.slopeSeatsPerHour == null ? '' : r.slopeSeatsPerHour) + '"></td>' +
+          '<td><input type="number" step="0.01" class="colNum rNight" data-i="' + i + '" value="' + (r.nightSlopeRatio == null ? '' : r.nightSlopeRatio) + '"></td>' +
           '<td><button class="delBtn" data-i="' + i + '">&times;</button></td>';
         body.appendChild(tr);
       });
@@ -207,6 +213,7 @@
       document.querySelectorAll('.rCabin').forEach(el => routeOv.overrides[el.getAttribute('data-i')].cabin = el.value.trim());
       document.querySelectorAll('.rC1').forEach(el => routeOv.overrides[el.getAttribute('data-i')].c1Hours = el.value);
       document.querySelectorAll('.rSlope').forEach(el => routeOv.overrides[el.getAttribute('data-i')].slopeSeatsPerHour = el.value);
+      document.querySelectorAll('.rNight').forEach(el => routeOv.overrides[el.getAttribute('data-i')].nightSlopeRatio = el.value);
       document.getElementById('routeStatus').textContent = 'Saving\u2026';
       fetch('/api/saveDeclineCurveRouteOverrides', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(routeOv)
@@ -227,7 +234,7 @@
       }).catch(function (err) { document.getElementById('serviceStatus').textContent = 'Error: ' + err.message; });
     }
     function addServiceRow() {
-      serviceOv.overrides.push({ id: null, org: '', dest: '', dayOfWeek: 'Mon', depTime: '', cabin: 'y', c1Hours: '', slopeSeatsPerHour: '', deleted: false });
+      serviceOv.overrides.push({ id: null, org: '', dest: '', dayOfWeek: 'Mon', depTime: '', cabin: 'y', c1Hours: '', slopeSeatsPerHour: '', nightSlopeRatio: '', deleted: false });
       renderService();
     }
     function renderService() {
@@ -247,6 +254,7 @@
           '<td><input type="text" class="colCabin sCabin" data-i="' + i + '" value="' + r.cabin + '"></td>' +
           '<td><input type="number" step="0.1" class="colNum sC1" data-i="' + i + '" value="' + (r.c1Hours == null ? '' : r.c1Hours) + '"></td>' +
           '<td><input type="number" step="0.1" class="colNum sSlope" data-i="' + i + '" value="' + (r.slopeSeatsPerHour == null ? '' : r.slopeSeatsPerHour) + '"></td>' +
+          '<td><input type="number" step="0.01" class="colNum sNight" data-i="' + i + '" value="' + (r.nightSlopeRatio == null ? '' : r.nightSlopeRatio) + '"></td>' +
           '<td><button class="delBtn" data-i="' + i + '">&times;</button></td>';
         body.appendChild(tr);
       });
@@ -260,6 +268,7 @@
       document.querySelectorAll('.sCabin').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].cabin = el.value.trim());
       document.querySelectorAll('.sC1').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].c1Hours = el.value);
       document.querySelectorAll('.sSlope').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].slopeSeatsPerHour = el.value);
+      document.querySelectorAll('.sNight').forEach(el => serviceOv.overrides[el.getAttribute('data-i')].nightSlopeRatio = el.value);
       document.getElementById('serviceStatus').textContent = 'Saving\u2026';
       fetch('/api/saveDeclineCurveServiceOverrides', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(serviceOv)
@@ -280,7 +289,7 @@
       }).catch(function (err) { document.getElementById('threshStatus').textContent = 'Error: ' + err.message; });
     }
     function addThreshRow() {
-      thresh.thresholds.push({ id: null, org: '', dest: '', dayOfWeek: 'Mon', depTime: '', cabin: 'y', minInstancesC1: 1, minInstancesSlope: 1, deleted: false });
+      thresh.thresholds.push({ id: null, org: '', dest: '', dayOfWeek: 'Mon', depTime: '', cabin: 'y', minInstancesC1: 1, minInstancesSlope: 1, minInstancesNightSlope: 1, deleted: false });
       renderThresh();
     }
     function renderThresh() {
@@ -300,6 +309,7 @@
           '<td><input type="text" class="colCabin tCabin" data-i="' + i + '" value="' + r.cabin + '"></td>' +
           '<td><input type="number" class="colNum tMinC1" data-i="' + i + '" value="' + r.minInstancesC1 + '"></td>' +
           '<td><input type="number" class="colNum tMinSlope" data-i="' + i + '" value="' + r.minInstancesSlope + '"></td>' +
+          '<td><input type="number" class="colNum tMinNight" data-i="' + i + '" value="' + r.minInstancesNightSlope + '"></td>' +
           '<td><button class="delBtn" data-i="' + i + '">&times;</button></td>';
         body.appendChild(tr);
       });
@@ -313,6 +323,7 @@
       document.querySelectorAll('.tCabin').forEach(el => thresh.thresholds[el.getAttribute('data-i')].cabin = el.value.trim());
       document.querySelectorAll('.tMinC1').forEach(el => thresh.thresholds[el.getAttribute('data-i')].minInstancesC1 = el.value);
       document.querySelectorAll('.tMinSlope').forEach(el => thresh.thresholds[el.getAttribute('data-i')].minInstancesSlope = el.value);
+      document.querySelectorAll('.tMinNight').forEach(el => thresh.thresholds[el.getAttribute('data-i')].minInstancesNightSlope = el.value);
       document.getElementById('threshStatus').textContent = 'Saving\u2026';
       fetch('/api/saveDeclineCurveThresholds', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(thresh)
@@ -340,6 +351,7 @@
 
     function fmtHrs(h) { return h == null ? '\u2014' : h.toFixed(2) + 'h'; }
     function fmtSlope(s) { return s == null ? '\u2014' : s.toFixed(2) + '/h'; }
+    function fmtRatio(r) { return r == null ? '\u2014' : r.toFixed(2); }
     function fmtDep(mins) {
       var hh = Math.floor(mins / 60), mm = mins % 60;
       return (hh < 10 ? '0' : '') + hh + (mm < 10 ? '0' : '') + mm;
@@ -373,10 +385,13 @@
           html += '<div class="cabinLabel">[' + c.cabin + ']</div>';
           html += '<div>derived: C1=' + fmtHrs(c.derivedC1) + ' (n=' + c.nInstancesC1 + ')' +
                   '&nbsp;&nbsp;slope=' + fmtSlope(c.derivedSlope) + ' (n=' + c.nInstancesSlope + ')' +
+                  '&nbsp;&nbsp;night=' + fmtRatio(c.derivedNightSlopeRatio) + ' (n=' + c.nInstancesNightSlope + ')' +
                   '&nbsp;&nbsp;|&nbsp;&nbsp;LIVE: C1=' + fmtHrs(c.liveC1) +
                   ' <span class="tierBadge tier-' + c.liveC1Tier + '">' + c.liveC1Tier + '</span>' +
                   '&nbsp; slope=' + fmtSlope(c.liveSlope) +
                   (c.liveSlopeTier ? ' <span class="tierBadge tier-' + c.liveSlopeTier + '">' + c.liveSlopeTier + '</span>' : '') +
+                  '&nbsp; night=' + fmtRatio(c.liveNightSlopeRatio) +
+                  (c.liveNightSlopeRatioTier ? ' <span class="tierBadge tier-' + c.liveNightSlopeRatioTier + '">' + c.liveNightSlopeRatioTier + '</span>' : '') +
                   '</div>';
           c.instances.forEach(function (inst) {
             var slopeTxt = inst.slopeSeatsPerHour == null

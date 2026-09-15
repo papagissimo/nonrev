@@ -62,6 +62,7 @@ from datetime import datetime
 from DeclineCurveFit import piecewise_model, solve_c1_from_reading, CABIN_COLUMNS
 from DeclineCurveHierarchy import resolve_coefficients
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
+from timezones import et_equivalent_datetime, UnconfirmedAirportError
 
 T1_TARGET_HOURS = 1.0
 
@@ -108,13 +109,23 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
 
     Day/night decline-rate split: each cabin's resolved nightSlopeRatio
     (see load_decline_curve_coefficients_for_flight) and this flight's
-    real departure timestamp (built from flight_date + dep_time) get
-    threaded into every piecewise_model/solve_c1_from_reading call below,
-    so both the "does this rail reading match what the pooled curve
-    already expects" check and the actual slide-and-project-to-T1 step
-    know that overnight hours decline slower - see DeclineCurveFit.py's
-    module docstring for why this is a flat rate change, not a smooth
-    curve."""
+    real departure timestamp get threaded into every piecewise_model/
+    solve_c1_from_reading call below, so both the "does this rail
+    reading match what the pooled curve already expects" check and the
+    actual slide-and-project-to-T1 step know that overnight hours
+    decline slower - see DeclineCurveFit.py's module docstring for why
+    this is a flat rate change, not a smooth curve. departure_dt is
+    built via et_equivalent_datetime (dep_time is minutes-since-
+    midnight ORIGIN-local, same convention as everywhere else that
+    isn't this file's own night/day math - not HHMM digits, a bug that
+    lived here from 2026-09-14 until caught 2026-09-15 via a hint that
+    was visibly wrong), converted to its ET equivalent and then treated
+    as naive from there - ET because that's the zone his own
+    checkTimestamp values are actually logged in (eastern_now()), which
+    is what the night-ratio default was originally calibrated against;
+    using a different zone here than the data it was calibrated on
+    would silently reintroduce the same class of bug this comment is
+    about."""
     day_of_week = datetime.strptime(flight_date, "%Y-%m-%d").strftime("%a")
     coeffs = load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time)
     if not coeffs:
@@ -127,8 +138,9 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
 
     departure_dt = None
     try:
-        departure_dt = datetime.strptime(f"{flight_date} {dep_time:04d}", "%Y-%m-%d %H%M")
-    except (ValueError, TypeError):
+        flight_date_obj = datetime.strptime(flight_date, "%Y-%m-%d").date()
+        departure_dt = et_equivalent_datetime(conn, dep_time, org, flight_date_obj).replace(tzinfo=None)
+    except (ValueError, TypeError, UnconfirmedAirportError):
         departure_dt = None
 
     results = []

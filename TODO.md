@@ -32,6 +32,9 @@ working around it.
 
 ## Decline curve / predictor
 
+- Curve-fitting/prediction algorithm expansion — wants to extend what's
+  built now (night-slope-ratio estimator, C1-sliding step changes); not
+  yet described, pick up next session.
 - C1 right-censoring / golden-ticket window: analyze historically how far
   out from departure the estimator still reliably predicts the eventual T1
   value — i.e. at what hours-before-departure does it stop being
@@ -52,17 +55,6 @@ working around it.
 - Future graph: sequence of detected step changes over time (seats up/down,
   when each occurred) — also a way to quantify how "jumpy" a service is,
   comparable across day-of-week/season/service.
-- Floor-plug-in coefficients table (per-floor-level empirical conditional
-  mean of actual-given-floor, per-cabin) — design settled, not built.
-  Refresh via manual launcher button + incidental refresh at server
-  startup.
-- Asymmetric Beta-distribution refinement of the floor plug-in (mean +
-  concentration via scipy) — designed, deferred further out than the
-  coefficients table above.
-- **Watch item, not a task**: does the new floor-plug-in predictor make
-  T12/T4/T1 estimates correlate better than they have historically? Worth
-  noticing once the coefficients table is live, not something to build
-  toward directly.
 
 ## Verdicts / classification / logging UI
 
@@ -70,6 +62,8 @@ working around it.
   gold-star's "open so far" and green-check's "looking good, keep
   watching") — verdictType still only has info/warning/axed/starred in the
   live schema; not yet designed or added.
+- Small UI tweaks to the logging dialog — mentioned, not yet described;
+  pick up before the algorithmic work next session.
 - Second "previous readings" block showing last few times a flight was
   read with final resolved values *across days*, not just today — the
   existing Prev column (`previous_readings_for`) is scoped to one
@@ -151,6 +145,11 @@ working around it.
 - Feeding cheap-glance data through FloorEstimates' conditional-mean
   substitution to anchor the T1 estimator — real actual value or the raw
   cheap-glance value itself now, never a laundered decimal guess.
+- Floor-plug-in coefficients table (per-floor conditional mean of
+  actual-given-floor) and its Beta-distribution refinement — superseded;
+  FloorEstimates.py and all glance-derived estimation fully retired
+  2026-09-14, and the cheap-glancing habit it depended on is already
+  dead below.
 - Cheap-glancing (as a cadence habit) for the purpose of catching C1/C2
   corners — the curve fit doesn't need the corner observed at all
   (left/right-censored instances fit fine from interior data alone);

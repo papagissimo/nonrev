@@ -35,15 +35,20 @@ def get_global_defaults(conn):
 
 
 def save_global_defaults(conn, payload):
-    """payload: {cabin: {c1Hours, slopeSeatsPerHour}, ...} - one entry
-    per cabin, all four required (this tier has no NULLs; it's the
-    fallback of last resort, so it always needs a real number)."""
+    """payload: {cabin: {c1Hours, slopeSeatsPerHour, nightSlopeRatio}, ...}
+    - one entry per cabin, all three required (this tier has no NULLs;
+    it's the fallback of last resort, so it always needs a real
+    number). nightSlopeRatio added 2026-09-16 - previously silently
+    dropped on every save here (a real bug: saving global defaults
+    through this dialog would have erased the night-ratio default,
+    since it round-tripped only c1Hours/slopeSeatsPerHour)."""
     cleaned = {}
     for cabin in CABINS:
         entry = payload.get(cabin) or {}
         cleaned[cabin] = {
             'c1Hours': float(entry['c1Hours']),
             'slopeSeatsPerHour': float(entry['slopeSeatsPerHour']),
+            'nightSlopeRatio': float(entry['nightSlopeRatio']),
         }
     save_settings(conn, cleaned, key=DECLINE_CURVE_GLOBAL_DEFAULTS_KEY)
     return cleaned
@@ -53,25 +58,27 @@ def save_global_defaults(conn, payload):
 
 def get_route_overrides(conn):
     rows = conn.execute(
-        "SELECT rowid, org, dest, cabin, c1Hours, slopeSeatsPerHour FROM declineCurveRouteOverrides ORDER BY org, dest, cabin"
+        "SELECT rowid, org, dest, cabin, c1Hours, slopeSeatsPerHour, nightSlopeRatio FROM declineCurveRouteOverrides ORDER BY org, dest, cabin"
     ).fetchall()
     return {'overrides': [
-        {'id': rid, 'org': org, 'dest': dest, 'cabin': cabin, 'c1Hours': c1, 'slopeSeatsPerHour': slope}
-        for rid, org, dest, cabin, c1, slope in rows
+        {'id': rid, 'org': org, 'dest': dest, 'cabin': cabin, 'c1Hours': c1, 'slopeSeatsPerHour': slope, 'nightSlopeRatio': night}
+        for rid, org, dest, cabin, c1, slope, night in rows
     ]}
 
 
 def save_route_overrides(conn, payload):
     """payload: { overrides: [{ id (existing rowid, or null for new),
-    org, dest, cabin, c1Hours, slopeSeatsPerHour (either independently
-    null/blank - falls through to the next tier down), deleted (bool) }] }"""
+    org, dest, cabin, c1Hours, slopeSeatsPerHour, nightSlopeRatio (each
+    independently null/blank - falls through to the next tier down),
+    deleted (bool) }] }"""
     for entry in payload.get('overrides', []):
         if not entry.get('id') or entry.get('deleted'):
             continue
         conn.execute(
-            "UPDATE declineCurveRouteOverrides SET org=?, dest=?, cabin=?, c1Hours=?, slopeSeatsPerHour=? WHERE rowid=?",
+            "UPDATE declineCurveRouteOverrides SET org=?, dest=?, cabin=?, c1Hours=?, slopeSeatsPerHour=?, nightSlopeRatio=? WHERE rowid=?",
             (entry['org'], entry['dest'], entry['cabin'],
              _blank_to_none(entry.get('c1Hours')), _blank_to_none(entry.get('slopeSeatsPerHour')),
+             _blank_to_none(entry.get('nightSlopeRatio')),
              entry['id']),
         )
     for entry in payload.get('overrides', []):
@@ -80,9 +87,10 @@ def save_route_overrides(conn, payload):
     for entry in payload.get('overrides', []):
         if not entry.get('id') and not entry.get('deleted'):
             conn.execute(
-                "INSERT INTO declineCurveRouteOverrides (org, dest, cabin, c1Hours, slopeSeatsPerHour) VALUES (?,?,?,?,?)",
+                "INSERT INTO declineCurveRouteOverrides (org, dest, cabin, c1Hours, slopeSeatsPerHour, nightSlopeRatio) VALUES (?,?,?,?,?,?)",
                 (entry['org'], entry['dest'], entry['cabin'],
-                 _blank_to_none(entry.get('c1Hours')), _blank_to_none(entry.get('slopeSeatsPerHour'))),
+                 _blank_to_none(entry.get('c1Hours')), _blank_to_none(entry.get('slopeSeatsPerHour')),
+                 _blank_to_none(entry.get('nightSlopeRatio'))),
             )
     conn.commit()
     return {'savedCount': len(payload.get('overrides', []))}
@@ -92,13 +100,13 @@ def save_route_overrides(conn, payload):
 
 def get_service_overrides(conn):
     rows = conn.execute(
-        """SELECT rowid, org, dest, dayOfWeek, depTime, cabin, c1Hours, slopeSeatsPerHour
+        """SELECT rowid, org, dest, dayOfWeek, depTime, cabin, c1Hours, slopeSeatsPerHour, nightSlopeRatio
            FROM declineCurveServiceOverrides ORDER BY org, dest, dayOfWeek, depTime, cabin"""
     ).fetchall()
     return {'overrides': [
         {'id': rid, 'org': org, 'dest': dest, 'dayOfWeek': dow, 'depTime': dep_time,
-         'cabin': cabin, 'c1Hours': c1, 'slopeSeatsPerHour': slope}
-        for rid, org, dest, dow, dep_time, cabin, c1, slope in rows
+         'cabin': cabin, 'c1Hours': c1, 'slopeSeatsPerHour': slope, 'nightSlopeRatio': night}
+        for rid, org, dest, dow, dep_time, cabin, c1, slope, night in rows
     ]}
 
 
@@ -109,10 +117,11 @@ def save_service_overrides(conn, payload):
             continue
         conn.execute(
             """UPDATE declineCurveServiceOverrides
-               SET org=?, dest=?, dayOfWeek=?, depTime=?, cabin=?, c1Hours=?, slopeSeatsPerHour=?
+               SET org=?, dest=?, dayOfWeek=?, depTime=?, cabin=?, c1Hours=?, slopeSeatsPerHour=?, nightSlopeRatio=?
                WHERE rowid=?""",
             (entry['org'], entry['dest'], entry['dayOfWeek'], int(entry['depTime']), entry['cabin'],
              _blank_to_none(entry.get('c1Hours')), _blank_to_none(entry.get('slopeSeatsPerHour')),
+             _blank_to_none(entry.get('nightSlopeRatio')),
              entry['id']),
         )
     for entry in payload.get('overrides', []):
@@ -122,9 +131,10 @@ def save_service_overrides(conn, payload):
         if not entry.get('id') and not entry.get('deleted'):
             conn.execute(
                 """INSERT INTO declineCurveServiceOverrides
-                   (org, dest, dayOfWeek, depTime, cabin, c1Hours, slopeSeatsPerHour) VALUES (?,?,?,?,?,?,?)""",
+                   (org, dest, dayOfWeek, depTime, cabin, c1Hours, slopeSeatsPerHour, nightSlopeRatio) VALUES (?,?,?,?,?,?,?,?)""",
                 (entry['org'], entry['dest'], entry['dayOfWeek'], int(entry['depTime']), entry['cabin'],
-                 _blank_to_none(entry.get('c1Hours')), _blank_to_none(entry.get('slopeSeatsPerHour'))),
+                 _blank_to_none(entry.get('c1Hours')), _blank_to_none(entry.get('slopeSeatsPerHour')),
+                 _blank_to_none(entry.get('nightSlopeRatio'))),
             )
     conn.commit()
     return {'savedCount': len(payload.get('overrides', []))}
@@ -134,31 +144,33 @@ def save_service_overrides(conn, payload):
 
 def get_thresholds(conn):
     rows = conn.execute(
-        """SELECT rowid, org, dest, dayOfWeek, depTime, cabin, minInstancesC1, minInstancesSlope
+        """SELECT rowid, org, dest, dayOfWeek, depTime, cabin, minInstancesC1, minInstancesSlope, minInstancesNightSlope
            FROM declineCurveThresholds ORDER BY org, dest, dayOfWeek, depTime, cabin"""
     ).fetchall()
     return {'thresholds': [
         {'id': rid, 'org': org, 'dest': dest, 'dayOfWeek': dow, 'depTime': dep_time,
-         'cabin': cabin, 'minInstancesC1': min_c1, 'minInstancesSlope': min_slope}
-        for rid, org, dest, dow, dep_time, cabin, min_c1, min_slope in rows
+         'cabin': cabin, 'minInstancesC1': min_c1, 'minInstancesSlope': min_slope, 'minInstancesNightSlope': min_night}
+        for rid, org, dest, dow, dep_time, cabin, min_c1, min_slope, min_night in rows
     ], 'defaultMinInstances': DEFAULT_MIN_INSTANCES}
 
 
 def save_thresholds(conn, payload):
-    """Same pattern again. minInstancesC1/minInstancesSlope default to
-    DEFAULT_MIN_INSTANCES (1) if left blank - a row only needs to exist
-    at all when he wants something OTHER than the default, e.g. cranked
-    way up (1000) as the kill-switch escape hatch."""
+    """Same pattern again. minInstancesC1/minInstancesSlope/
+    minInstancesNightSlope default to DEFAULT_MIN_INSTANCES (1) if left
+    blank - a row only needs to exist at all when he wants something
+    OTHER than the default, e.g. cranked way up (1000) as the
+    kill-switch escape hatch."""
     for entry in payload.get('thresholds', []):
         if not entry.get('id') or entry.get('deleted'):
             continue
         conn.execute(
             """UPDATE declineCurveThresholds
-               SET org=?, dest=?, dayOfWeek=?, depTime=?, cabin=?, minInstancesC1=?, minInstancesSlope=?
+               SET org=?, dest=?, dayOfWeek=?, depTime=?, cabin=?, minInstancesC1=?, minInstancesSlope=?, minInstancesNightSlope=?
                WHERE rowid=?""",
             (entry['org'], entry['dest'], entry['dayOfWeek'], int(entry['depTime']), entry['cabin'],
              int(entry.get('minInstancesC1') or DEFAULT_MIN_INSTANCES),
              int(entry.get('minInstancesSlope') or DEFAULT_MIN_INSTANCES),
+             int(entry.get('minInstancesNightSlope') or DEFAULT_MIN_INSTANCES),
              entry['id']),
         )
     for entry in payload.get('thresholds', []):
@@ -168,11 +180,12 @@ def save_thresholds(conn, payload):
         if not entry.get('id') and not entry.get('deleted'):
             conn.execute(
                 """INSERT INTO declineCurveThresholds
-                   (org, dest, dayOfWeek, depTime, cabin, minInstancesC1, minInstancesSlope)
-                   VALUES (?,?,?,?,?,?,?)""",
+                   (org, dest, dayOfWeek, depTime, cabin, minInstancesC1, minInstancesSlope, minInstancesNightSlope)
+                   VALUES (?,?,?,?,?,?,?,?)""",
                 (entry['org'], entry['dest'], entry['dayOfWeek'], int(entry['depTime']), entry['cabin'],
                  int(entry.get('minInstancesC1') or DEFAULT_MIN_INSTANCES),
-                 int(entry.get('minInstancesSlope') or DEFAULT_MIN_INSTANCES)),
+                 int(entry.get('minInstancesSlope') or DEFAULT_MIN_INSTANCES),
+                 int(entry.get('minInstancesNightSlope') or DEFAULT_MIN_INSTANCES)),
             )
     conn.commit()
     return {'savedCount': len(payload.get('thresholds', []))}
@@ -215,14 +228,14 @@ def get_service_detail(conn, org, dest, day_of_week):
         cabins_out = []
         for cabin in CABINS:
             agg = conn.execute(
-                """SELECT c1Hours, slopeSeatsPerHour, nInstancesC1, nInstancesSlope
+                """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio, nInstancesC1, nInstancesSlope, nInstancesNightSlope
                    FROM declineCurveCoefficients
                    WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
                 (org, dest, day_of_week, dep_time, cabin),
             ).fetchone()
             if agg is None:
                 continue
-            c1, slope, n_c1, n_slope = agg
+            c1, slope, night, n_c1, n_slope, n_night = agg
             resolved = resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin)
 
             instances = conn.execute(
@@ -235,9 +248,11 @@ def get_service_detail(conn, org, dest, day_of_week):
 
             cabins_out.append({
                 'cabin': cabin,
-                'derivedC1': c1, 'derivedSlope': slope, 'nInstancesC1': n_c1, 'nInstancesSlope': n_slope,
+                'derivedC1': c1, 'derivedSlope': slope, 'derivedNightSlopeRatio': night,
+                'nInstancesC1': n_c1, 'nInstancesSlope': n_slope, 'nInstancesNightSlope': n_night,
                 'liveC1': resolved['c1'], 'liveC1Tier': resolved['c1Tier'],
                 'liveSlope': resolved['slope'], 'liveSlopeTier': resolved['slopeTier'],
+                'liveNightSlopeRatio': resolved.get('nightRatio'), 'liveNightSlopeRatioTier': resolved.get('nightRatioTier'),
                 'instances': [
                     {'flightDate': fd, 'c1Hours': ic1, 'slopeSeatsPerHour': islope,
                      'nInterior': n_int, 'nStepChanges': n_step}
