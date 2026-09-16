@@ -294,8 +294,8 @@
       // terminology (9/slope, the daytime-rate crossing duration) -
       // not slope itself, and not persisted, purely a display number.
       if (!hint) return '';
-      var c1 = hint.c1 == null ? '\u2014' : hint.c1.toFixed(1);
-      var gap = hint.gap == null ? '\u2014' : hint.gap.toFixed(1);
+      var c1 = formatHoursValue(hint.c1);
+      var gap = formatHoursValue(hint.gap);
       var ratio = hint.nightRatio == null ? '\u2014' : hint.nightRatio.toFixed(2);
       return '<div class="coefHint">C1=' + c1 + '</div>' +
         '<div class="coefHint">gap=' + gap + '</div>' +
@@ -311,6 +311,20 @@
       return (Math.abs(est) < 10) ? String(Math.round(est * 10) / 10) : String(Math.round(est));
     }
 
+    function formatHoursValue(v) {
+      // Same precision convention as formatT1Value (2026-09-16, his
+      // ask - originally C1-only, extended same session to gap too
+      // once he noticed it had the identical problem): one decimal
+      // place below 10 hours, whole number at 10 and above - "9.9" is
+      // meaningful, "14.3" isn't. Rounds to one decimal FIRST, then
+      // checks that against 10 - so 9.96 (which would round to "10.0")
+      // correctly falls into the whole-number branch instead of
+      // printing a misleading "10.0".
+      if (v === null || v === undefined) return '\u2014';
+      var oneDecimal = Math.round(v * 10) / 10;
+      return (Math.abs(oneDecimal) < 10) ? oneDecimal.toFixed(1) : String(Math.round(v));
+    }
+
     function formatC1AfterColumn(readings, cabinKey) {
       // Running C1 (hours) right after each reading's slide, one row
       // per previous reading - same data source as the Steps column
@@ -322,7 +336,7 @@
       if (!readings || readings.length === 0) return '';
       return readings.map(function (rd) {
         var v = rd.c1After ? rd.c1After[cabinKey] : undefined;
-        var display = (v === undefined || v === null) ? '' : v.toFixed(1);
+        var display = (v === undefined || v === null) ? '' : formatHoursValue(v);
         return '<div class="row c1AfterCell">' + display + '</div>';
       }).join('');
     }
