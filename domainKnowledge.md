@@ -32,6 +32,19 @@ A *route* is just org+dest. A *service* is a specific recurring departure
 at roughly a given time of day — a route can carry several distinct
 services. Delta's flight number is neither, and is disregarded entirely.
 
+## Schedule volatility
+
+Delta's published schedule is a live, wobbling thing, not a durable
+record. It's reliably accurate for the current day, but a service's
+departure time can drift from one week to the next — a few minutes,
+occasionally more — and there's no way to reconstruct what the schedule
+actually said on some past date; it isn't recorded anywhere once it's
+gone. This is part of why a service is identified by clustered
+departure time rather than by looking up "the" scheduled time for a
+route: there is no single fixed value to look up. A logged
+observation's own recorded departure time is the only trustworthy
+record of what the schedule said at the moment it was taken.
+
 ## The seat-count ceiling
 
 Delta's site (and every airline's) caps displayed seat counts at 9 — the

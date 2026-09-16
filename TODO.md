@@ -9,51 +9,65 @@ working around it.
 
 ## Core dialogs / SQLite rewrite
 
-- **hoursBeforeDep orphan-fix — revive.** Real priority - keeps turning up
-  during actual logging and is misleading when it does. The shipped design
-  (each observation freezes its own depTime/hoursBeforeDep at logging time,
-  schedule edits never touch already-logged observations) doesn't hold up
-  in practice — confirmed 2026-09-10 when editing a schedule row ~2.5 min
-  after logging against it produced a real orphaned reading. Accepted-risk
-  call is retracted. Build the original parked design instead: on
-  schedule-edit save, diff the route+day's depTimes before vs. after the
-  edit; any depTime present before but missing after is an unambiguous
-  orphan, surfaced (count + old time) for delete/manual reassign — no
-  fuzzy matching needed. See
-  `HANDOFF_rationalwaytoeditfltschedandfixorphans.md` for the original
-  design (whether hoursBeforeDep itself should also move to computed-live
-  rather than stored is part of that same doc — worth revisiting the full
-  scope, not just the orphan-surfacing piece).
+- **hoursBeforeDep computed-live for TODAY only (not stored, or blindly
+  always-live either) — refined 2026-09-16, still fully open.** Orphan
+  DETECTION is done (see above) - this is the separate, bigger piece.
+  The recovered handoff doc's original design said "stop storing
+  hoursBeforeDep, always compute live from checkTimestamp + current
+  depTime" - discussed further and that's WRONG as stated: a service's
+  schedule genuinely wobbles week to week (a ~9:30am departure might be a
+  few minutes different next week), and he's explicit he has no interest
+  in reconstructing Delta's schedule history - so recomputing an OLD
+  reading's hoursBeforeDep against TODAY's schedule would silently
+  falsify history, not heal it. The actual rule, confirmed with him:
+  - flightDate == today: compute live, from checkTimestamp + CURRENT
+    depTime (same-day schedule corrections are real and should be
+    reflected in same-day cadence/Prev-column lookups).
+  - flightDate in the past: NEVER touch live flightSchedule. The value
+    frozen at logging time already IS the correct historical fact - it's
+    what was true when that reading was taken, not "Delta's schedule
+    that day." Recomputing it against today's schedule would be actively
+    wrong, not a fix.
+  - Practically: keep storing hoursBeforeDep exactly as today for
+    already-logged rows (already correct, permanent once the flightDate
+    passes). Add a live-computed path ONLY for today's-flightDate
+    same-day lookups (Prev column, cadence eligibility in
+    SeatLoggingDialog.py). Curve fitting, GraphObservations.py, and
+    ServiceGrouping.py's pooled open/full counts keep reading the stored
+    value unchanged - they work across many past flightDates, exactly
+    the case that must never touch live schedule. Not started.
+- **confirmedAirports gate not yet in FlightScheduleDialog** — the
+  confirm-before-trusting-a-timezone check (confirm_airports.py) only
+  runs from the logging-entry flow. FlightScheduleDialog is the more
+  natural place a genuinely new route/airport gets added, but doesn't
+  run the check yet. Not urgent.
 - **Delayed-flight departure time** — very low priority. Doesn't come up
   often enough in practice to be worth designing for. Leave alone until it
   actually becomes a problem.
 
-## Service identity (raw depTime vs. clustered service) — NOT dead, keep pushing
+## Service identity (raw depTime vs. clustered service) — CLOSED 2026-09-16
 
-This keeps resurfacing session after session and he's explicit: raw
-departure time and flight number have both proven unreliable as identity
-anchors; a clustered SERVICE (org, dest, dayOfWeek, banded depTime) is the
-one thing that's held up rock-solid every time it's been checked. The goal
-is for every consumer to key on service, not raw depTime, consistently -
-this is NOT about adding a persisted `services` table (that idea stays
-killed, see Dead ideas below) - service identity stays a live, computed
-value, recomputed via clustering.py whenever needed. What's actually wanted:
-- Raw depTime keeps getting logged on every observation, unchanged - he
-  needs it to cross-check against Delta's own site while logging, and
-  T-45min cutoff math needs the real scheduled time, not a rounded band
-  representative.
-- But every consumer that currently keys lookups/aggregation on exact
-  depTime should key on the clustered service instead, wherever that's not
-  already true.
-- Fixed this session (2026-09-16): DeclineCurveHierarchy.resolve_coefficients
-  now falls back to nearest-depTime-in-cluster on an exact-match miss;
-  DeclineCurveDialog's visibility view now groups by clustered service
-  instead of listing raw depTime rows separately.
-- Still NOT done: cadence (`get_next_batch`) doesn't have per-service
-  earliest-checked/earliest-crossing lookups yet - undecided whether that's
-  live clustering inline or something else. Audit remaining consumers for
-  the same raw-depTime-vs-clustered-service gap before considering this
-  closed - don't assume anywhere is fixed without checking.
+This resurfaced across multiple sessions as a real, recurring frustration.
+Closed properly this session, not just patched again - audited all 14
+files in python/ touching depTime, found and fixed the two real remaining
+gaps (DeclineCurveHierarchy's tier-3 service override and tier-4
+threshold gate, same exact-match-only pattern tier 4 itself had before
+this session - all three now share one helper, `_exact_or_nearest_row`),
+regrouped both visibility views (DeclineCurveDialog, ShowServiceDetail.py)
+by clustered service. Checked `get_next_batch` specifically - it does NOT
+need a per-service lookup; the belief that it did was carried over from
+the OLD corner-chasing cadence design (already dead, see Dead ideas
+below), and the fixed-checkpoint cadence actually live now is fully
+self-contained per flight-day.
+
+Raw depTime correctly stays exact and untouched by any of this in
+FlightScheduleDialog.py (schedule entry) and ObservationsBrowser.py
+(browsing real logged rows) - those are legitimately per-exact-flight
+tools, not pooling consumers, and he needs the raw value there to
+cross-check against Delta's site and for T-45min cutoff math.
+
+Don't re-raise this topic on general principle just because it's come up
+before - a NEW, specific symptom is the bar for reopening it.
 
 ## Decline curve / predictor
 
@@ -85,6 +99,11 @@ value, recomputed via clustering.py whenever needed. What's actually wanted:
 
 ## Verdicts / classification / logging UI
 
+- Verdict-text granularity not settled: floated a scheme with "full so
+  far"/"open so far" (fewer than 3 good observations, at least 1) versus
+  plain "full"/"open" (3+, unanimous), plus a possible "middling"/
+  "middling so far" tier for real spread. Wants to test against real
+  service data before committing to any of it.
 - Second glyph for "stop looking, this one's a lock" (distinct from
   gold-star's "open so far" and green-check's "looking good, keep
   watching") — verdictType still only has info/warning/axed/starred in the
@@ -92,11 +111,27 @@ value, recomputed via clustering.py whenever needed. What's actually wanted:
 
 ## Graphing — low priority, not actively working this area right now
 
-- T1 weekday bar chart (Mon-Sun per service, gray banding, chevrons for
-  ceiling reads, ghost bar for no-observation days) — mockup approved,
-  still not built. GraphObservations.html currently has three other charts
-  (heat map, per-date curves, seats-vs-hours-to-departure) but not this
-  one.
+- T1 weekday bar chart (Mon-Sun per service) — mockup approved, still not
+  built. GraphObservations.html currently has three other charts (heat
+  map, per-date curves, seats-vs-hours-to-departure) but not this one.
+  Approved spec:
+  - Gray banding between adjacent weekday groups; weeks aligned
+    left-to-right consistently across every weekday's group (same week
+    index = same calendar week no matter which day).
+  - One shared fixed y-axis across all such charts, capped at 20.
+  - Minimum bar size (~0.5 magnitude, straddling zero) so true-zero and
+    near-zero readings stay visible instead of collapsing to an
+    invisible sliver — doesn't matter whether the sliver sits slightly
+    above or below zero.
+  - Ceiling glyph: stacked chevrons above a bar, same color as the bar
+    (not a separate color), one chevron per seat-class reading that hit
+    the 9-seat ceiling feeding that estimate — scales to 2 or 3 stacked.
+  - No-observation slot: dim/translucent ghost bar in the same color as
+    real bars, height = that weekday's average across whichever OTHER
+    weeks have data (not an average across other days within the
+    missing week), with a gray "?" centered in it; the "?"'s opacity
+    fades as its value approaches the top of the y-axis (never fully to
+    zero), not fading within the bar's own height.
 - Step-change sequence graph: sequence of detected step changes over time
   (seats up/down, when each occurred) - also a way to quantify how "jumpy"
   a service is, comparable across day-of-week/season/service.
@@ -185,6 +220,13 @@ value, recomputed via clustering.py whenever needed. What's actually wanted:
   eyeball check before locking in a clustering threshold — not worth the
   attention given ~7000 observations; clustering has held up reliably
   every time it's actually been checked.
+- Automated full/open/iffy classification via fixed thresholds (sum of
+  4 cabins, needs >=3 qualifying dates, unanimous <=2 full />=8 open,
+  writing into a `classification` column keyed on flightNumber+dayOfWeek)
+  — superseded by the free-text `verdict` + `verdictType` glyph system
+  (info/warning/axed/starred) actually in the live schema. Confirmed no
+  `classification` column exists anymore. Classification is a human
+  judgment call now, not an automated write.
 - 3-unanimous-readings verdict threshold — repeatedly blocked acting on
   visible patterns, killed outright.
 - Skip-a-route-to-avoid-rechecking-it-because-it's-full — obsolete, he
