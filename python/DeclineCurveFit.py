@@ -172,7 +172,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, time as dt_time
 
 import numpy as np
-from scipy.optimize import curve_fit, minimize_scalar, brentq
+from scipy.optimize import minimize_scalar, brentq
 
 import os
 
@@ -187,6 +187,15 @@ from timezones import et_equivalent_datetime, UnconfirmedAirportError
 # if run from inside python/), rather than erroring. Matches the
 # pattern server.py/create_db.py/confirm_airports.py already use.
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nonrev.db')
+
+# Safety cap on how far solve_c1_from_reading/solve_zero_crossing_from_
+# reading will widen their brentq search bracket - night_ratio can now
+# solve arbitrarily close to 0 (an instance that's essentially flat
+# overnight), and 1/night_ratio blowing up would otherwise overflow
+# datetime arithmetic. 90 days is generous relative to any real
+# hoursBeforeDep value in this project, never actually binding for a
+# realistic instance - it only guards the degenerate case.
+MAX_BRACKET_SEARCH_HOURS = 24 * 90
 
 CABIN_COLUMNS = {
     "y": "y",
@@ -443,6 +452,20 @@ def _night_overlap_hours(t_start, t_end, night_start_hour, night_end_hour):
     return total
 
 
+def _day_night_hours_between(t_start, t_end, night_start_hour, night_end_hour):
+    """Same window-overlap accounting as effective_hours_between, but
+    returns the day/night components SEPARATELY rather than blending
+    them with a ratio - needed now that fit_slope_and_night_ratio solves
+    for day-slope and night-slope as two independent linear unknowns
+    instead of taking night_ratio as a fixed external input. Order of
+    t_start/t_end doesn't matter - always returns non-negative
+    (day_hours, night_hours)."""
+    lo, hi = (t_start, t_end) if t_start <= t_end else (t_end, t_start)
+    total_hours = (hi - lo).total_seconds() / 3600.0
+    night_hours = _night_overlap_hours(lo, hi, night_start_hour, night_end_hour)
+    return total_hours - night_hours, night_hours
+
+
 def effective_hours_between(t_start, t_end, night_ratio, night_start_hour=22, night_end_hour=7):
     """Elapsed hours between two real local timestamps, with hours
     inside the nightly [night_start_hour, night_end_hour) window counted
@@ -517,7 +540,7 @@ def solve_c1_from_reading(hbd_r, val_r, slope, night_ratio=1.0, departure_dt=Non
     a degenerate zero-width bracket (this case comes up often now that
     slide_c1_through_readings calls this for every inconsistent-rail
     reading, not just interior ones)."""
-    target_elapsed = (9.0 - val_r) / slope
+    target_elapsed = min((9.0 - val_r) / slope, MAX_BRACKET_SEARCH_HOURS)
     if target_elapsed <= 0:
         return hbd_r
     if night_ratio == 1.0 or departure_dt is None:
@@ -529,7 +552,7 @@ def solve_c1_from_reading(hbd_r, val_r, slope, night_ratio=1.0, departure_dt=Non
         return effective_hours_between(t_c1, t_r, night_ratio, night_start_hour, night_end_hour) - target_elapsed
 
     lo = hbd_r
-    hi = hbd_r + target_elapsed / max(night_ratio, 1e-6)
+    hi = hbd_r + min(target_elapsed / max(night_ratio, 1e-6), MAX_BRACKET_SEARCH_HOURS)
     if hi <= lo:
         hi = lo + 1e-3
     try:
@@ -538,6 +561,38 @@ def solve_c1_from_reading(hbd_r, val_r, slope, night_ratio=1.0, departure_dt=Non
         # Bracket failed (shouldn't happen given the bounds above, but
         # falling back to the uniform-rate answer beats crashing).
         return hbd_r + target_elapsed
+
+
+def solve_zero_crossing_from_reading(hbd_r, val_r, slope, night_ratio=1.0, departure_dt=None,
+                                      night_start_hour=22, night_end_hour=7):
+    """Mirror of solve_c1_from_reading for the BOTTOM corner: given a
+    reading (hbd_r, val_r) known to sit at or before the zero-crossing
+    (still declining, not yet at 0), solves the hoursBeforeDep at which
+    the model reaches exactly 0 at this slope/night_ratio - i.e. walks
+    FORWARD in time (toward departure, decreasing hbd) instead of
+    backward, otherwise the same closed-form-when-ratio-1,
+    brentq-otherwise structure. A val_r of exactly 0 (target_elapsed ==
+    0) returns hbd_r directly, same degenerate-bracket reasoning as
+    solve_c1_from_reading's val_r == 9 case."""
+    target_elapsed = min(val_r / slope, MAX_BRACKET_SEARCH_HOURS)
+    if target_elapsed <= 0:
+        return hbd_r
+    if night_ratio == 1.0 or departure_dt is None:
+        return hbd_r - target_elapsed
+
+    def f(c2_candidate):
+        t_r = departure_dt - timedelta(hours=hbd_r)
+        t_c2 = departure_dt - timedelta(hours=c2_candidate)
+        return effective_hours_between(t_r, t_c2, night_ratio, night_start_hour, night_end_hour) - target_elapsed
+
+    hi = hbd_r
+    lo = hbd_r - min(target_elapsed / max(night_ratio, 1e-6), MAX_BRACKET_SEARCH_HOURS)
+    if lo >= hi:
+        lo = hi - 1e-3
+    try:
+        return brentq(f, lo, hi, xtol=1e-4)
+    except ValueError:
+        return hbd_r - target_elapsed
 
 
 def find_c1_bracket(readings):
@@ -555,45 +610,122 @@ def find_c1_bracket(readings):
     return (first_non9_hbd, last_nine_hbd)  # (lower, upper)
 
 
+def fit_slope_and_night_ratio(window_readings, departure_dt, night_start_hour, night_end_hour,
+                               default_night_ratio):
+    """STAGE 1 of fit_instance. Solves day-slope and night-slope
+    JOINTLY and LINEARLY from consecutive gaps across window_readings
+    (already restricted to the [last-9 .. first-0] transition window -
+    see fit_instance). Each consecutive pair contributes one row:
+    valueChange = day_slope*day_hours + night_slope*night_hours -
+    genuinely linear in the two unknowns, solved via ordinary least
+    squares (numpy.linalg.lstsq). night_slope is then clamped into [0,
+    day_slope] (night can't be steeper than day) as a POST-HOC clamp
+    rather than a constrained solve - that bound is a relation BETWEEN
+    the two unknowns, not a box bound on either one alone, so it can't
+    be handed to the solver as a bound the way a single-variable limit
+    could; clamping after the fact is the pragmatic equivalent.
+
+    Consecutive gaps only (not every pairwise combination of readings in
+    the window) - the simplest reading of "every pair that constrains a
+    rate", avoiding the double-counting a full pairwise expansion would
+    introduce from overlapping spans.
+
+    Falls back to a single unknown (day_slope only, via plain total
+    elapsed hours with no day/night split, paired with
+    default_night_ratio returned as-is) whenever: departure_dt is None
+    (no real calendar context to classify day vs. night at all); there's
+    no night-side evidence at all across every gap (nothing to identify
+    a ratio from); or the two-unknown solve comes back rank-deficient or
+    with a non-positive day_slope (degenerate data).
+
+    Returns (day_slope, night_ratio), or None if day_slope can't be
+    identified at all (fewer than 2 usable gaps, or every gap has zero
+    elapsed hours)."""
+    gaps = []
+    for (hbd_a, val_a), (hbd_b, val_b) in zip(window_readings, window_readings[1:]):
+        if departure_dt is not None:
+            t_a = departure_dt - timedelta(hours=float(hbd_a))
+            t_b = departure_dt - timedelta(hours=float(hbd_b))
+            day_h, night_h = _day_night_hours_between(t_a, t_b, night_start_hour, night_end_hour)
+        else:
+            day_h, night_h = float(hbd_a - hbd_b), 0.0
+        if day_h + night_h <= 0:
+            continue
+        gaps.append((val_a - val_b, day_h, night_h))
+
+    if not gaps:
+        return None
+
+    def day_slope_only_fallback():
+        total_elapsed = sum(g[1] + g[2] for g in gaps)
+        total_change = sum(g[0] for g in gaps)
+        if total_elapsed <= 0:
+            return None
+        day_slope = total_change / total_elapsed
+        return (day_slope, default_night_ratio) if day_slope > 0 else None
+
+    total_night_hours = sum(g[2] for g in gaps)
+    if departure_dt is None or total_night_hours <= 1e-6 or len(gaps) < 2:
+        return day_slope_only_fallback()
+
+    A = np.array([[g[1], g[2]] for g in gaps], dtype=float)
+    b = np.array([g[0] for g in gaps], dtype=float)
+    (day_slope, night_slope), _residuals, rank, _sv = np.linalg.lstsq(A, b, rcond=None)
+
+    if rank < 2 or day_slope <= 0:
+        return day_slope_only_fallback()
+
+    night_slope = min(max(night_slope, 0.0), day_slope)
+    return (float(day_slope), float(night_slope / day_slope))
+
+
 def fit_instance(readings, rmse_threshold, max_iterations,
                   night_ratio=1.0, departure_dt=None,
                   night_start_hour=22, night_end_hour=7):
-    """Fits the piecewise model to one flight-day instance via
-    scipy.optimize.curve_fit against its FULL set of raw readings (9s and
-    0s included), with C1's search range bounded by this instance's own
-    corner bracket when it has one. Then hunts for step changes: if the
-    fit's residuals on just the interior (1-8) readings are too large,
-    the single worst one is CORRECTED IN PLACE (not removed - see module
-    docstring) by its rounded residual, and the instance is refit with
-    the corrected value. Repeats until the fit is clean, a pass finds
-    nothing worth correcting (rounded residual = 0), or max_iterations is
-    hit.
+    """Fits the piecewise model to one flight-day instance in TWO
+    STAGES rather than one joint nonlinear solve (see module docstring
+    for why): STAGE 1 (fit_slope_and_night_ratio) solves day-slope and
+    night-slope directly from the interior readings and the two
+    transition brackets, using only the [last-9 .. first-0] window (see
+    below); STAGE 2 solves c1 algebraically from that fixed slope,
+    anchored off the first non-9 reading in the window
+    (solve_c1_from_reading) - or, if the window contains no non-9
+    reading at all (never left 9), off the window's own start as a
+    placeholder with slope left unidentified.
 
-    rmse_threshold: seats, stop correcting once interior RMSE is at or
-    below this. max_iterations: hard cap on correction passes - required
-    here since correcting in place doesn't shrink the candidate set the
-    way removal did, so there's no structural convergence guarantee.
+    TRANSITION WINDOW: bounded by the last observed 9 and the first
+    observed 0 (inclusive of both), with every reading strictly between
+    them - interior values, whatever wobbles got corrected in place -
+    feeding stage 1. Small linear excursions before the last-9 or after
+    the first-0 are explicitly excluded - for simplicity, to avoid bugs,
+    and because they're believed to add little value. When there's no
+    last-9 (starts already off 9) or no first-0 (never fully declines),
+    the window falls back to the full readings list from whichever edge
+    IS anchored.
 
-    night_ratio/departure_dt/night_start_hour/night_end_hour: this
-    instance's resolved day/night decline-rate split and its real
-    departure timestamp, passed straight through to piecewise_model - c1
-    and slope are still what's fit here (2 free parameters, unchanged);
-    night_ratio is a FIXED input to this fit, not a third thing curve_fit
-    solves for, since a single instance rarely has enough of its own
-    night-side readings to identify a ratio on its own (see module
-    docstring for why this stays a pooled/hierarchy-resolved quantity
-    instead).
+    CORRECTION-IN-PLACE, RESCOPED: a correction pass can land on an
+    interior residual OR a bracket residual - the model's predicted
+    value at the window's own last-9 or first-0 point can disagree with
+    the observed 9 or 0 there (e.g. c1, solved from an interior reading
+    further in, implies the corner happened earlier than the last
+    genuine 9 actually observed) - exactly the same footing as an
+    interior step change: a booking event can land right at a crossing
+    as easily as mid-decline. Only INTERIOR residuals count toward the
+    rmse_threshold convergence check, though - rails should sit exactly
+    on the clamped model once things are consistent, so a residual there
+    doesn't get to loosen the stopping bar, it just stays eligible for
+    correction like anything else. max_iterations remains a hard cap
+    regardless of convergence, same as before - required whenever
+    correcting in place doesn't shrink the candidate set the way removal
+    would, so there's no structural convergence guarantee.
 
-    Returns a dict with c1, slope, n_interior (count of interior readings
-    in the FINAL fit - 0 means this instance's slope is unidentifiable,
-    see module docstring), n_points (unchanged throughout - nothing is
+    Returns a dict with c1, slope (None if unidentifiable - see above),
+    nightRatio (this instance's own solved ratio, or the externally
+    supplied default when there wasn't enough night-side evidence to
+    solve one), n_interior, n_points (unchanged throughout - nothing is
     ever removed), and step_changes (a list of (hoursBeforeDep,
-    original_observed_value, net_correction) - one entry per point that
-    received at least one nonzero correction, net_correction being the
-    SUM of every correction applied to it across however many passes
-    revisited it, each already an integer seat count) - or None if
-    there's nothing fittable at all (fewer than 2 readings, or every
-    reading at the same hoursBeforeDep)."""
+    original_observed_value, net_correction), same shape as before) - or
+    None if there's nothing fittable at all (fewer than 2 readings)."""
     if len(readings) < 2:
         return None
 
@@ -602,57 +734,94 @@ def fit_instance(readings, rmse_threshold, max_iterations,
     pts = list(readings)  # values mutate in place; never shrinks
     corrections = defaultdict(int)
 
-    def model_fixed(hbd, c1, slope):
-        return piecewise_model(hbd, c1, slope, night_ratio, departure_dt,
-                                night_start_hour, night_end_hour)
+    def window_bounds(cur_pts):
+        last_nine_i = None
+        for i, (h, v) in enumerate(cur_pts):
+            if v >= 9:
+                last_nine_i = i
+        first_zero_i = None
+        for i, (h, v) in enumerate(cur_pts):
+            if v <= 0 and (last_nine_i is None or i >= last_nine_i):
+                first_zero_i = i
+                break
+        lo = last_nine_i if last_nine_i is not None else 0
+        hi = first_zero_i if first_zero_i is not None else len(cur_pts) - 1
+        if hi < lo:
+            hi = len(cur_pts) - 1
+        return lo, hi
 
-    def build_result(c1, slope, n_interior):
+    def stage_fit(cur_pts):
+        lo, hi = window_bounds(cur_pts)
+        window = cur_pts[lo:hi + 1]
+        solved = fit_slope_and_night_ratio(
+            window, departure_dt, night_start_hour, night_end_hour, night_ratio,
+        )
+        if solved is None:
+            return None
+        day_slope, resolved_night_ratio = solved
+
+        first_non9 = next(((h, v) for h, v in window if v < 9), None)
+        if first_non9 is not None:
+            c1 = solve_c1_from_reading(
+                first_non9[0], first_non9[1], day_slope, resolved_night_ratio,
+                departure_dt, night_start_hour, night_end_hour,
+            )
+        else:
+            c1 = window[0][0]
+        return day_slope, resolved_night_ratio, c1
+
+    def build_result(day_slope, resolved_night_ratio, c1, n_interior):
         step_changes = [
             (hbds[i], originals[i], corrections[i])
             for i in sorted(corrections) if corrections[i] != 0
         ]
-        return {"c1": float(c1), "slope": float(slope), "n_interior": n_interior,
+        return {"c1": float(c1), "slope": float(day_slope) if day_slope is not None else None,
+                "nightRatio": float(resolved_night_ratio), "n_interior": n_interior,
                 "n_points": len(pts), "step_changes": step_changes,
                 "corrected_readings": list(pts)}
 
     iterations = 0
     while True:
-        xs = np.array([h for h, v in pts], dtype=float)
-        ys = np.array([v for h, v in pts], dtype=float)
-        if np.var(xs) == 0:
-            return None
-
-        bracket = find_c1_bracket(pts)
-        c1_lo, c1_hi = bracket if bracket else (0.0, xs.max() + 1)
-        c1_guess = (c1_lo + c1_hi) / 2
-        try:
-            popt, _ = curve_fit(
-                model_fixed, xs, ys, p0=[c1_guess, 1.0],
-                bounds=([c1_lo, 1e-4], [c1_hi, 50]), maxfev=2000,
-            )
-        except (RuntimeError, ValueError):
-            return None
-        c1, slope = popt
-
         interior_idx = [i for i, (h, v) in enumerate(pts) if 1 <= v <= 8]
-        if not interior_idx:
-            return build_result(c1, slope, 0)
+        fit = stage_fit(pts)
+        if fit is None:
+            # No identifiable slope at all (e.g. never left 9 within
+            # the window) - fall back to a window-anchored c1 with
+            # slope left unresolved (None), matching the previous
+            # n_interior==0 convention that pool_slope already knows to
+            # exclude.
+            lo, _hi = window_bounds(pts)
+            return build_result(None, night_ratio, pts[lo][0], len(interior_idx))
 
-        residuals = [ys[i] - piecewise_model(xs[i], c1, slope, night_ratio, departure_dt,
-                                              night_start_hour, night_end_hour)
-                     for i in interior_idx]
-        rmse = float(np.sqrt(np.mean(np.square(residuals))))
-        if rmse <= rmse_threshold or iterations >= max_iterations:
-            return build_result(c1, slope, len(interior_idx))
+        day_slope, resolved_night_ratio, c1 = fit
+        lo, hi = window_bounds(pts)
+        bracket_idx = [i for i in (lo, hi) if pts[i][1] in (9, 0)]
+        check_idx = sorted(set(interior_idx) | set(bracket_idx))
+        if not check_idx:
+            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx))
+
+        residuals = []
+        for i in check_idx:
+            h, v = pts[i]
+            model_val = piecewise_model(h, c1, day_slope, resolved_night_ratio, departure_dt,
+                                         night_start_hour, night_end_hour)
+            residuals.append(v - model_val)
+
+        interior_residuals = [r for r, i in zip(residuals, check_idx) if i in interior_idx]
+        rmse_for_stopping = (
+            float(np.sqrt(np.mean(np.square(interior_residuals)))) if interior_residuals else 0.0
+        )
+        if rmse_for_stopping <= rmse_threshold or iterations >= max_iterations:
+            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx))
 
         worst_local = int(np.argmax(np.abs(residuals)))
-        worst_i = interior_idx[worst_local]
+        worst_i = check_idx[worst_local]
         rounded = round(residuals[worst_local])
         if rounded == 0:
             # Worst point is already within half a seat of the curve -
             # nothing left worth correcting. Stop rather than burn
             # iterations relabeling the same near-zero residual.
-            return build_result(c1, slope, len(interior_idx))
+            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx))
 
         corrections[worst_i] += rounded
         h, v = pts[worst_i]
@@ -865,7 +1034,7 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
     flightDate)."""
     by_service = defaultdict(list)
     for (service_id, flight_date), fit in fits_by_instance.items():
-        if fit is None or fit["n_interior"] < 1:
+        if fit is None or fit["n_interior"] < 1 or fit["slope"] is None:
             continue
         by_service[service_id].append(fit)
 
@@ -998,7 +1167,6 @@ def compute_all_fits(conn, rmse_threshold, max_iterations,
                 night_start_hour=night_start_hour, night_end_hour=night_end_hour,
             )
             if fit is not None:
-                fit["nightRatio"] = night_ratio
                 fit["departureDt"] = departure_dt
             fits_by_instance[key] = fit
 
