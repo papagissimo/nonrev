@@ -55,6 +55,7 @@ from datetime import datetime
 
 from clustering import cluster_services, service_representative
 from settings import load_settings
+from PoolingSettingsDialog import excluded_date_where_clause
 
 
 # Locked design (agreed with him directly, not just a port default anymore):
@@ -241,10 +242,16 @@ def get_flight_points(conn, org, dest, days_of_week, date_from, date_to):
     Points with no depTime at all (never captured - a handful of legacy
     rows predating this column, or an unconfirmed-airport gap at logging
     time) are dropped - nothing to place them on the x-axis with.
-    """
+
+    Excludes any row whose flightDate falls in a saved excludedDateRanges
+    window (2026-09-16 - this function is the single shared source for
+    every chart in GraphObservations.html AND for
+    ServiceGrouping.get_open_full_counts, which is where the O/F counts
+    shown live in SeatLoggingDialog come from - confirmed this was
+    silently not happening before this fix)."""
     golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
 
-    where = ["org = ?", "dest = ?"]
+    where = ["org = ?", "dest = ?", excluded_date_where_clause()]
     params = [org, dest]
     if date_from:
         where.append("flightDate >= ?")

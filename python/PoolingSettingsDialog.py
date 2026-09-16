@@ -92,12 +92,12 @@ def is_date_excluded(conn, flight_date):
 
 def excluded_date_where_clause(alias_prefix=''):
     """
-    Returns (sql_fragment, needs_params_hint) for a pooling consumer's own
-    WHERE clause: NOT EXISTS against excludedDateRanges, using that
-    consumer's own flightDate column (qualified with alias_prefix,
-    e.g. 'o.' for an observations alias 'o'). No params needed - the
-    consumer's own flightDate column name is inlined directly since it's
-    always a trusted internal identifier, never user input.
+    Returns a SQL fragment for a pooling consumer's own WHERE clause:
+    NOT EXISTS against excludedDateRanges, using that consumer's own
+    flightDate column (qualified with alias_prefix, e.g. 'o.' for an
+    observations alias 'o'). No params needed - the consumer's own
+    flightDate column name is inlined directly since it's always a
+    trusted internal identifier, never user input.
     """
     col = f"{alias_prefix}flightDate"
     return (

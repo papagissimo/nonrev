@@ -9,8 +9,9 @@ working around it.
 
 ## Core dialogs / SQLite rewrite
 
-- **hoursBeforeDep orphan-fix — revive.** The shipped design (each
-  observation freezes its own depTime/hoursBeforeDep at logging time,
+- **hoursBeforeDep orphan-fix — revive.** Real priority - keeps turning up
+  during actual logging and is misleading when it does. The shipped design
+  (each observation freezes its own depTime/hoursBeforeDep at logging time,
   schedule edits never touch already-logged observations) doesn't hold up
   in practice — confirmed 2026-09-10 when editing a schedule row ~2.5 min
   after logging against it produced a real orphaned reading. Accepted-risk
@@ -23,81 +24,91 @@ working around it.
   design (whether hoursBeforeDep itself should also move to computed-live
   rather than stored is part of that same doc — worth revisiting the full
   scope, not just the orphan-surfacing piece).
-- **Cache-busting** for dialog HTML/JS — edits currently require an incognito
-  window to see changes on reload. Confirmed still absent from server.py.
-- **Delayed-flight departure time, open question**: how Delta's own site
-  shows a delayed flight's departure time (original scheduled vs.
-  updated/delayed), and how that should interact with treating departure
-  time as part of a flight's identity. Not designed yet.
+- **Delayed-flight departure time** — very low priority. Doesn't come up
+  often enough in practice to be worth designing for. Leave alone until it
+  actually becomes a problem.
+
+## Service identity (raw depTime vs. clustered service) — NOT dead, keep pushing
+
+This keeps resurfacing session after session and he's explicit: raw
+departure time and flight number have both proven unreliable as identity
+anchors; a clustered SERVICE (org, dest, dayOfWeek, banded depTime) is the
+one thing that's held up rock-solid every time it's been checked. The goal
+is for every consumer to key on service, not raw depTime, consistently -
+this is NOT about adding a persisted `services` table (that idea stays
+killed, see Dead ideas below) - service identity stays a live, computed
+value, recomputed via clustering.py whenever needed. What's actually wanted:
+- Raw depTime keeps getting logged on every observation, unchanged - he
+  needs it to cross-check against Delta's own site while logging, and
+  T-45min cutoff math needs the real scheduled time, not a rounded band
+  representative.
+- But every consumer that currently keys lookups/aggregation on exact
+  depTime should key on the clustered service instead, wherever that's not
+  already true.
+- Fixed this session (2026-09-16): DeclineCurveHierarchy.resolve_coefficients
+  now falls back to nearest-depTime-in-cluster on an exact-match miss;
+  DeclineCurveDialog's visibility view now groups by clustered service
+  instead of listing raw depTime rows separately.
+- Still NOT done: cadence (`get_next_batch`) doesn't have per-service
+  earliest-checked/earliest-crossing lookups yet - undecided whether that's
+  live clustering inline or something else. Audit remaining consumers for
+  the same raw-depTime-vs-clustered-service gap before considering this
+  closed - don't assume anywhere is fixed without checking.
 
 ## Decline curve / predictor
 
-- Curve-fitting/prediction algorithm expansion — wants to extend what's
-  built now (night-slope-ratio estimator, C1-sliding step changes); not
-  yet described, pick up next session.
-- C1 right-censoring / golden-ticket window: analyze historically how far
-  out from departure the estimator still reliably predicts the eventual T1
-  value — i.e. at what hours-before-departure does it stop being
-  trustworthy. That threshold, not a flat 1.5h guess, should set the
-  golden-ticket window; a flight with a good/stable estimator might only
-  need checking 3h out, an erratic one might still need the tight window.
-  Delta's own cutoff is T-45min (not T-30) — the hard floor either way.
-  Live estimator is wired in now (GraphObservations.py calls
-  T1Estimator.compute_t1_replay_column) — this can be run.
-- "Service" isn't a persisted/queryable entity yet — only exists via
-  ad-hoc clustering in DeclineCurveFit.py. Cadence needs per-service
-  earliest-checked/earliest-crossing lookups; undecided whether that's live
-  clustering inside `get_next_batch` or a first-class schema entity.
-- Step-change handling, open question: when correcting a flagged
-  step-change point by an integer seat delta and refitting, should the
-  correction propagate forward to every later reading in that instance, or
-  apply only to the single flagged point? Deferred.
-- Future graph: sequence of detected step changes over time (seats up/down,
-  when each occurred) — also a way to quantify how "jumpy" a service is,
-  comparable across day-of-week/season/service.
+- **Backtest should report the SUMMED-across-cabins number, not just
+  per-cabin.** The per-cabin leave-one-out T4→T1 backtest (T4T1Backtest.py,
+  built 2026-09-15) is structured correctly, but the real number he'll
+  actually use on game day is the sum across cabins (Y + C+ + 1/PS, +D1
+  where relevant) - that's the actual quantity a go/no-go decision is made
+  on. Needs a summed-residual version alongside (or instead of) the
+  per-cabin breakdown.
+- **New feature idea, not yet designed**: some services are "usually open"
+  but not always - if the T-4 backtest can distinguish the specific
+  anomalous closed instance from the normal-open ones (rather than just
+  reporting an aggregate spread), that's a real, valuable signal for
+  exactly those flights where the aggregate historical spread alone
+  wouldn't tell him today is different. Worth thinking through how to
+  surface this - flagged as "extremely useful" if it can be made to work.
+- Golden-ticket window analysis: analyze historically how far out from
+  departure the estimator still reliably predicts the eventual T1 value -
+  i.e. at what hours-before-departure does it stop being trustworthy. That
+  threshold, not a flat 1.5h guess, should set the golden-ticket window; a
+  flight with a good/stable estimator might only need checking 3h out, an
+  erratic one might still need the tight window. Delta's own cutoff is
+  T-45min (not T-30) - the hard floor either way. Real interest, not
+  today's task. (Explicitly NOT wanted: a separate "analyze how often C1
+  comes back right-censored" study - a right-censored C1 just means the
+  flight is open, full stop, no further analysis needed there.)
+- Step-change sequence graph moved to the new Graphing section below.
 
 ## Verdicts / classification / logging UI
 
 - Second glyph for "stop looking, this one's a lock" (distinct from
   gold-star's "open so far" and green-check's "looking good, keep
   watching") — verdictType still only has info/warning/axed/starred in the
-  live schema; not yet designed or added.
-- Small UI tweaks to the logging dialog — mentioned, not yet described;
-  pick up before the algorithmic work next session.
-- Second "previous readings" block showing last few times a flight was
-  read with final resolved values *across days*, not just today — the
-  existing Prev column (`previous_readings_for`) is scoped to one
-  flightDate; a cross-date version for seeding the binary search doesn't
-  exist yet.
-- Three route clusters (dtw-cvg, cvg-dtw, slc-pdx) showed unusually wide
-  36-65 min intra-cluster spread in the service-clustering validation
-  query — needs an eyeball check to confirm these aren't actually two
-  merged services before locking in a clustering threshold. Unclear if
-  you've already looked at this since — flag if so.
+  live schema; not yet designed or added. Not ready to work on this yet.
 
-## Graphing
+## Graphing — low priority, not actively working this area right now
 
 - T1 weekday bar chart (Mon-Sun per service, gray banding, chevrons for
   ceiling reads, ghost bar for no-observation days) — mockup approved,
   still not built. GraphObservations.html currently has three other charts
   (heat map, per-date curves, seats-vs-hours-to-departure) but not this
   one.
+- Step-change sequence graph: sequence of detected step changes over time
+  (seats up/down, when each occurred) - also a way to quantify how "jumpy"
+  a service is, comparable across day-of-week/season/service.
 
-## Excluded date ranges
-
-- The two real ranges (three-day-weekend period, early-August anomaly
-  window) are entered.
-- Still open: wiring `is_date_excluded`/`excluded_date_where_clause` into
-  actual pooling consumers — verdict/classification, decline-curve
-  fitting, the weekday chart, dayGroupings. Nothing calls them yet.
-
-## Forward-looking schedule import (not started, on hold)
+## Forward-looking schedule import (blocked on him, not stuck)
 
 - **Goal**: replace manual FlightSchedule/AircraftConfigs entry (clicking
   into Delta's site per flight) with a script pulling scheduled dep time,
   day-of-week, and aircraft type from an external source. Only wants this
   1-3 days out, ~90% accuracy is fine — does not care about last-minute
-  equipment swaps or delays, only what's scheduled.
+  equipment swaps or delays, only what's scheduled. Matters to him - an
+  ongoing logging headache and a good candidate for automation.
 - **Ruled out, with reasons** (don't re-propose):
   - OAG/Cirium (the real schedule databases) — enterprise-priced, not
     self-serve.
@@ -120,14 +131,15 @@ working around it.
   into FlightSchedule (depTime, dayOfWeek) and AircraftConfigs (aircraft
   type).
 - **Not yet done**: he hasn't signed up for a RapidAPI/AeroDataBox account
-  or gotten a key (has to be him, not Claude). No fetch/parse code written
-  yet. Exact API-unit cost per call for the specific schedule endpoint is
+  or gotten a key (has to be him, not Claude) — the one and only blocker,
+  not a design or feasibility problem. No fetch/parse code written yet.
+  Exact API-unit cost per call for the specific schedule endpoint is
   unconfirmed — check once a key exists.
 - **Status note (2026-09-11)**: he's deliberately pausing manual aircraft
   data entry in the meantime, expecting this script to eventually take
   over that part.
 
-## Someday / not started
+## Someday / not started, low priority
 
 - Long-haul Delta One analysis (Hawaii, Tokyo, New Zealand, Australia) —
   distinct from the West Coast commuter focus so far; needs per-cabin
@@ -160,15 +172,28 @@ working around it.
   needs to search for a corner anymore.
 - Automating overnight Delta.com checks (scripted page loads, VPN/bot
   variant) — ToS/detection risk.
-- Cadence-from-slope, curve-shape decimation, T-4-predicts-T-1 modeling —
-  real oversampled data showed unpredictable discrete jumps, not noise
-  around a fittable curve.
+- Cadence-from-slope, curve-shape decimation — real oversampled data showed
+  unpredictable discrete jumps, not noise around a fittable curve.
+  (T-4-predicts-T-1 modeling specifically is NOT dead - revived
+  2026-09-15/16, real usable signal found via leave-one-out backtesting;
+  removed from this kill list accordingly.)
+- Step-change correction propagate-forward-vs-single-point question —
+  moot, superseded by the two-stage fit rewrite (2026-09-15/16), which
+  refits slope/night-ratio/C1 from scratch each correction pass rather
+  than patching a correction forward through later readings.
+- Three wide-spread route clusters (dtw-cvg, cvg-dtw, slc-pdx) needing an
+  eyeball check before locking in a clustering threshold — not worth the
+  attention given ~7000 observations; clustering has held up reliably
+  every time it's actually been checked.
 - 3-unanimous-readings verdict threshold — repeatedly blocked acting on
   visible patterns, killed outright.
 - Skip-a-route-to-avoid-rechecking-it-because-it's-full — obsolete, he
   watches full flights himself.
 - Persisted `services` table — live clustering via reconstructed
-  departure time is cheap enough to redo on the fly instead.
+  departure time is cheap enough to redo on the fly instead. (This is
+  about NOT persisting a services table - it does not mean service-based
+  clustering itself is deprioritized; see the "Service identity" section
+  above, which is the opposite of dead.)
 - Corridor graph for the T1 curve — no clear shape for it yet, not wanted
   now.
 - `scheduleRowId` surrogate-key linking observations to flightSchedule

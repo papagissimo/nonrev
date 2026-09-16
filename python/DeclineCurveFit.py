@@ -179,6 +179,7 @@ import os
 from clustering import cluster_services, service_representative
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from DeclineCurveHierarchy import resolve_coefficients
+from PoolingSettingsDialog import excluded_date_where_clause
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 
 # Anchored to this script's own location, not the current working
@@ -211,15 +212,24 @@ def load_observations(conn):
     dropped_count): rows with an unparsable flightDate or a null depTime
     (a handful of legacy rows predating the depTime column, or an
     unconfirmed-airport gap at logging time - same class GraphObservations
-    already drops for the same reason) are excluded and counted."""
+    already drops for the same reason) are excluded and counted.
+
+    Also excludes any row whose flightDate falls in a saved
+    excludedDateRanges window (2026-09-16 - this is THE reason that table
+    exists: a three-day-weekend or a period of schedule churn is real,
+    known-anomalous behavior that would otherwise get pooled right in
+    alongside a service's normal day-to-day pattern. Confirmed this was
+    silently NOT happening before this fix - excludedDateRanges existed
+    and had real ranges entered, but nothing here was checking it)."""
     cur = conn.cursor()
     cur.execute(
-        """
+        f"""
         SELECT observationId, carrier, org, dest, flightDate,
                checkTimestamp, hoursBeforeDep, depTime, readingType,
                y, cPlus, firstOrPS, d1
         FROM observations
         WHERE readingType = 'avail'
+          AND {excluded_date_where_clause()}
         """
     )
     obs_rows = cur.fetchall()
