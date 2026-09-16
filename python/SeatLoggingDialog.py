@@ -223,6 +223,14 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     against nothing) - only a genuinely unresolvable slope leaves that
     cabin's entry out of the dict entirely, for every row of that cabin.
 
+    Each row also carries 'c1After': the same cabin's running C1
+    immediately after that reading's slide was applied (2026-09-16,
+    his ask - the display column showing this sits to the left of
+    Steps) - already computed by slide_c1_through_readings as part of
+    producing 'steps' above, just not previously kept. Missing for a
+    cabin/row exactly where 'steps' is also missing for it (no
+    departure_dt, or nothing logged for that cabin that day).
+
     Returns (readings, today_c1_by_cabin) - the second element is each
     cabin's running C1 after folding in every reading logged so far
     today (or the plain pooled C1 for a cabin with nothing logged yet) -
@@ -276,6 +284,7 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
 
     for reading in readings:
         reading['steps'] = {}
+        reading['c1After'] = {}
     today_c1_by_cabin = {}
 
     if departure_dt is not None:
@@ -295,8 +304,9 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
                 [(hrs, val) for _, hrs, val in pairs], pooled_c1, slope, night_ratio,
                 departure_dt, night_start_hour, night_end_hour,
             )
-            for (idx, _, _), (_, step, _) in zip(pairs, slid):
+            for (idx, _, _), (_, step, c1_after) in zip(pairs, slid):
                 readings[idx]['steps'][cabin_key] = step
+                readings[idx]['c1After'][cabin_key] = c1_after
             today_c1_by_cabin[cabin_key] = slid[-1][2]  # c1_after of the most recent reading
     else:
         for cabin_key, (pooled_c1, _, _) in coeffs_by_cabin.items():

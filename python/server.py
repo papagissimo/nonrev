@@ -32,6 +32,19 @@ PORT = 5057
 app = Flask(__name__)
 
 
+@app.after_request
+def _no_cache(response):
+    """Local single-user dev tool serving from localhost - caching buys
+    nothing here and only cost correctness: a normal browser refresh
+    could keep showing a stale cached copy of an edited HTML/JS dialog
+    file, forcing an incognito window just to see real changes (his
+    long-standing complaint, fixed 2026-09-16). Blanket no-store on
+    every response - page loads and API calls alike - so a plain
+    refresh always gets whatever's actually on disk right now."""
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")

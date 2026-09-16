@@ -24,15 +24,17 @@
     input.seat { width: 38px; font-size: 16px; text-align: center; box-sizing: border-box; }
     .seatCellWrap { display: flex; flex-direction: column; align-items: center; }
     .estimateLine {
-      font-size: 13px; color: #888; line-height: 1.3; min-height: 16px;
+      font-size: 13px; color: #555; line-height: 1.3; min-height: 16px;
       font-style: italic; margin-top: 4px;
     }
-    .coefHint { font-size: 9px; color: #aaa; line-height: 1.15; white-space: nowrap; }
+    .coefHint { font-size: 11px; color: #666; line-height: 1.2; white-space: nowrap; }
     .stepCell {
       font-style: italic; color: #555; font-family: 'Courier New', monospace;
     }
     .stepSign { display: inline-block; width: 9px; text-align: center; }
     .stepDigits { display: inline-block; text-align: left; }
+    .c1AfterCell { font-style: italic; color: #555; font-family: 'Courier New', monospace; }
+    td.col-c1AfterY { border-left: 2px solid #ddd; padding-left: 12px; }
     td.col-stepY { border-left: 2px solid #ddd; padding-left: 12px; }
     td.col-y { border-left: 2px solid #ddd; }
     .flt { font-size: 14px; color: #666; }
@@ -236,6 +238,16 @@
       cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
       cols.push({ key: 'gap', label: '', width: 0 });
       cols.push({ key: 'prev', label: 'Prev', width: 136 });
+      // C1-after-slide columns (his ask, 2026-09-16) - the running C1
+      // this cabin actually slid to right after each reading, not the
+      // step size itself (that's the Steps group to the right of this
+      // one) - see SeatLoggingDialog.py's previous_readings_for
+      // ('c1After' per reading) and DeclineCurveFit.slide_c1_through_
+      // readings for the mechanism.
+      cols.push({ key: 'c1AfterY', label: 'Y', width: 40 });
+      cols.push({ key: 'c1AfterCplus', label: 'C+', width: 40 });
+      cols.push({ key: 'c1AfterOnePS', label: '1/PS', width: 40 });
+      if (anyD1) cols.push({ key: 'c1AfterD1', label: 'D1', width: 40 });
       // Step-change columns (his call, 2026-09-14; repositioned again
       // 2026-09-16 to sit after Hrs/Prev rather than right after Actual
       // - actual vs. what the pooled slope alone predicted from this
@@ -297,6 +309,22 @@
       // the estimate actually supports.
       if (est === null || est === undefined) return '';
       return (Math.abs(est) < 10) ? String(Math.round(est * 10) / 10) : String(Math.round(est));
+    }
+
+    function formatC1AfterColumn(readings, cabinKey) {
+      // Running C1 (hours) right after each reading's slide, one row
+      // per previous reading - same data source as the Steps column
+      // next to it (his ask, 2026-09-16), just showing where C1 ENDED
+      // UP rather than how far it moved. Blank where the backend has
+      // nothing for this row/cabin (no departure_dt, or nothing logged
+      // for this cabin that day - same condition Steps goes blank
+      // for).
+      if (!readings || readings.length === 0) return '';
+      return readings.map(function (rd) {
+        var v = rd.c1After ? rd.c1After[cabinKey] : undefined;
+        var display = (v === undefined || v === null) ? '' : v.toFixed(1);
+        return '<div class="row c1AfterCell">' + display + '</div>';
+      }).join('');
     }
 
     function formatStepColumn(readings, cabinKey) {
@@ -658,19 +686,22 @@
         return '<th>' + c.label + '</th>';
       }).join('');
 
-      // Group-label row above the field labels - Actual and the Steps
-      // group (see buildColumns) are the only two groups now that
-      // Glance is gone. Steps repositioned again 2026-09-16 to sit
-      // after the Hrs/gap/Prev block instead of right after Actual
-      // (his explicit call).
+      // Group-label row above the field labels - Actual, C1 (after
+      // slide), and Steps (see buildColumns) are the three groups now
+      // that Glance is gone. C1-after added 2026-09-16 to the left of
+      // Steps (his ask); Steps itself repositioned that same session
+      // to sit after the Hrs/gap/Prev block instead of right after
+      // Actual (his explicit call).
       var actualCount = anyD1 ? 4 : 3;
       var midCount = 3; // hrs, gap, prev
+      var c1AfterCount = anyD1 ? 4 : 3;
       var stepCount = anyD1 ? 4 : 3;
-      var restCount = columns.length - 1 - actualCount - midCount - stepCount;
+      var restCount = columns.length - 1 - actualCount - midCount - c1AfterCount - stepCount;
       document.getElementById('groupHeaderRow').innerHTML =
         '<th></th>' +
         '<th class="groupHead" colspan="' + actualCount + '">Actual</th>' +
         '<th colspan="' + midCount + '"></th>' +
+        '<th class="groupHead" colspan="' + c1AfterCount + '">C1</th>' +
         '<th class="groupHead" colspan="' + stepCount + '">Steps</th>' +
         '<th colspan="' + restCount + '"></th>';
 
@@ -689,6 +720,10 @@
           cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',
           d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.d1) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.d1) + '</div>',
+          c1AfterY: '<div class="prev">' + formatC1AfterColumn(row.previousReadings, 'y') + '</div>',
+          c1AfterCplus: '<div class="prev">' + formatC1AfterColumn(row.previousReadings, 'cplus') + '</div>',
+          c1AfterOnePS: '<div class="prev">' + formatC1AfterColumn(row.previousReadings, 'onePS') + '</div>',
+          c1AfterD1: '<div class="prev">' + formatC1AfterColumn(row.previousReadings, 'd1') + '</div>',
           stepY: '<div class="prev">' + formatStepColumn(row.previousReadings, 'y') + '</div>',
           stepCplus: '<div class="prev">' + formatStepColumn(row.previousReadings, 'cplus') + '</div>',
           stepOnePS: '<div class="prev">' + formatStepColumn(row.previousReadings, 'onePS') + '</div>',
