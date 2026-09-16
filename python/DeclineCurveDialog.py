@@ -24,6 +24,7 @@ from settings import (
     DECLINE_CURVE_GLOBAL_DEFAULTS_KEY, DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS,
 )
 from DeclineCurveHierarchy import resolve_coefficients, DEFAULT_MIN_INSTANCES
+from clustering import cluster_services, service_representative
 
 CABINS = ["y", "cPlus", "firstOrPS", "d1"]
 
@@ -210,11 +211,24 @@ def _blank_to_none(v):
 
 
 def get_service_detail(conn, org, dest, day_of_week):
-    """The visibility view: every raw depTime for this (org, dest,
+    """The visibility view: every SERVICE (clustered depTimes, same
+    SERVICE_GAP_MINUTES grouping DeclineCurveFit.py itself already uses
+    to identify services - see clustering.py) for this (org, dest,
     dayOfWeek), and per cabin, the derived aggregate next to every
     instance fit that fed it, plus which tier the hierarchy currently
-    resolves to. Same data/shape as ShowServiceDetail.py's console
-    report - this is that report's UI counterpart."""
+    resolves to for that service's representative depTime.
+
+    Grouped rather than one row per raw depTime (as this used to be):
+    declineCurveInstanceFits duplicates every instance fit under EVERY
+    raw depTime its service has ever spanned (see
+    refresh_decline_curve_coefficients), so a naive per-depTime instance
+    count triple-counts the same real flights whenever a service's
+    history has drifted across a few nearby depTimes - deduped here by
+    flightDate (a real flight only has one), so nInstances reflects
+    distinct flights, not duplicated rows. derivedC1/derivedSlope/etc.
+    are read from any one member depTime's row (they're identical
+    across a service's members by construction - same pooled fit,
+    written once per raw depTime it spans) rather than re-aggregated."""
     dep_times = [
         row[0] for row in conn.execute(
             """SELECT DISTINCT depTime FROM declineCurveCoefficients
@@ -224,32 +238,42 @@ def get_service_detail(conn, org, dest, day_of_week):
     ]
 
     services = []
-    for dep_time in dep_times:
+    for cluster in cluster_services(dep_times):
+        rep_time = service_representative(cluster)
         cabins_out = []
         for cabin in CABINS:
-            agg = conn.execute(
-                """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio, nInstancesC1, nInstancesSlope, nInstancesNightSlope
-                   FROM declineCurveCoefficients
-                   WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
-                (org, dest, day_of_week, dep_time, cabin),
-            ).fetchone()
+            agg = None
+            instances_by_flight_date = {}
+            for dep_time in cluster:
+                if agg is None:
+                    row = conn.execute(
+                        """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio,
+                                  nInstancesC1, nInstancesSlope, nInstancesNightSlope
+                           FROM declineCurveCoefficients
+                           WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
+                        (org, dest, day_of_week, dep_time, cabin),
+                    ).fetchone()
+                    if row is not None:
+                        agg = row
+                for flight_date, ic1, islope, n_int, n_step in conn.execute(
+                    """SELECT flightDate, c1Hours, slopeSeatsPerHour, nInterior, nStepChanges
+                       FROM declineCurveInstanceFits
+                       WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
+                    (org, dest, day_of_week, dep_time, cabin),
+                ).fetchall():
+                    instances_by_flight_date[flight_date] = (flight_date, ic1, islope, n_int, n_step)
+
             if agg is None:
                 continue
             c1, slope, night, n_c1, n_slope, n_night = agg
-            resolved = resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin)
-
-            instances = conn.execute(
-                """SELECT flightDate, c1Hours, slopeSeatsPerHour, nInterior, nStepChanges
-                   FROM declineCurveInstanceFits
-                   WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?
-                   ORDER BY flightDate""",
-                (org, dest, day_of_week, dep_time, cabin),
-            ).fetchall()
+            resolved = resolve_coefficients(conn, org, dest, day_of_week, rep_time, cabin)
+            instances = sorted(instances_by_flight_date.values(), key=lambda t: t[0])
 
             cabins_out.append({
                 'cabin': cabin,
                 'derivedC1': c1, 'derivedSlope': slope, 'derivedNightSlopeRatio': night,
                 'nInstancesC1': n_c1, 'nInstancesSlope': n_slope, 'nInstancesNightSlope': n_night,
+                'nInstances': len(instances),
                 'liveC1': resolved['c1'], 'liveC1Tier': resolved['c1Tier'],
                 'liveSlope': resolved['slope'], 'liveSlopeTier': resolved['slopeTier'],
                 'liveNightSlopeRatio': resolved.get('nightRatio'), 'liveNightSlopeRatioTier': resolved.get('nightRatioTier'),
@@ -259,6 +283,6 @@ def get_service_detail(conn, org, dest, day_of_week):
                     for fd, ic1, islope, n_int, n_step in instances
                 ],
             })
-        services.append({'depTime': dep_time, 'cabins': cabins_out})
+        services.append({'depTime': rep_time, 'memberDepTimes': cluster, 'cabins': cabins_out})
 
     return {'org': org, 'dest': dest, 'dayOfWeek': day_of_week, 'services': services}

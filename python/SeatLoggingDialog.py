@@ -104,6 +104,29 @@ def load_d1_map(conn):
     }
 
 
+def resolved_coefficients_for_row(conn, org, dest, dow, dep_time):
+    """Per-cabin resolved coefficients for display next to the curve
+    estimate hint - c1 (hours), gap (hours: the daytime-rate 9-to-0
+    crossing duration, 9/slope - same "gap" DeclineCurveFit's own
+    console report and DeclineCurveDialog already show; a display-only
+    derived number, not persisted or used in any live calculation
+    here), and nightRatio. Whichever tier each quantity actually
+    resolves from (same hierarchy the curve estimate itself already
+    uses) - None for a quantity with nothing resolvable at all
+    (practically only possible if the global default itself is
+    incomplete for that cabin)."""
+    result = {}
+    for cabin_key, cabin_col in CABIN_KEY_TO_COLUMN.items():
+        resolved = resolve_coefficients(conn, org, dest, dow, dep_time, cabin_col)
+        slope = resolved.get('slope')
+        result[cabin_key] = {
+            'c1': resolved.get('c1'),
+            'gap': (9.0 / slope) if slope else None,
+            'nightRatio': resolved.get('nightRatio'),
+        }
+    return result
+
+
 def curve_estimates_for_row(conn, org, dest, dow, dep_time, hours_until_dep, departure_dt,
                              night_start_hour, night_end_hour, today_c1_by_cabin=None):
     """The decline curve's predicted seat count per cabin at this exact
@@ -612,6 +635,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
                 night_start_hour, night_end_hour, today_c1,
             ),
+            'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'verdict': c['verdict'], 'verdictType': c['verdictType'],
             'openFull': format_open_full(
@@ -638,6 +662,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                     conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
                     night_start_hour, night_end_hour, today_c1,
                 ),
+                'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'verdict': c['verdict'], 'verdictType': c['verdictType'],
                 'openFull': format_open_full(

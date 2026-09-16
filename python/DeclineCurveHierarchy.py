@@ -73,6 +73,7 @@ from settings import (
     DECLINE_CURVE_GLOBAL_DEFAULTS_KEY,
     DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS,
 )
+from clustering import SERVICE_GAP_MINUTES
 
 DEFAULT_MIN_INSTANCES = 1
 
@@ -107,6 +108,18 @@ def _load_threshold(conn, org, dest, day_of_week, dep_time, cabin):
 
 
 def _load_derived(conn, org, dest, day_of_week, dep_time, cabin):
+    """Tier-4 derived lookup. Exact-match first (the common, cheap
+    case); on a miss, falls back to the nearest OTHER depTime that
+    actually has a derived row for this (org, dest, dayOfWeek, cabin),
+    reusing the same SERVICE_GAP_MINUTES threshold clustering.py
+    already uses to decide services elsewhere - a depTime that's
+    drifted a few minutes, or a brand-new flightSchedule row for an
+    already-observed service, now inherits that service's derived fit
+    instead of falling all the way through to the global default.
+    Genuinely outside any existing service's band (nothing within
+    SERVICE_GAP_MINUTES) still misses, same as before - this doesn't
+    invent data, it just stops exact-depTime literalism from hiding
+    data that's really there under a different, nearby depTime."""
     row = conn.execute(
         """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio,
                   nInstancesC1, nInstancesSlope, nInstancesNightSlope
@@ -114,8 +127,24 @@ def _load_derived(conn, org, dest, day_of_week, dep_time, cabin):
            WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
         (org, dest, day_of_week, dep_time, cabin),
     ).fetchone()
+
     if row is None:
-        return None
+        candidates = conn.execute(
+            """SELECT depTime, c1Hours, slopeSeatsPerHour, nightSlopeRatio,
+                      nInstancesC1, nInstancesSlope, nInstancesNightSlope
+               FROM declineCurveCoefficients
+               WHERE org=? AND dest=? AND dayOfWeek=? AND cabin=?""",
+            (org, dest, day_of_week, cabin),
+        ).fetchall()
+        nearest, nearest_gap = None, None
+        for cand in candidates:
+            gap = abs(cand[0] - dep_time)
+            if nearest_gap is None or gap < nearest_gap:
+                nearest, nearest_gap = cand, gap
+        if nearest is None or nearest_gap > SERVICE_GAP_MINUTES:
+            return None
+        row = nearest[1:]
+
     c1, slope, night, n_c1, n_slope, n_night = row
     return {"c1": c1, "slope": slope, "nightRatio": night,
             "nC1": n_c1, "nSlope": n_slope, "nNightRatio": n_night}

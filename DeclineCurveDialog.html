@@ -380,7 +380,11 @@
       result.services.forEach(function (svc) {
         var block = document.createElement('div');
         block.className = 'serviceBlock';
-        var html = '<div class="serviceHead">' + result.org + '-' + result.dest + ' ' + result.dayOfWeek + ' ~' + fmtDep(svc.depTime) + '</div>';
+        var html = '<div class="serviceHead">' + result.org + '-' + result.dest + ' ' + result.dayOfWeek + ' ~' + fmtDep(svc.depTime) +
+          (svc.memberDepTimes.length > 1
+            ? ' <span class="depSpread">(' + svc.memberDepTimes.length + ' raw depTimes: ' +
+              svc.memberDepTimes.map(fmtDep).join(', ') + ')</span>'
+            : '') + '</div>';
         svc.cabins.forEach(function (c) {
           html += '<div class="cabinLabel">[' + c.cabin + ']</div>';
           html += '<div>derived: C1=' + fmtHrs(c.derivedC1) + ' (n=' + c.nInstancesC1 + ')' +
@@ -392,10 +396,11 @@
                   (c.liveSlopeTier ? ' <span class="tierBadge tier-' + c.liveSlopeTier + '">' + c.liveSlopeTier + '</span>' : '') +
                   '&nbsp; night=' + fmtRatio(c.liveNightSlopeRatio) +
                   (c.liveNightSlopeRatioTier ? ' <span class="tierBadge tier-' + c.liveNightSlopeRatioTier + '">' + c.liveNightSlopeRatioTier + '</span>' : '') +
+                  '&nbsp;&nbsp;|&nbsp;&nbsp;' + c.nInstances + ' distinct flight(s) logged' +
                   '</div>';
           c.instances.forEach(function (inst) {
             var slopeTxt = inst.slopeSeatsPerHour == null
-              ? '<span class="noSlope">slope=\u2014 (no interior reading)</span>'
+              ? '<span class="noSlope">slope=\u2014 (no resolvable slope)</span>'
               : 'slope=' + fmtSlope(inst.slopeSeatsPerHour);
             var stepTxt = inst.nStepChanges ? ', ' + inst.nStepChanges + ' step change(s) corrected' : '';
             html += '<div class="instRow">' + inst.flightDate + ': C1=' + fmtHrs(inst.c1Hours) + '  ' + slopeTxt + stepTxt + '</div>';

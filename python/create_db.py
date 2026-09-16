@@ -148,8 +148,12 @@ CREATE TABLE routeDayFlag (
 -- fitting/pooling math and python/settings.py's declineCurveSettings for
 -- the tunables. Keyed by every individual depTime actually observed in
 -- the data (not a cluster-representative time), so a read-time consumer
--- does a plain exact-match lookup - no live reclustering needed to use
--- these numbers. c1Hours and slopeSeatsPerHour are independently
+-- does a plain exact-match lookup as the common case; DeclineCurveHierarchy.
+-- resolve_coefficients falls back to a nearest-depTime match (within
+-- clustering.py's SERVICE_GAP_MINUTES) on a miss, so a depTime that's
+-- drifted a bit or never had its own observations still inherits its
+-- service's derived fit rather than falling through to the global
+-- default. c1Hours and slopeSeatsPerHour are independently
 -- nullable: a cabin/depTime combination can have a resolvable C1 with no
 -- resolvable slope or vice versa (see refresh_decline_curve_coefficients
 -- docstring) - a NULL means no fit available yet, not zero.
