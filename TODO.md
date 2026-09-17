@@ -11,7 +11,9 @@ working around it.
 
 - **hoursBeforeDep computed-live for TODAY only (not stored, or blindly
   always-live either) — refined 2026-09-16, still fully open.** Orphan
-  DETECTION is done (see above) - this is the separate, bigger piece.
+  DETECTION itself is built (schedule-edit save diffs the route+day's
+  depTimes before vs. after; any depTime present before but missing
+  after is surfaced as an orphan) - this is the separate, bigger piece.
   The recovered handoff doc's original design said "stop storing
   hoursBeforeDep, always compute live from checkTimestamp + current
   depTime" - discussed further and that's WRONG as stated: a service's
@@ -35,6 +37,12 @@ working around it.
     ServiceGrouping.py's pooled open/full counts keep reading the stored
     value unchanged - they work across many past flightDates, exactly
     the case that must never touch live schedule. Not started.
+- **New idea, not yet designed: scan HISTORY for orphans that predate
+  the detection fix above.** Detection only catches a schedule edit
+  going forward from whenever it runs - anything orphaned before that
+  existed is still sitting wrong in already-logged data, uncorrected,
+  and nothing has ever gone looking for it. Separate piece of work from
+  live detection - independent of everything else on this list.
 - **confirmedAirports gate not yet in FlightScheduleDialog** — the
   confirm-before-trusting-a-timezone check (confirm_airports.py) only
   runs from the logging-entry flow. FlightScheduleDialog is the more
@@ -105,6 +113,57 @@ before - a NEW, specific symptom is the bar for reopening it.
   comes back right-censored" study - a right-censored C1 just means the
   flight is open, full stop, no further analysis needed there.)
 - Step-change sequence graph moved to the new Graphing section below.
+- **Pooling scoring target is mismatched for undeparted/sparse instances
+  — his diagnosis, confirmed 2026-09-17, fix designed, not yet built.**
+  `predict_t1_via_slide` predicts forward to a FIXED 1.0h-before-departure
+  target, then gets scored against whichever real reading is nearest that
+  target - for an instance whose last reading is still many hours out,
+  that's comparing a T-1h prediction against a T-15h (or whatever) actual,
+  which corrupts the residual regardless of how good the candidate slope
+  is. Every reading is real ground truth for its own hour, not fake - the
+  bug is the fixed target, not the data. Fix: predict forward to THIS
+  INSTANCE'S OWN last reading's hoursBeforeDep instead of a fixed 1.0h,
+  and score against that reading directly. Nothing gets excluded; every
+  instance scores on equal footing regardless of how much data it has.
+- **Bounce-back-to-9 mid-instance should split into separate fitting
+  instances — his call, approach agreed 2026-09-17, not yet built.**
+  `window_bounds` currently restarts the window at the LATEST reading
+  >=9, silently discarding an earlier real decline when a service bounces
+  back to 9 and declines again (confirmed in the code). Rather than
+  branching inside fit_instance/window_bounds (his explicit call - no
+  extra if/else paths there, "recipe for disaster"), split affected
+  readings into separate (service, flightDate, excursion) instance keys
+  BEFORE they reach fit_instance, so each excursion runs through the
+  exact same unmodified fitting/pooling pipeline as any other instance -
+  fit_instance itself never needs to know a split happened. Open design
+  question before building: not every touch of 9 should trigger a split -
+  a single noisy blip (bad reading, decline continues right after) is
+  what the step-change corrector already exists to absorb, and splitting
+  on that would manufacture two junk instances out of one good one; a
+  genuine reset (seats actually released) should split. Telling these
+  apart from the data alone needs 2-3 worked real examples before writing
+  the rule - do that first, next session.
+- **Near-zero slope from thin data (e.g. a same-valued, short-elapsed
+  gap) — decided 2026-09-17: NOT a bug, no fitting-logic change wanted.**
+  Resolves to near-zero (not literally infinite - checked empirically),
+  which is an honest low-confidence answer from thin data, consistent
+  with his standing no-arbitrary-minimums rule elsewhere in this project -
+  gating it would fake more certainty than the data supports. The ONE
+  real fix: the console's `gap = 9.0/slope` diagnostic print can show a
+  meaningless huge number when this happens - confirmed that value is
+  display-only, never persisted or used in any live prediction - so
+  either drop it from the print or floor/cap its display, cosmetic only.
+- **nightSlopeRatio still not appearing in his console output as of
+  2026-09-17 morning — root cause still unconfirmed, needs his input.**
+  He's flagged this twice now. Checked the code both times: the summary
+  line IS there (`main()`, the only place this gets printed - confirmed
+  no second copy exists anywhere) and reads `nServicesWithNightRatio`,
+  which the refresh function does populate. So either the update hasn't
+  fully landed in his actual working copy, or he's running something
+  other than `DeclineCurveFit.py`'s `main()` for "the console report."
+  Needs him to check what he's actually running (or paste the real output)
+  before this can be diagnosed further - not something to keep guessing
+  at blind.
 
 ## Verdicts / classification / logging UI
 
@@ -117,6 +176,11 @@ before - a NEW, specific symptom is the bar for reopening it.
   gold-star's "open so far" and green-check's "looking good, keep
   watching") — verdictType still only has info/warning/axed/starred in the
   live schema; not yet designed or added. Not ready to work on this yet.
+- Alternating row background bands in the logging dialog (one flight's
+  batch vs. the next) for readability - currently all-white, hard to
+  track where one flight ends and the next begins. Undecided between
+  plain white/light-gray or white/light-green (he has a green already in
+  the palette) - his call when it's picked up.
 
 ## Graphing — low priority, not actively working this area right now
 
@@ -190,6 +254,14 @@ before - a NEW, specific symptom is the bar for reopening it.
   breakdowns tied to actual aircraft config, since a ceiling of 9 means
   something very different on a small commuter Comfort+ cabin vs. a
   wide-body one.
+- Two-directional night ratio (a separate overnight-at-origin vs.
+  overnight-at-destination rate, instead of one shared night ratio) —
+  his own idea, his own assessment: collapses to the same thing on
+  north-south domestic routes, would only actually diverge on true
+  east-west long-haul (LA-Australia was his example). Not worth building
+  now - not enough data, and he doubts it moves the needle much even with
+  more. Worth a backtest comparison someday to check whether it's real
+  before doing anything else with it.
 
 ## Dead ideas — do not re-propose
 
