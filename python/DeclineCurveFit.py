@@ -113,19 +113,30 @@ ends included:
   hours (his real workflow checkpoint, not an arbitrary number - same
   bracket-nearest-target selection GraphObservations.compute_trajectory
   already uses), slide the curve through each bracketing reading at the
-  candidate slope, predict forward to T-1 (the live estimator's own
-  target), interpolate the two resulting PREDICTIONS (not the raw
-  readings - his explicit call, since the two aren't quite identical
-  near a 0/9 clamp and he wants whatever the live estimator would
-  actually have shown), compare against the real reading nearest T-1.
-  Summed across every instance with usable data on both sides, minimized
-  via scipy.optimize.minimize_scalar, bounded to [min, max] of the
-  service's own per-instance fitted slopes rather than curve_fit's
-  generic physical bound. An optimum landing on either edge means the
-  FIT itself is suspect (grouping is no longer a possible cause, now
-  that pooling never crosses a service boundary) and falls back to the
-  plain mean for that service. See
-  pool_slope/bracket_with_weight/predict_t1_via_slide.
+  candidate slope, predict forward to THAT INSTANCE'S OWN LAST READING'S
+  hour, interpolate the two resulting PREDICTIONS (not the raw readings -
+  his explicit call, since the two aren't quite identical near a 0/9
+  clamp and he wants whatever the live estimator would actually have
+  shown), compare directly against that same last reading. Fixed
+  2026-09-17: the target used to be a fixed T-1, scored against
+  whichever real reading happened to be nearest T-1 - for a sparse or
+  undeparted instance whose data stops well short of T-1, that compared
+  a T-1 prediction against a much-earlier actual, corrupting the
+  residual regardless of slope quality. Predicting to and scoring
+  against the instance's own last reading makes prediction target and
+  ground truth the same point by construction, for every instance
+  equally, with no distance-based "nearest" search left to get it
+  wrong. Summed across every slope-identified instance in the pool
+  (every one has a last reading, so nothing needs excluding anymore),
+  minimized via scipy.optimize.minimize_scalar, bounded to [min, max]
+  of the service's own per-instance fitted slopes rather than
+  curve_fit's generic physical bound. An optimum landing on either edge
+  means the FIT itself is suspect (grouping is no longer a possible
+  cause, now that pooling never crosses a service boundary) and falls
+  back to the plain mean for that service. pool_night_ratio mirrors
+  this exactly, with candidate night ratio in place of candidate slope.
+  See pool_slope/pool_night_ratio/bracket_with_weight/
+  predict_t1_via_slide.
 
   C1 pooling (below) is entirely UNTOUCHED by any of this - it's the
   cold-start seed before any real reading exists, overridden the instant
@@ -707,39 +718,50 @@ def fit_instance(readings, rmse_threshold, max_iterations,
     reading at all (never left 9), off the window's own start as a
     placeholder with slope left unidentified.
 
-    TRANSITION WINDOW: bounded by the last observed 9 and the first
-    observed 0 (inclusive of both), with every reading strictly between
-    them - interior values, whatever wobbles got corrected in place -
-    feeding stage 1. Small linear excursions before the last-9 or after
-    the first-0 are explicitly excluded - for simplicity, to avoid bugs,
-    and because they're believed to add little value. When there's no
-    last-9 (starts already off 9) or no first-0 (never fully declines),
-    the window falls back to the full readings list from whichever edge
-    IS anchored.
+    TRANSITION WINDOW: bounded by the FIRST observed 9 and the LAST
+    observed 0 (inclusive of both) - widened 2026-09-17 from the
+    earlier last-9-to-first-0 version, which silently discarded a real
+    decline whenever a service bounced back to 9 partway through and
+    declined again (last_nine_i always jumped to the LATEST 9,
+    throwing away everything before it - confirmed via direct code
+    read, not assumed). Every reading strictly between the window's
+    own edges - interior values, whatever wobbles got corrected in
+    place - feeds stage 1. When there's no 9 at all (starts already
+    off 9) or no 0 at all (never fully declines), the window falls
+    back to the full readings list from whichever edge IS anchored.
 
     CORRECTION-IN-PLACE, RESCOPED: a correction pass can land on an
     interior residual OR a bracket residual - the model's predicted
-    value at the window's own last-9 or first-0 point can disagree with
-    the observed 9 or 0 there (e.g. c1, solved from an interior reading
-    further in, implies the corner happened earlier than the last
-    genuine 9 actually observed) - exactly the same footing as an
-    interior step change: a booking event can land right at a crossing
-    as easily as mid-decline. Only INTERIOR residuals count toward the
-    rmse_threshold convergence check, though - rails should sit exactly
-    on the clamped model once things are consistent, so a residual there
-    doesn't get to loosen the stopping bar, it just stays eligible for
-    correction like anything else. max_iterations remains a hard cap
-    regardless of convergence, same as before - required whenever
-    correcting in place doesn't shrink the candidate set the way removal
-    would, so there's no structural convergence guarantee.
+    value at ANY 9-or-0-valued point inside the window can disagree
+    with the observed rail value there (e.g. c1, solved from an
+    interior reading further in, implies the corner happened earlier
+    than a genuine 9 actually observed) - exactly the same footing as
+    an interior step change: a booking event can land right at a
+    crossing (or a bounce back to 9) as easily as mid-decline. Widened
+    2026-09-17 alongside the window itself - every 9/0-valued point in
+    the window is now correction-eligible, not just its two edges, so
+    a mid-sequence bounce-back gets the same unclamped repair an
+    interior point already gets rather than silently forcing a window
+    restart (see TRANSITION WINDOW above). Only INTERIOR residuals
+    count toward the rmse_threshold convergence check, though - rails
+    should sit exactly on the clamped model once things are
+    consistent, so a residual there doesn't get to loosen the stopping
+    bar, it just stays eligible for correction like anything else.
+    max_iterations remains a hard cap regardless of convergence, same
+    as before - required whenever correcting in place doesn't shrink
+    the candidate set the way removal would, so there's no structural
+    convergence guarantee.
 
     Returns a dict with c1, slope (None if unidentifiable - see above),
     nightRatio (this instance's own solved ratio, or the externally
     supplied default when there wasn't enough night-side evidence to
     solve one), n_interior, n_points (unchanged throughout - nothing is
-    ever removed), and step_changes (a list of (hoursBeforeDep,
-    original_observed_value, net_correction), same shape as before) - or
-    None if there's nothing fittable at all (fewer than 2 readings)."""
+    ever removed), step_changes (a list of (hoursBeforeDep,
+    original_observed_value, net_correction), same shape as before),
+    and iterations (how many correction passes this instance actually
+    took, for visibility into how hard max_iterations is being leaned
+    on) - or None if there's nothing fittable at all (fewer than 2
+    readings)."""
     if len(readings) < 2:
         return None
 
@@ -749,17 +771,17 @@ def fit_instance(readings, rmse_threshold, max_iterations,
     corrections = defaultdict(int)
 
     def window_bounds(cur_pts):
-        last_nine_i = None
+        first_nine_i = None
         for i, (h, v) in enumerate(cur_pts):
             if v >= 9:
-                last_nine_i = i
-        first_zero_i = None
-        for i, (h, v) in enumerate(cur_pts):
-            if v <= 0 and (last_nine_i is None or i >= last_nine_i):
-                first_zero_i = i
+                first_nine_i = i
                 break
-        lo = last_nine_i if last_nine_i is not None else 0
-        hi = first_zero_i if first_zero_i is not None else len(cur_pts) - 1
+        last_zero_i = None
+        for i, (h, v) in enumerate(cur_pts):
+            if v <= 0:
+                last_zero_i = i
+        lo = first_nine_i if first_nine_i is not None else 0
+        hi = last_zero_i if last_zero_i is not None else len(cur_pts) - 1
         if hi < lo:
             hi = len(cur_pts) - 1
         return lo, hi
@@ -793,7 +815,7 @@ def fit_instance(readings, rmse_threshold, max_iterations,
                 "nightRatio": float(resolved_night_ratio), "nightRatioResolved": has_night_evidence,
                 "n_interior": n_interior,
                 "n_points": len(pts), "step_changes": step_changes,
-                "corrected_readings": list(pts)}
+                "corrected_readings": list(pts), "iterations": iterations}
 
     iterations = 0
     while True:
@@ -810,7 +832,7 @@ def fit_instance(readings, rmse_threshold, max_iterations,
 
         day_slope, resolved_night_ratio, c1, has_night_evidence = fit
         lo, hi = window_bounds(pts)
-        bracket_idx = [i for i in (lo, hi) if pts[i][1] in (9, 0)]
+        bracket_idx = [i for i in range(lo, hi + 1) if pts[i][1] in (9, 0)]
         check_idx = sorted(set(interior_idx) | set(bracket_idx))
         if not check_idx:
             return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx), has_night_evidence)
@@ -845,12 +867,15 @@ def fit_instance(readings, rmse_threshold, max_iterations,
 
 
 # Target hours for the slope-pooling objective (see pool_slope docstring)
-# - deliberately his real operational T-4/T-1 checkpoints, not arbitrary
-# numbers: T-1 is the same live-estimator target used everywhere else in
-# this project (GraphObservations.T1_TARGET_HOURS), T-4 is the point his
-# own workflow already tries to get a reading near before committing to
-# game day.
+# - T-4 is his real operational checkpoint, the point his own workflow
+# already tries to get a reading near before committing to game day.
 T4_TARGET_HOURS_FOR_POOLING = 4.0
+# No longer used by pool_slope/pool_night_ratio as of 2026-09-17 (they
+# now score against each instance's own last reading - see their
+# docstrings) - kept because T4T1Backtest.py still imports and uses it
+# directly for its own leave-one-out ground truth, which was not part
+# of this round's fix and so still scores against nearest-to-T-1 the
+# old way. Flagged, not touched.
 T1_TARGET_HOURS_FOR_POOLING = 1.0
 
 
@@ -970,7 +995,8 @@ def predict_t1_via_slide(readings, slope, t4_hours, t1_hours,
     return b_pred + (a_pred - b_pred) * weight
 
 
-def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
+def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7,
+                diagnostics_out=None):
     """Pooled per-(day-of-week-specific) SERVICE slope via direct
     optimization against real predictive accuracy - his call, replacing
     an earlier plain-mean-of-per-instance-slopes approach, which
@@ -1006,41 +1032,38 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
 
     For a candidate slope, each qualifying instance contributes one
     squared-error term via predict_t1_via_slide (see that function) -
-    bracket at T-4, slide-and-predict to T-1 from each bracketing
-    reading (using this instance's own step-change-CORRECTED readings,
-    the same data its own curve_fit used), compare against
-    nearest_reading's real value at T-1. Summed across every qualifying
-    instance, minimized via scipy.optimize.minimize_scalar bounded to
-    [min, max] of that SERVICE's own already-fitted per-instance slopes
-    (not curve_fit's generic physical bound) - his call: an optimum
-    landing on either edge means the fit itself is suspect (grouping is
-    no longer a possible cause, now that pooling never crosses a service
-    boundary), so that case falls back to the plain mean instead of
-    trusting a rail-slammed answer.
+    bracket at T-4, slide-and-predict from each bracketing reading
+    (using this instance's own step-change-CORRECTED readings, the
+    same data its own curve_fit used) to THIS INSTANCE'S OWN LAST
+    reading's hour, compare directly against that reading. Fixed
+    2026-09-17 (see module docstring for the bug this replaced): every
+    instance has a last reading, so every slope-identified instance now
+    contributes a term - there's no separate "does it have usable data
+    near T-1" eligibility bar left to check. Summed across every
+    qualifying instance, minimized via scipy.optimize.minimize_scalar
+    bounded to [min, max] of that SERVICE's own already-fitted
+    per-instance slopes (not curve_fit's generic physical bound) - his
+    call: an optimum landing on either edge means the fit itself is
+    suspect (grouping is no longer a possible cause, now that pooling
+    never crosses a service boundary), so that case falls back to the
+    plain mean instead of trusting a rail-slammed answer.
 
-    Two different eligibility bars, both his explicit calls:
-    - A resolved slope (fit["slope"] is not None) qualifies an instance
-      for the min/max bound AND for the plain-mean fallback - this only
-      requires two usable readings with elapsed time between them, down
-      to a boundary-only (last-9, first-0) pair; there's no additional
-      requirement for an interior (1-8) reading on top of that.
-    - Actually contributing a term to the optimization's sum needs
-      MORE than that: a usable T-4 bracket (>=1 reading) and a real
-      reading to serve as T-1 ground truth. Nothing hardcodes how
-      close "close enough" is on either side - an instance's own
-      readings either support this or they don't (his explicit call:
-      let a thin day fail to resolve rather than paper over it with an
-      arbitrary tolerance; it isn't a permanent problem, just this
-      run's).
+    A resolved slope (fit["slope"] is not None) is the only eligibility
+    bar now, for the min/max bound, the plain-mean fallback, AND the
+    optimization sum alike - this only requires two usable readings
+    with elapsed time between them, down to a boundary-only (last-9,
+    first-0) pair; there's no additional requirement for an interior
+    (1-8) reading on top of that. (A single-reading instance would
+    still qualify in principle, but its own prediction target and
+    ground truth collapse to the same point, so it contributes exactly
+    0 to the objective for any candidate slope - inert, not excluded,
+    and not biasing anything.)
 
     Returns dict serviceId -> (slope, gap_hours, n_instances) - same
-    shape as the old groupId-keyed version, just keyed by service now;
-    n_instances counts the bound/fallback-eligible instances (matching
-    what this return value has always meant here), not the narrower
-    optimization-eligible subset. gap_hours (9.0 / slope) is the
-    daytime-rate crossing time only - it's a reported/console-summary
-    number, not persisted or used anywhere else, so it doesn't attempt
-    to account for night_ratio.
+    shape as the old groupId-keyed version, just keyed by service now.
+    gap_hours (9.0 / slope) is the daytime-rate crossing time only -
+    it's a reported/console-summary number, not persisted or used
+    anywhere else, so it doesn't attempt to account for night_ratio.
 
     night_start_hour/night_end_hour: passed straight through to every
     predict_t1_via_slide call in the optimization objective, alongside
@@ -1048,7 +1071,17 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
     fit dict by compute_all_fits - see that function) - a service's
     night_ratio is constant across its own instances, but each instance
     still needs its own real calendar departure_dt (different
-    flightDate)."""
+    flightDate).
+
+    diagnostics_out: optional dict, populated in place with serviceId
+    -> {"iterations", "rmse"} for every service whose pooled slope
+    actually came from a real optimization (not skipped-via-agreement
+    or landed-on-an-edge-and-fell-back-to-the-mean, where there's no
+    optimizer result worth reporting) - purely additive; existing
+    callers that don't pass this see no behavior change at all. .rmse
+    is sqrt(the optimizer's own final objective value / instance
+    count), i.e. RMS prediction error in seats, not a separate
+    computation."""
     by_service = defaultdict(list)
     for (service_id, flight_date), fit in fits_by_instance.items():
         if fit is None or fit["slope"] is None:
@@ -1066,39 +1099,35 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
             # only one) - nothing to optimize, use it directly.
             slope = slope_lo
         else:
-            scoring_fits = [
-                f for f in fits
-                if bracket_with_weight(f["corrected_readings"], T4_TARGET_HOURS_FOR_POOLING) is not None
-                and nearest_reading(f["corrected_readings"], T1_TARGET_HOURS_FOR_POOLING) is not None
-            ]
-            if not scoring_fits:
-                # Nothing usable to actually test a candidate slope
-                # against - fall back rather than optimize an empty sum.
-                slope = fallback_slope
-            else:
-                def objective(candidate_slope, _fits=scoring_fits):
-                    total = 0.0
-                    for f in _fits:
-                        readings = f["corrected_readings"]
-                        pred = predict_t1_via_slide(
-                            readings, candidate_slope,
-                            T4_TARGET_HOURS_FOR_POOLING, T1_TARGET_HOURS_FOR_POOLING,
-                            night_ratio=f.get("nightRatio", 1.0) or 1.0,
-                            departure_dt=f.get("departureDt"),
-                            night_start_hour=night_start_hour, night_end_hour=night_end_hour,
-                        )
-                        truth = nearest_reading(readings, T1_TARGET_HOURS_FOR_POOLING)
-                        total += (pred - truth[1]) ** 2
-                    return total
+            def objective(candidate_slope, _fits=fits):
+                total = 0.0
+                for f in _fits:
+                    readings = f["corrected_readings"]
+                    target_hours = readings[-1][0]
+                    pred = predict_t1_via_slide(
+                        readings, candidate_slope,
+                        T4_TARGET_HOURS_FOR_POOLING, target_hours,
+                        night_ratio=f.get("nightRatio", 1.0) or 1.0,
+                        departure_dt=f.get("departureDt"),
+                        night_start_hour=night_start_hour, night_end_hour=night_end_hour,
+                    )
+                    truth = readings[-1][1]
+                    total += (pred - truth) ** 2
+                return total
 
-                res = minimize_scalar(objective, bounds=(slope_lo, slope_hi), method="bounded")
-                slope = float(res.x)
-                # Rail check (see docstring) - a small relative
-                # tolerance, not exact equality, since the bounded
-                # optimizer can land a hair off the true edge.
-                edge_tol = (slope_hi - slope_lo) * 1e-6
-                if slope <= slope_lo + edge_tol or slope >= slope_hi - edge_tol:
-                    slope = fallback_slope
+            res = minimize_scalar(objective, bounds=(slope_lo, slope_hi), method="bounded")
+            slope = float(res.x)
+            # Rail check (see docstring) - a small relative
+            # tolerance, not exact equality, since the bounded
+            # optimizer can land a hair off the true edge.
+            edge_tol = (slope_hi - slope_lo) * 1e-6
+            if slope <= slope_lo + edge_tol or slope >= slope_hi - edge_tol:
+                slope = fallback_slope
+            elif diagnostics_out is not None:
+                diagnostics_out[sid] = {
+                    "iterations": res.nit,
+                    "rmse": float(np.sqrt(res.fun / len(fits))),
+                }
 
         if slope <= 0:
             continue
@@ -1106,7 +1135,8 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
     return pooled
 
 
-def pool_night_ratio(fits_by_instance, night_start_hour=21, night_end_hour=7):
+def pool_night_ratio(fits_by_instance, night_start_hour=21, night_end_hour=7,
+                      diagnostics_out=None):
     """Pooled per-(day-of-week-specific) SERVICE night ratio, mirroring
     pool_slope exactly: direct optimization against real predictive
     accuracy via predict_t1_via_slide, rather than a plain mean of
@@ -1114,7 +1144,10 @@ def pool_night_ratio(fits_by_instance, night_start_hour=21, night_end_hour=7):
     each instance's own SLOPE held fixed (the reverse of pool_slope,
     which holds each instance's night ratio fixed while slope varies) -
     the two pooled quantities are optimized independently of each other,
-    same as they're independently fitted per instance in stage 1.
+    same as they're independently fitted per instance in stage 1. Same
+    2026-09-17 target fix as pool_slope: predicts to and scores against
+    each instance's own last reading, not a fixed T-1 (see pool_slope's
+    docstring and the module docstring for why).
 
     Only instances with has_night_evidence=True (a real two-unknown
     solve, not a day-slope-only fallback that just echoed the caller's
@@ -1126,6 +1159,10 @@ def pool_night_ratio(fits_by_instance, night_start_hour=21, night_end_hour=7):
     Same NO MINIMUM instance count as pool_slope: a service with exactly
     one qualifying instance uses that instance's own solved ratio
     directly. Same rail-check-falls-back-to-mean logic too.
+
+    diagnostics_out: same meaning as pool_slope's - optional dict,
+    populated in place with serviceId -> {"iterations", "rmse"} for
+    services whose ratio came from a real (non-fallback) optimization.
 
     Returns dict serviceId -> (night_ratio, n_instances)."""
     by_service = defaultdict(list)
@@ -1143,36 +1180,76 @@ def pool_night_ratio(fits_by_instance, night_start_hour=21, night_end_hour=7):
         if ratio_lo >= ratio_hi:
             ratio = ratio_lo
         else:
-            scoring_fits = [
-                f for f in fits
-                if bracket_with_weight(f["corrected_readings"], T4_TARGET_HOURS_FOR_POOLING) is not None
-                and nearest_reading(f["corrected_readings"], T1_TARGET_HOURS_FOR_POOLING) is not None
-            ]
-            if not scoring_fits:
-                ratio = fallback_ratio
-            else:
-                def objective(candidate_ratio, _fits=scoring_fits):
-                    total = 0.0
-                    for f in _fits:
-                        readings = f["corrected_readings"]
-                        pred = predict_t1_via_slide(
-                            readings, f["slope"],
-                            T4_TARGET_HOURS_FOR_POOLING, T1_TARGET_HOURS_FOR_POOLING,
-                            night_ratio=candidate_ratio,
-                            departure_dt=f.get("departureDt"),
-                            night_start_hour=night_start_hour, night_end_hour=night_end_hour,
-                        )
-                        truth = nearest_reading(readings, T1_TARGET_HOURS_FOR_POOLING)
-                        total += (pred - truth[1]) ** 2
-                    return total
+            def objective(candidate_ratio, _fits=fits):
+                total = 0.0
+                for f in _fits:
+                    readings = f["corrected_readings"]
+                    target_hours = readings[-1][0]
+                    pred = predict_t1_via_slide(
+                        readings, f["slope"],
+                        T4_TARGET_HOURS_FOR_POOLING, target_hours,
+                        night_ratio=candidate_ratio,
+                        departure_dt=f.get("departureDt"),
+                        night_start_hour=night_start_hour, night_end_hour=night_end_hour,
+                    )
+                    truth = readings[-1][1]
+                    total += (pred - truth) ** 2
+                return total
 
-                res = minimize_scalar(objective, bounds=(ratio_lo, ratio_hi), method="bounded")
-                ratio = float(res.x)
-                edge_tol = (ratio_hi - ratio_lo) * 1e-6
-                if ratio <= ratio_lo + edge_tol or ratio >= ratio_hi - edge_tol:
-                    ratio = fallback_ratio
+            res = minimize_scalar(objective, bounds=(ratio_lo, ratio_hi), method="bounded")
+            ratio = float(res.x)
+            edge_tol = (ratio_hi - ratio_lo) * 1e-6
+            if ratio <= ratio_lo + edge_tol or ratio >= ratio_hi - edge_tol:
+                ratio = fallback_ratio
+            elif diagnostics_out is not None:
+                diagnostics_out[sid] = {
+                    "iterations": res.nit,
+                    "rmse": float(np.sqrt(res.fun / len(fits))),
+                }
 
         pooled[sid] = (ratio, len(fits))
+    return pooled
+
+
+def pool_late_step_changes(fits_by_instance, golden_ticket_hours,
+                            low_hours=0.75, high_hours=4.0):
+    """Game-day-relevant step-change stats (his idea, 2026-09-17): per
+    instance, sum every correction fit_instance applied within
+    [low_hours, high_hours] of departure into ONE scalar per instance -
+    "how much did this flight's count net-move late" - rather than
+    counting or averaging individual step events, so an instance with
+    two smaller opposite-direction late jumps isn't conflated with one
+    that took a single big jump of the same net size.
+
+    Only instances that reached a real golden-ticket reading (a
+    reading at or inside golden_ticket_hours - reusing the existing
+    settings.py threshold everywhere else in this project already
+    trusts for "close enough to departure to count as ground truth",
+    not a separate cutoff invented for this report) are included - an
+    instance that hasn't lived through its own late window yet has
+    nothing to say about it.
+
+    No fitting here, deliberately (his explicit call) - just the plain
+    mean and RMS of the per-instance summed values, per service.
+
+    Returns dict serviceId -> (mean, rms, n_instances)."""
+    by_service = defaultdict(list)
+    for (service_id, flight_date), fit in fits_by_instance.items():
+        if fit is None:
+            continue
+        readings = fit["corrected_readings"]
+        if not any(h <= golden_ticket_hours for h, v in readings):
+            continue
+        late_sum = sum(
+            correction for (h, original, correction) in fit["step_changes"]
+            if low_hours <= h <= high_hours
+        )
+        by_service[service_id].append(late_sum)
+
+    pooled = {}
+    for sid, sums in by_service.items():
+        arr = np.array(sums, dtype=float)
+        pooled[sid] = (float(np.mean(arr)), float(np.sqrt(np.mean(arr ** 2))), len(sums))
     return pooled
 
 
@@ -1214,7 +1291,9 @@ def compute_all_fits(conn, rmse_threshold, max_iterations,
     reconstruct it themselves.
 
     Returns a dict: dep_time_to_service, service_info, and by_cabin:
-    {cabin: {instances, fits_by_instance, service_slopes, c1_by_service}}."""
+    {cabin: {instances, fits_by_instance, service_slopes,
+    slope_diagnostics, night_ratio_by_service_pooled,
+    night_ratio_diagnostics, c1_by_service}}."""
     matched_rows, dropped_count = load_observations(conn)
     dep_time_to_service, service_info = build_service_map(matched_rows)
 
@@ -1257,11 +1336,17 @@ def compute_all_fits(conn, rmse_threshold, max_iterations,
                 fit["departureDt"] = departure_dt
             fits_by_instance[key] = fit
 
+        slope_diagnostics = {}
+        night_ratio_diagnostics = {}
         by_cabin[cabin] = {
             "instances": instances,
             "fits_by_instance": fits_by_instance,
-            "service_slopes": pool_slope(fits_by_instance, night_start_hour, night_end_hour),
-            "night_ratio_by_service_pooled": pool_night_ratio(fits_by_instance, night_start_hour, night_end_hour),
+            "service_slopes": pool_slope(fits_by_instance, night_start_hour, night_end_hour,
+                                          diagnostics_out=slope_diagnostics),
+            "slope_diagnostics": slope_diagnostics,
+            "night_ratio_by_service_pooled": pool_night_ratio(fits_by_instance, night_start_hour, night_end_hour,
+                                                                diagnostics_out=night_ratio_diagnostics),
+            "night_ratio_diagnostics": night_ratio_diagnostics,
             "c1_by_service": pool_c1(fits_by_instance),
         }
 
@@ -1389,6 +1474,7 @@ def main():
     refreshed = refresh_decline_curve_coefficients(conn)
     result = refreshed["raw"]
     service_info = result["service_info"]
+    golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
 
     print(f"Loaded {result['n_rows']} avail-type observations "
           f"({result['dropped_count']} dropped - no depTime or unparsable flightDate).")
@@ -1401,10 +1487,19 @@ def main():
     for cabin, cabin_data in result["by_cabin"].items():
         summary = refreshed["byCabin"][cabin]
         service_slopes = cabin_data["service_slopes"]
+        slope_diagnostics = cabin_data["slope_diagnostics"]
+        night_ratios = cabin_data["night_ratio_by_service_pooled"]
+        night_ratio_diagnostics = cabin_data["night_ratio_diagnostics"]
         c1_by_service = cabin_data["c1_by_service"]
+        fits_by_instance = cabin_data["fits_by_instance"]
+        late_step = pool_late_step_changes(fits_by_instance, golden_ticket_hours)
 
         print(f"=== Cabin: {cabin} ===")
         print(f"  {summary['nInstances']} flight-day instances, {summary['nFit']} fit successfully.")
+        instance_iterations = [f["iterations"] for f in fits_by_instance.values() if f is not None]
+        if instance_iterations:
+            print(f"  per-instance correction iterations: avg {np.mean(instance_iterations):.1f}, "
+                  f"max {max(instance_iterations)}.")
         print(f"  {summary['nInstancesWithStepChanges']} instances had at least one step change corrected "
               f"({summary['nStepChangesTotal']} total corrections applied).")
         print(f"  {summary['nServicesWithSlope']}/{summary['nServicesTotal']} services got a resolvable slope, "
@@ -1419,9 +1514,25 @@ def main():
             slope, gap, n_slope_instances = service_slopes[sid]
             org, dest, dow, rep_time, _ = service_info[sid]
             hh, mm = divmod(rep_time, 60)
-            print(f"  service {sid} ({org}-{dest} {dow} ~{hh:02d}{mm:02d}): "
-                  f"slope={slope:.2f} seats/h (from {n_slope_instances} instances), "
-                  f"gap={gap:.2f}h, C1 median={median_c1:.2f}h (from {n_instances} instances)")
+            line = (f"  service {sid} ({org}-{dest} {dow} ~{hh:02d}{mm:02d}): "
+                    f"slope={slope:.2f} seats/h (from {n_slope_instances} instances), "
+                    f"gap={gap:.2f}h, C1 median={median_c1:.2f}h (from {n_instances} instances)")
+            diag = slope_diagnostics.get(sid)
+            if diag:
+                line += f", slope-pooling: {diag['iterations']} iterations, RMSE={diag['rmse']:.2f}"
+            night_entry = night_ratios.get(sid)
+            if night_entry:
+                night_val, n_night = night_entry
+                line += f", nightRatio={night_val:.2f} (from {n_night} instances)"
+                night_diag = night_ratio_diagnostics.get(sid)
+                if night_diag:
+                    line += f" [{night_diag['iterations']} iterations, RMSE={night_diag['rmse']:.2f}]"
+            late_entry = late_step.get(sid)
+            if late_entry:
+                late_mean, late_rms, n_late = late_entry
+                line += (f", late steps T-4..T-0.75: mean={late_mean:+.2f}, "
+                         f"RMS={late_rms:.2f} (from {n_late} golden-ticket instances)")
+            print(line)
             shown += 1
             if shown >= 10:
                 break

@@ -32,8 +32,18 @@ would just be comparing two guesses.
 Reuses, unchanged: DeclineCurveFit.compute_all_fits (for the fitted,
 step-corrected per-instance data), pool_slope, predict_t1_via_slide,
 nearest_reading, and the T4_TARGET_HOURS_FOR_POOLING /
-T1_TARGET_HOURS_FOR_POOLING constants already defined there. Nothing
-here is written back to the database - report only, printed to console.
+T1_TARGET_HOURS_FOR_POOLING constants already defined there - this
+script's own call sites and logic needed no edits when pool_slope's
+internal objective changed 2026-09-17 (it now trains each candidate
+slope against every instance's own last reading, not a fixed T-1 - see
+DeclineCurveFit's module docstring). That's a deliberate difference,
+not a leftover inconsistency: the loo_slope computed at line ~87 is
+trained on that general, unbiased objective, then evaluated here
+specifically at T-1 against this script's own stricter
+GOOD_OBSERVATION_CUTOFF_HOURS ground-truth gate - training and
+evaluation targets differing is normal, not something to reconcile.
+Nothing here is written back to the database - report only, printed to
+console.
 """
 import sqlite3
 from collections import defaultdict
