@@ -113,36 +113,6 @@ before - a NEW, specific symptom is the bar for reopening it.
   comes back right-censored" study - a right-censored C1 just means the
   flight is open, full stop, no further analysis needed there.)
 - Step-change sequence graph moved to the new Graphing section below.
-- **Pooling scoring target is mismatched for undeparted/sparse instances
-  — his diagnosis, confirmed 2026-09-17, fix designed, not yet built.**
-  `predict_t1_via_slide` predicts forward to a FIXED 1.0h-before-departure
-  target, then gets scored against whichever real reading is nearest that
-  target - for an instance whose last reading is still many hours out,
-  that's comparing a T-1h prediction against a T-15h (or whatever) actual,
-  which corrupts the residual regardless of how good the candidate slope
-  is. Every reading is real ground truth for its own hour, not fake - the
-  bug is the fixed target, not the data. Fix: predict forward to THIS
-  INSTANCE'S OWN last reading's hoursBeforeDep instead of a fixed 1.0h,
-  and score against that reading directly. Nothing gets excluded; every
-  instance scores on equal footing regardless of how much data it has.
-- **Bounce-back-to-9 mid-instance should split into separate fitting
-  instances — his call, approach agreed 2026-09-17, not yet built.**
-  `window_bounds` currently restarts the window at the LATEST reading
-  >=9, silently discarding an earlier real decline when a service bounces
-  back to 9 and declines again (confirmed in the code). Rather than
-  branching inside fit_instance/window_bounds (his explicit call - no
-  extra if/else paths there, "recipe for disaster"), split affected
-  readings into separate (service, flightDate, excursion) instance keys
-  BEFORE they reach fit_instance, so each excursion runs through the
-  exact same unmodified fitting/pooling pipeline as any other instance -
-  fit_instance itself never needs to know a split happened. Open design
-  question before building: not every touch of 9 should trigger a split -
-  a single noisy blip (bad reading, decline continues right after) is
-  what the step-change corrector already exists to absorb, and splitting
-  on that would manufacture two junk instances out of one good one; a
-  genuine reset (seats actually released) should split. Telling these
-  apart from the data alone needs 2-3 worked real examples before writing
-  the rule - do that first, next session.
 - **Near-zero slope from thin data (e.g. a same-valued, short-elapsed
   gap) — decided 2026-09-17: NOT a bug, no fitting-logic change wanted.**
   Resolves to near-zero (not literally infinite - checked empirically),
@@ -153,17 +123,6 @@ before - a NEW, specific symptom is the bar for reopening it.
   meaningless huge number when this happens - confirmed that value is
   display-only, never persisted or used in any live prediction - so
   either drop it from the print or floor/cap its display, cosmetic only.
-- **nightSlopeRatio still not appearing in his console output as of
-  2026-09-17 morning — root cause still unconfirmed, needs his input.**
-  He's flagged this twice now. Checked the code both times: the summary
-  line IS there (`main()`, the only place this gets printed - confirmed
-  no second copy exists anywhere) and reads `nServicesWithNightRatio`,
-  which the refresh function does populate. So either the update hasn't
-  fully landed in his actual working copy, or he's running something
-  other than `DeclineCurveFit.py`'s `main()` for "the console report."
-  Needs him to check what he's actually running (or paste the real output)
-  before this can be diagnosed further - not something to keep guessing
-  at blind.
 
 ## Verdicts / classification / logging UI
 
@@ -265,6 +224,13 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Dead ideas — do not re-propose
 
+- Bounce-back-to-9 handling via splitting affected readings into
+  separate (service, flightDate, excursion) instance keys before
+  fit_instance — considered, then superseded 2026-09-17 by widening
+  window_bounds (first-seen-9 to last-seen-0) and bracket_idx (every
+  9/0-valued point in that window, not just the edges) so the existing
+  correction loop handles a bounce-back in place, without a second
+  algorithm or a pre-fit splitting pass.
 - Automated tiered cadence/eligibility engine in get_next_batch
   (settings.py's tiers, recheckGapHours, evaluate_eligibility) — removed
   2026-09-16. His real workflow for the past month has been walking every
