@@ -1014,9 +1014,11 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
     trusting a rail-slammed answer.
 
     Two different eligibility bars, both his explicit calls:
-    - n_interior >= 1 (an identifiable per-instance slope exists at
-      all) qualifies an instance for the min/max bound AND for the
-      plain-mean fallback - same bar as before this change.
+    - A resolved slope (fit["slope"] is not None) qualifies an instance
+      for the min/max bound AND for the plain-mean fallback - this only
+      requires two usable readings with elapsed time between them, down
+      to a boundary-only (last-9, first-0) pair; there's no additional
+      requirement for an interior (1-8) reading on top of that.
     - Actually contributing a term to the optimization's sum needs
       MORE than that: a usable T-4 bracket (>=1 reading) and a real
       reading to serve as T-1 ground truth. Nothing hardcodes how
@@ -1044,7 +1046,7 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
     flightDate)."""
     by_service = defaultdict(list)
     for (service_id, flight_date), fit in fits_by_instance.items():
-        if fit is None or fit["n_interior"] < 1 or fit["slope"] is None:
+        if fit is None or fit["slope"] is None:
             continue
         by_service[service_id].append(fit)
 
@@ -1277,7 +1279,7 @@ def refresh_decline_curve_coefficients(conn):
                         c1Hours, slopeSeatsPerHour, nInterior, nPoints, nStepChanges)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (org, dest, dow, dep_time, flight_date, cabin,
-                     fit["c1"], fit["slope"] if fit["n_interior"] >= 1 else None,
+                     fit["c1"], fit["slope"],
                      fit["n_interior"], fit["n_points"], len(fit["step_changes"])),
                 )
                 instance_rows_written += 1

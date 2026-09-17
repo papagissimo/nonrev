@@ -66,7 +66,7 @@ def show(conn, org, dest, day_of_week):
                 (org, dest, day_of_week, dep_time, cabin),
             ).fetchall()
             for flight_date, inst_c1, inst_slope, n_interior, n_step in instances:
-                inst_slope_str = f"{inst_slope:.2f}/h" if inst_slope is not None else "— (no interior reading)"
+                inst_slope_str = f"{inst_slope:.2f}/h" if inst_slope is not None else "— (unidentifiable, e.g. never left 9)"
                 step_str = f", {n_step} step change(s) corrected" if n_step else ""
                 print(f"      {flight_date}: C1={inst_c1:.2f}h  slope={inst_slope_str}{step_str}")
         print()

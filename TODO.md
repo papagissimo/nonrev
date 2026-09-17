@@ -69,6 +69,38 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Decline curve / predictor
 
+- **Slope-resolution gate fixed 2026-09-17.** Two places were nulling out
+  an already-computed slope unless there was also at least one interior
+  (1-8) reading - a boundary-only two-point slope (last-9 to first-0)
+  used to get thrown away even though it had been correctly computed.
+  Both gates now key on whether a slope was actually resolved, not on
+  n_interior. Verified against real data: instance-level resolved slopes
+  1513 -> 1575, service-level 1244 -> 1298.
+- **Night-hours window is measured against the wrong clock for west-coast
+  departures - unresolved, needs a decision before nightSlopeRatio
+  pooling gets built.** The 22:00-07:00 night window is checked against
+  departure_dt after it's been converted to Eastern time (an artifact of
+  how that value gets built for same-day bucketing elsewhere, not a
+  deliberate choice for this purpose) - for a PDX/SLC departure that can
+  be off from the origin airport's actual local clock by up to 3 hours.
+  His call needed: origin-local clock, or something else.
+- **nightSlopeRatio per-service pooling still not built.** The column and
+  the whole hierarchy tier for it exist and DeclineCurveHierarchy already
+  reads it, but nothing has ever calculated or written it - every
+  service falls back to the global 0.25 default, always. Needs a
+  pool_night_ratio parallel to pool_slope (same optimize-against-real-
+  accuracy method), blocked on the night-hours clock question above.
+- **New idea, not yet designed: time-to-full is its own signal, separate
+  from decline slope/C1/night-ratio.** A service that crosses the "full"
+  threshold (currently 2, not literally 0) very early versus one that
+  crosses it very late are different animals worth telling apart -
+  currently nowhere calculated or captured. This is squarely an
+  open/full-count question (ServiceGrouping.py), not a decline-curve
+  one. Would need its own corner-solving math aimed at the full
+  threshold rather than 9/0, similar in spirit to the existing C1 solve.
+  Precision/exact-threshold quibbling between "full" and "really quite
+  thoroughly full" is explicitly NOT worth resolving - a rough distinction
+  is all that's wanted here.
 - **Backtest should report the SUMMED-across-cabins number, not just
   per-cabin.** The per-cabin leave-one-out T4→T1 backtest (T4T1Backtest.py,
   built 2026-09-15) is structured correctly, but the real number he'll
