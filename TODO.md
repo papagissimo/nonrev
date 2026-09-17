@@ -76,20 +76,24 @@ before - a NEW, specific symptom is the bar for reopening it.
   Both gates now key on whether a slope was actually resolved, not on
   n_interior. Verified against real data: instance-level resolved slopes
   1513 -> 1575, service-level 1244 -> 1298.
-- **Night-hours window is measured against the wrong clock for west-coast
-  departures - unresolved, needs a decision before nightSlopeRatio
-  pooling gets built.** The 22:00-07:00 night window is checked against
-  departure_dt after it's been converted to Eastern time (an artifact of
-  how that value gets built for same-day bucketing elsewhere, not a
-  deliberate choice for this purpose) - for a PDX/SLC departure that can
-  be off from the origin airport's actual local clock by up to 3 hours.
-  His call needed: origin-local clock, or something else.
-- **nightSlopeRatio per-service pooling still not built.** The column and
-  the whole hierarchy tier for it exist and DeclineCurveHierarchy already
-  reads it, but nothing has ever calculated or written it - every
-  service falls back to the global 0.25 default, always. Needs a
-  pool_night_ratio parallel to pool_slope (same optimize-against-real-
-  accuracy method), blocked on the night-hours clock question above.
+- **Night-hours window settled 2026-09-17: Eastern clock, 21:00-07:00.**
+  Deliberately anchored to Eastern (checkTimestamp's own clock) rather
+  than origin-airport-local - the day/night effect in this data is
+  mostly driven by his own overnight logging gap, which follows his own
+  (Eastern) sleep schedule regardless of which airport he's tracking,
+  not by ticket-buyer behavior at the destination. Verified against real
+  data that the exact boundary barely moves fitted values (median
+  difference: zero, across 458 real instances compared at 22-06 vs
+  21-07) but a wider window meaningfully increases how many instances
+  get real night-side evidence at all (120 -> 150) rather than falling
+  back to a default - the 21:00-07:00 width was picked for that reason.
+- **nightSlopeRatio per-service pooling built 2026-09-17.**
+  pool_night_ratio, parallel to pool_slope (same optimize-against-real-
+  predictive-accuracy method, holding each instance's own slope fixed
+  instead of its night ratio). Verified against real data: 47/168/82
+  services (y/cPlus/firstOrPS) now get a real resolved night ratio,
+  versus zero before. ShowServiceDetail.py and the refresh console
+  summary now both show it alongside C1 and slope.
 - **New idea, not yet designed: time-to-full is its own signal, separate
   from decline slope/C1/night-ratio.** A service that crosses the "full"
   threshold (currently 2, not literally 0) very early versus one that

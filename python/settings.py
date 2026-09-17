@@ -80,15 +80,19 @@ DEFAULT_DECLINE_CURVE_SETTINGS = {
     # (confirmed fixed/pre-server-era) - this is a general safety cap.
     'stepChangeMaxIterations': 15,
     # Day/night decline-rate split (see DeclineCurveFit.py's
-    # piecewise_model / effective_hours_between): the nightly window,
-    # local clock hours, during which decline runs at slope *
-    # nightSlopeRatio (below) instead of the full daytime slope. A step,
-    # not a smooth curve - his call, confirmed by real data (2026-09-13
-    # analysis: overnight interior-to-interior gaps decline at roughly
-    # 1/4 daytime speed, often exactly zero) that the effect is real and
-    # large enough to model, but not worth a shape more elaborate than a
-    # flat rate change at these two clock times.
-    'nightStartHour': 22,
+    # piecewise_model / effective_hours_between): the nightly window, in
+    # Eastern clock hours (not origin-airport-local - this is measured
+    # against checkTimestamp, which is always logged in ET regardless of
+    # which airport the flight departs from), during which decline runs
+    # at slope * nightSlopeRatio (below) instead of the full daytime
+    # slope. A step, not a smooth curve - his call. 21:00-07:00, set
+    # 2026-09-17 - confirmed against real data that the exact boundary
+    # barely moves the fitted values (median difference: zero, across
+    # 458 real instances compared at 22-06 vs 21-07), but a wider window
+    # does meaningfully increase how many instances have real night-side
+    # evidence at all (120 -> 150) rather than falling back to the
+    # global default below - picked for that reason, not for precision.
+    'nightStartHour': 21,
     'nightEndHour': 7,
 }
 

@@ -41,22 +41,31 @@ def show(conn, org, dest, day_of_week):
         print(f"=== {org}-{dest} {day_of_week} ~{hh:02d}{mm:02d} ===")
         for cabin in ["y", "cPlus", "firstOrPS", "d1"]:
             agg = conn.execute(
-                """SELECT c1Hours, slopeSeatsPerHour, nInstancesC1, nInstancesSlope
+                """SELECT c1Hours, slopeSeatsPerHour, nightSlopeRatio,
+                          nInstancesC1, nInstancesSlope, nInstancesNightSlope
                    FROM declineCurveCoefficients
                    WHERE org=? AND dest=? AND dayOfWeek=? AND depTime=? AND cabin=?""",
                 (org, dest, day_of_week, dep_time, cabin),
             ).fetchone()
             if agg is None:
                 continue
-            c1, slope, n_c1, n_slope = agg
+            c1, slope, night, n_c1, n_slope, n_night = agg
             resolved = resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin)
 
             c1_str = f"{c1:.2f}h" if c1 is not None else "—"
             slope_str = f"{slope:.2f}/h" if slope is not None else "—"
+            night_str = f"{night:.2f}" if night is not None else "—"
+            live_slope_str = (
+                f"slope={resolved['slope']:.2f}/h [{resolved['slopeTier']}]"
+                if resolved['slope'] is not None else "no slope resolvable"
+            )
+            live_night_str = (
+                f"nightRatio={resolved['nightRatio']:.2f} [{resolved['nightRatioTier']}]"
+                if resolved['nightRatio'] is not None else "no night ratio resolvable"
+            )
             print(f"  [{cabin}] derived: C1={c1_str} (n={n_c1})  slope={slope_str} (n={n_slope})  "
-                  f"|  LIVE: C1={resolved['c1']:.2f}h [{resolved['c1Tier']}]  "
-                  f"slope={resolved['slope']:.2f}/h [{resolved['slopeTier']}]" if resolved['slope'] is not None
-                  else f"  [{cabin}] derived: C1={c1_str} (n={n_c1})  slope={slope_str} (n={n_slope})  |  LIVE: no slope resolvable")
+                  f"nightRatio={night_str} (n={n_night})  |  LIVE: C1={resolved['c1']:.2f}h "
+                  f"[{resolved['c1Tier']}]  {live_slope_str}  {live_night_str}")
 
             instances = conn.execute(
                 """SELECT flightDate, c1Hours, slopeSeatsPerHour, nInterior, nStepChanges

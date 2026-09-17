@@ -648,9 +648,13 @@ def fit_slope_and_night_ratio(window_readings, departure_dt, night_start_hour, n
     a ratio from); or the two-unknown solve comes back rank-deficient or
     with a non-positive day_slope (degenerate data).
 
-    Returns (day_slope, night_ratio), or None if day_slope can't be
-    identified at all (fewer than 2 usable gaps, or every gap has zero
-    elapsed hours)."""
+    Returns (day_slope, night_ratio, has_night_evidence), or None if
+    day_slope can't be identified at all (fewer than 2 usable gaps, or
+    every gap has zero elapsed hours). has_night_evidence is True only
+    when night_ratio was actually solved from real night-side data, not
+    just passed through as the caller's default - the two-unknown solve
+    is what sets it, everything routed through day_slope_only_fallback
+    leaves it False."""
     gaps = []
     for (hbd_a, val_a), (hbd_b, val_b) in zip(window_readings, window_readings[1:]):
         if departure_dt is not None:
@@ -672,7 +676,7 @@ def fit_slope_and_night_ratio(window_readings, departure_dt, night_start_hour, n
         if total_elapsed <= 0:
             return None
         day_slope = total_change / total_elapsed
-        return (day_slope, default_night_ratio) if day_slope > 0 else None
+        return (day_slope, default_night_ratio, False) if day_slope > 0 else None
 
     total_night_hours = sum(g[2] for g in gaps)
     if departure_dt is None or total_night_hours <= 1e-6 or len(gaps) < 2:
@@ -686,7 +690,7 @@ def fit_slope_and_night_ratio(window_readings, departure_dt, night_start_hour, n
         return day_slope_only_fallback()
 
     night_slope = min(max(night_slope, 0.0), day_slope)
-    return (float(day_slope), float(night_slope / day_slope))
+    return (float(day_slope), float(night_slope / day_slope), True)
 
 
 def fit_instance(readings, rmse_threshold, max_iterations,
@@ -768,7 +772,7 @@ def fit_instance(readings, rmse_threshold, max_iterations,
         )
         if solved is None:
             return None
-        day_slope, resolved_night_ratio = solved
+        day_slope, resolved_night_ratio, has_night_evidence = solved
 
         first_non9 = next(((h, v) for h, v in window if v < 9), None)
         if first_non9 is not None:
@@ -778,15 +782,16 @@ def fit_instance(readings, rmse_threshold, max_iterations,
             )
         else:
             c1 = window[0][0]
-        return day_slope, resolved_night_ratio, c1
+        return day_slope, resolved_night_ratio, c1, has_night_evidence
 
-    def build_result(day_slope, resolved_night_ratio, c1, n_interior):
+    def build_result(day_slope, resolved_night_ratio, c1, n_interior, has_night_evidence=False):
         step_changes = [
             (hbds[i], originals[i], corrections[i])
             for i in sorted(corrections) if corrections[i] != 0
         ]
         return {"c1": float(c1), "slope": float(day_slope) if day_slope is not None else None,
-                "nightRatio": float(resolved_night_ratio), "n_interior": n_interior,
+                "nightRatio": float(resolved_night_ratio), "nightRatioResolved": has_night_evidence,
+                "n_interior": n_interior,
                 "n_points": len(pts), "step_changes": step_changes,
                 "corrected_readings": list(pts)}
 
@@ -803,12 +808,12 @@ def fit_instance(readings, rmse_threshold, max_iterations,
             lo, _hi = window_bounds(pts)
             return build_result(None, night_ratio, pts[lo][0], len(interior_idx))
 
-        day_slope, resolved_night_ratio, c1 = fit
+        day_slope, resolved_night_ratio, c1, has_night_evidence = fit
         lo, hi = window_bounds(pts)
         bracket_idx = [i for i in (lo, hi) if pts[i][1] in (9, 0)]
         check_idx = sorted(set(interior_idx) | set(bracket_idx))
         if not check_idx:
-            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx))
+            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx), has_night_evidence)
 
         residuals = []
         for i in check_idx:
@@ -822,7 +827,7 @@ def fit_instance(readings, rmse_threshold, max_iterations,
             float(np.sqrt(np.mean(np.square(interior_residuals)))) if interior_residuals else 0.0
         )
         if rmse_for_stopping <= rmse_threshold or iterations >= max_iterations:
-            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx))
+            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx), has_night_evidence)
 
         worst_local = int(np.argmax(np.abs(residuals)))
         worst_i = check_idx[worst_local]
@@ -831,7 +836,7 @@ def fit_instance(readings, rmse_threshold, max_iterations,
             # Worst point is already within half a seat of the curve -
             # nothing left worth correcting. Stop rather than burn
             # iterations relabeling the same near-zero residual.
-            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx))
+            return build_result(day_slope, resolved_night_ratio, c1, len(interior_idx), has_night_evidence)
 
         corrections[worst_i] += rounded
         h, v = pts[worst_i]
@@ -1101,6 +1106,76 @@ def pool_slope(fits_by_instance, night_start_hour=22, night_end_hour=7):
     return pooled
 
 
+def pool_night_ratio(fits_by_instance, night_start_hour=21, night_end_hour=7):
+    """Pooled per-(day-of-week-specific) SERVICE night ratio, mirroring
+    pool_slope exactly: direct optimization against real predictive
+    accuracy via predict_t1_via_slide, rather than a plain mean of
+    per-instance night ratios. Candidate night ratios are scored with
+    each instance's own SLOPE held fixed (the reverse of pool_slope,
+    which holds each instance's night ratio fixed while slope varies) -
+    the two pooled quantities are optimized independently of each other,
+    same as they're independently fitted per instance in stage 1.
+
+    Only instances with has_night_evidence=True (a real two-unknown
+    solve, not a day-slope-only fallback that just echoed the caller's
+    default back) count here - an instance that never actually saw
+    night hours has nothing to say about the night ratio at all, unlike
+    slope, which every instance identifies whether or not it has an
+    opinion on the night split.
+
+    Same NO MINIMUM instance count as pool_slope: a service with exactly
+    one qualifying instance uses that instance's own solved ratio
+    directly. Same rail-check-falls-back-to-mean logic too.
+
+    Returns dict serviceId -> (night_ratio, n_instances)."""
+    by_service = defaultdict(list)
+    for (service_id, flight_date), fit in fits_by_instance.items():
+        if fit is None or fit["slope"] is None or not fit.get("nightRatioResolved"):
+            continue
+        by_service[service_id].append(fit)
+
+    pooled = {}
+    for sid, fits in by_service.items():
+        per_instance_ratios = [f["nightRatio"] for f in fits]
+        ratio_lo, ratio_hi = min(per_instance_ratios), max(per_instance_ratios)
+        fallback_ratio = float(np.mean(per_instance_ratios))
+
+        if ratio_lo >= ratio_hi:
+            ratio = ratio_lo
+        else:
+            scoring_fits = [
+                f for f in fits
+                if bracket_with_weight(f["corrected_readings"], T4_TARGET_HOURS_FOR_POOLING) is not None
+                and nearest_reading(f["corrected_readings"], T1_TARGET_HOURS_FOR_POOLING) is not None
+            ]
+            if not scoring_fits:
+                ratio = fallback_ratio
+            else:
+                def objective(candidate_ratio, _fits=scoring_fits):
+                    total = 0.0
+                    for f in _fits:
+                        readings = f["corrected_readings"]
+                        pred = predict_t1_via_slide(
+                            readings, f["slope"],
+                            T4_TARGET_HOURS_FOR_POOLING, T1_TARGET_HOURS_FOR_POOLING,
+                            night_ratio=candidate_ratio,
+                            departure_dt=f.get("departureDt"),
+                            night_start_hour=night_start_hour, night_end_hour=night_end_hour,
+                        )
+                        truth = nearest_reading(readings, T1_TARGET_HOURS_FOR_POOLING)
+                        total += (pred - truth[1]) ** 2
+                    return total
+
+                res = minimize_scalar(objective, bounds=(ratio_lo, ratio_hi), method="bounded")
+                ratio = float(res.x)
+                edge_tol = (ratio_hi - ratio_lo) * 1e-6
+                if ratio <= ratio_lo + edge_tol or ratio >= ratio_hi - edge_tol:
+                    ratio = fallback_ratio
+
+        pooled[sid] = (ratio, len(fits))
+    return pooled
+
+
 def pool_c1(fits_by_instance):
     """Median of every instance's own fitted C1, per (day-of-week-
     specific) service - includes all-9/all-0 instances too, since their
@@ -1186,6 +1261,7 @@ def compute_all_fits(conn, rmse_threshold, max_iterations,
             "instances": instances,
             "fits_by_instance": fits_by_instance,
             "service_slopes": pool_slope(fits_by_instance, night_start_hour, night_end_hour),
+            "night_ratio_by_service_pooled": pool_night_ratio(fits_by_instance, night_start_hour, night_end_hour),
             "c1_by_service": pool_c1(fits_by_instance),
         }
 
@@ -1247,21 +1323,25 @@ def refresh_decline_curve_coefficients(conn):
     for cabin, cabin_data in result["by_cabin"].items():
         fits_by_instance = cabin_data["fits_by_instance"]
         service_slopes = cabin_data["service_slopes"]
+        night_ratios = cabin_data["night_ratio_by_service_pooled"]
         c1_by_service = cabin_data["c1_by_service"]
 
         for (org, dest, dow, dep_time), sid in result["dep_time_to_service"].items():
             c1_entry = c1_by_service.get(sid)
             slope_entry = service_slopes.get(sid)
-            if c1_entry is None and slope_entry is None:
+            night_entry = night_ratios.get(sid)
+            if c1_entry is None and slope_entry is None and night_entry is None:
                 continue
             c1_val, n_c1 = c1_entry if c1_entry else (None, 0)
             slope_val, _gap_val, n_slope = slope_entry if slope_entry else (None, None, 0)
+            night_val, n_night = night_entry if night_entry else (None, 0)
             conn.execute(
                 """INSERT INTO declineCurveCoefficients
                    (org, dest, dayOfWeek, depTime, cabin, c1Hours, slopeSeatsPerHour,
-                    nInstancesC1, nInstancesSlope)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
-                (org, dest, dow, dep_time, cabin, c1_val, slope_val, n_c1, n_slope),
+                    nightSlopeRatio, nInstancesC1, nInstancesSlope, nInstancesNightSlope)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (org, dest, dow, dep_time, cabin, c1_val, slope_val, night_val,
+                 n_c1, n_slope, n_night),
             )
             rows_written += 1
 
@@ -1293,6 +1373,7 @@ def refresh_decline_curve_coefficients(conn):
             "nInstancesWithStepChanges": n_with_step_changes,
             "nStepChangesTotal": n_step_changes,
             "nServicesWithSlope": len(service_slopes),
+            "nServicesWithNightRatio": len(night_ratios),
             "nServicesResolved": len(c1_by_service),
             "nServicesTotal": len(result["service_info"]),
         }
@@ -1327,6 +1408,7 @@ def main():
         print(f"  {summary['nInstancesWithStepChanges']} instances had at least one step change corrected "
               f"({summary['nStepChangesTotal']} total corrections applied).")
         print(f"  {summary['nServicesWithSlope']}/{summary['nServicesTotal']} services got a resolvable slope, "
+              f"{summary['nServicesWithNightRatio']}/{summary['nServicesTotal']} got a resolvable night ratio, "
               f"{summary['nServicesResolved']}/{summary['nServicesTotal']} services got a resolvable C1.")
 
         ranked = sorted(c1_by_service.items(), key=lambda kv: -kv[1][1])
