@@ -48,42 +48,6 @@ def eastern_now():
     return datetime.now(ET_ZONE)
 
 
-def evaluate_eligibility(hours_until_dep, todays_hrs_list, tiers):
-    """
-    Direct port of evaluateNextUpEligibility_. Stateless: eligibility is
-    recomputed fresh from hoursUntilDep + today's logged hours every call,
-    so a flight can never get stuck in a stale tier.
-    """
-    last_logged_hours = min(todays_hrs_list) if todays_hrs_list else None
-    eligible_now = False
-    minutes_until_eligible = None
-
-    for tier in tiers:
-        if 'targetHours' in tier and 'doneToleranceHours' in tier:
-            already_done = any(
-                abs(hrs - tier['targetHours']) <= tier['doneToleranceHours']
-                for hrs in todays_hrs_list
-            )
-            if already_done:
-                continue  # permanently closed for this flight today
-
-        ceiling = tier['maxHours']
-        if last_logged_hours is not None:
-            ceiling = min(ceiling, last_logged_hours - tier['recheckGapHours'])
-
-        if tier['minHours'] <= hours_until_dep <= ceiling:
-            eligible_now = True
-        elif hours_until_dep > ceiling:
-            mins = round((hours_until_dep - ceiling) * 60)
-            if minutes_until_eligible is None or mins < minutes_until_eligible:
-                minutes_until_eligible = mins
-        # else hoursUntilDep < tier['minHours']: already past this window today.
-
-    if eligible_now:
-        minutes_until_eligible = 0
-    return eligible_now, minutes_until_eligible
-
-
 def minutes_to_12h(dep_minutes):
     h, m = divmod(int(dep_minutes), 60)
     period = 'pm' if h >= 12 else 'am'
@@ -453,22 +417,14 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
     night_end_hour = decline_settings['nightEndHour']
     now = eastern_now()
 
-    # Consider yesterday's, today's, AND tomorrow's (ET) day-of-week
-    # schedule rows - see module docstring for the yesterday leg
-    # (cross-midnight west-coast flights). Tomorrow is included so a
-    # flight scheduled for the next calendar date can already enter the
-    # candidate pool once it falls within an existing cadence tier's
-    # hours-until-departure range (e.g. a flight departing shortly after
-    # midnight, checked from tonight) - eligibility itself is untouched
-    # here, still governed entirely by the normal tier math below. A
-    # flight that's already departed still falls out through the normal
-    # 45-minute cutoff, same as always, regardless of which of the four
-    # days its schedule row came from. Day-after-tomorrow is included too
-    # (his call) so an evening session can reach past tomorrow's earliest
-    # flights into tomorrow NIGHT's as well, not just the ones close to
-    # midnight - the single wide-open tier (see settings.py) is what
-    # actually gets him there ahead of normal cadence timing; this just
-    # widens the outer bound of what's reachable at all.
+    # Consider yesterday's, today's, tomorrow's, AND the day-after's (ET)
+    # day-of-week schedule rows - see module docstring for the yesterday
+    # leg (cross-midnight west-coast flights). Tomorrow and the day after
+    # are included so a session can walk all the way through tonight's
+    # remaining flights and on into tomorrow's, not stop at midnight. A
+    # flight that's already departed falls out through the normal
+    # 45-minute cutoff regardless of which of the four days its schedule
+    # row came from.
     schedule_days = [
         now.date() - timedelta(days=1), now.date(),
         now.date() + timedelta(days=1), now.date() + timedelta(days=2),
@@ -522,24 +478,12 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 })
                 continue
 
-            todays_hrs = [
-                r[0] for r in conn.execute(
-                    """SELECT hoursBeforeDep FROM observations
-                       WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
-                       AND hoursBeforeDep IS NOT NULL""",
-                    (carrier, dep_time, org, dest, flight_date_str),
-                ).fetchall()
-            ]
-            eligible_now, minutes_until_eligible = evaluate_eligibility(
-                hours_until_dep, todays_hrs, settings['tiers']
-            )
-
-            # 'axed'/'starred' suppression is OFF for now (his call - too
-            # many routes had accumulated a full set of one or the other,
+            # 'axed'/'starred' suppression is OFF (his call - too many
+            # routes had accumulated a full set of one or the other,
             # silently making whole routes unreachable with no signal
             # that they'd dropped out). verdict/verdictType are still
-            # computed, stored, and shown below - only the eligibility
-            # effect is disabled. Re-add a check here if he wants it back.
+            # computed, stored, and shown below - only ever a display
+            # flag, never something that removes a flight from the pool.
 
             candidates.append({
                 'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
@@ -547,7 +491,6 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'flightDate': flight_date_str, 'dow': dow,
                 'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
                 'hoursUntilDep': hours_until_dep,
-                'eligibleNow': eligible_now, 'minutesUntilEligible': minutes_until_eligible,
                 'verdict': verdict or '', 'verdictType': verdict_type or 'info',
             })
 
@@ -560,16 +503,16 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
-    # Real logging needs no separate tracking - eligible_now already
-    # reflects it (todays_hrs + recheckGapHours above), and departure has
-    # its own hard cutoff (DEP_CUTOFF_MINUTES, applied earlier). But a
-    # blank submission ("nothing to log here right now") writes no
-    # observation at all, so it leaves eligible_now untouched - without
-    # something to mark that intent, the same route just comes right
-    # back. skip_route_days is that marker: purely session-scoped (client
-    # resets it on reload), keyed on (org, dest, flightDate) so skipping
-    # today's dtw-pdx can never bleed into tomorrow's the way the old
-    # (org, dest)-only version did.
+    # No cadence/eligibility engine anymore - every scheduled, non-departed
+    # flight in the window is a candidate every time. What keeps "next"
+    # moving forward through a session, instead of re-offering the same
+    # route over and over, is purely this session-scoped marker: a route+
+    # day lands in here the moment it's either logged (a real save) or
+    # explicitly blank-submitted ("nothing to log here right now") -
+    # either way, it's skipped for the rest of this session. Client
+    # resets it on reload, which is the deliberate way back to the top of
+    # the list. Keyed on (org, dest, flightDate) so skipping today's
+    # dtw-pdx can never bleed into tomorrow's.
     skip_set = {
         (r['org'], r['dest'], r['flightDate']) for r in (skip_route_days or [])
     }
@@ -577,11 +520,12 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
     next_candidate = None
     if forced_route is not None:
         # Used after the schedule-edit modal closes (return to the exact
-        # route+day just edited) and to redisplay the current route+day
-        # unchanged (e.g. the "show departed" toggle) - never advances
-        # past anything, just re-fetches. Checked against both pools since
-        # the route may have finished departing (or a flight may have just
-        # crossed the cutoff) while the modal was open.
+        # route+day just edited) and right after a real log (reshow the
+        # same route with fresh values/T1 estimate) - never advances past
+        # anything, just re-fetches, regardless of skip status.
+        # Checked against both pools since the route may have finished
+        # departing (or a flight may have just crossed the cutoff) while
+        # the modal was open.
         next_candidate = next(
             (c for c in candidates + departed_candidates
              if c['org'] == forced_route['org'] and c['dest'] == forced_route['dest']
@@ -591,8 +535,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
     if next_candidate is None:
         next_candidate = next(
             (c for c in candidates
-             if c['eligibleNow']
-             and (c['org'], c['dest'], c['flightDate']) not in skip_set),
+             if (c['org'], c['dest'], c['flightDate']) not in skip_set),
             None,
         )
 
@@ -602,17 +545,12 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             f"{total_departed} flight{'s' if total_departed != 1 else ''} already left"
             if total_departed > 0 else ''
         )
-        future_waits = [c['minutesUntilEligible'] for c in candidates if c['minutesUntilEligible'] is not None]
-        wait_minutes = min(future_waits) if future_waits else None
-        wait_message = (
-            f"Next flight due for a check in {wait_minutes} min."
-            if wait_minutes is not None else "Nothing left to check today."
-        )
+        wait_message = "Nothing left to check this session - refresh to start over."
         return {
             'dowDisplay': now.strftime('%a'), 'dateDisplay': now.strftime('%b %-d'),
             'flightDate': now.date().isoformat(),
             'routeOrg': None, 'routeDest': None, 'summaryText': summary_text,
-            'waitMinutes': wait_minutes, 'waitMessage': wait_message, 'rows': [],
+            'waitMinutes': None, 'waitMessage': wait_message, 'rows': [],
             'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
             'openFullSettings': load_open_full_settings(conn),
             'recentObservations': recent_observations(conn),

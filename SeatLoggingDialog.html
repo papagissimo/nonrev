@@ -97,10 +97,6 @@
     <div class="settingsLink"><a onclick="toggleSettings()">Settings</a></div>
     <div id="settingsPanel">
       <div class="tierRow">
-        <b>Recheck gap</b> - how soon a route can come back up as "next" after you've logged it<br>
-        Recheck every <input type="number" step="0.1" id="setRecheckGap"> h
-      </div>
-      <div class="tierRow">
         <b>Golden ticket</b> - counted on the launcher as "caught" once any reading today lands at or under<br>
         <input type="number" step="0.1" id="setGoldenTicket"> h before departure
       </div>
@@ -147,15 +143,15 @@
     var aircraftOptionsRendered = false;
     var showDeparted = false;
 
-    // Route+days explicitly skipped this session ("nothing to log here
-    // right now") - resets on reload. This is separate from ordinary
-    // logging progress: a real log naturally stops being offered again
-    // via the recheck-gap cadence math server-side, no client tracking
-    // needed for that. This only covers the blank-submit case, which
-    // writes no observation and so leaves cadence untouched - without an
-    // explicit marker here that route would just come right back. Keyed
-    // on (org, dest, flightDate) so skipping today's dtw-pdx can never
-    // bleed into tomorrow's.
+    // Route+days skipped this session - resets on reload. A route+day
+    // lands in here the moment it's either logged for real or explicitly
+    // blank-submitted ("nothing to log here right now"); either way it's
+    // skipped - drops out of "next" rotation until the next reload. No
+    // cadence engine sits underneath this anymore, so this list is the
+    // entire mechanism keeping a session moving forward instead of
+    // circling back through routes already logged or skipped. Keyed on
+    // (org, dest, flightDate) so skipping today's dtw-pdx can never bleed
+    // into tomorrow's.
     var skippedRouteDays = [];
 
     // The route+day currently on screen, in the shape the backend wants
@@ -505,7 +501,6 @@
     }
 
     function populateSettingsForm(settings) {
-      document.getElementById('setRecheckGap').value = settings.tiers[0].recheckGapHours;
       document.getElementById('setGoldenTicket').value = settings.goldenTicketHours;
     }
 
@@ -518,17 +513,7 @@
 
     function saveSettings() {
       var settings = {
-        goldenTicketHours: parseFloat(document.getElementById('setGoldenTicket').value),
-        // Single tier spanning the whole candidate window - maxHours is
-        // fixed (see settings.py DEFAULT_SETTINGS), not user-editable;
-        // recheckGapHours is the one real knob here.
-        tiers: [
-          {
-            minHours: 0,
-            maxHours: 100,
-            recheckGapHours: parseFloat(document.getElementById('setRecheckGap').value)
-          }
-        ]
+        goldenTicketHours: parseFloat(document.getElementById('setGoldenTicket').value)
       };
       var openFullSettings = {
         dateFrom: document.getElementById('setOpenFullDateFrom').value,
@@ -581,7 +566,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          skipRouteDays: skippedRouteDays, includeDeparted: showDeparted,
+          skippedRouteDays: skippedRouteDays, includeDeparted: showDeparted,
           forcedRoute: sameRoute || null
         })
       })
@@ -608,10 +593,10 @@
       // represent a completed save - i.e. the departed-flights toggle,
       // nothing else. A row that was just successfully logged still has
       // its old values sitting in the DOM for a moment before the next
-      // batch renders; if that next batch happens to offer the same
-      // flight again (a separate, long-tolerated cadence quirk - not
-      // this bug, and not something to fix here), those already-saved
-      // values must NOT be copied back in as if still pending - doing so
+      // batch renders; that next batch is always this same route+day
+      // reshown on purpose (see saveEntryDialog's forcedRoute), so those
+      // already-saved values must NOT be copied back in as if still
+      // pending - doing so
       // makes a second, harmless "log this blank row to move on" click
       // silently resave the same reading as a near-duplicate observation
       // instead. That's exactly what calling this from every renderBatch
@@ -886,23 +871,26 @@
         renderRecentPanel();
       }
 
-      // Blank submit ("nothing to log here right now") writes no
-      // observation, so it needs the explicit session-skip marker to
-      // move past this route - a real log doesn't (cadence's recheck gap
-      // handles that on its own once there's an actual reading).
-      if (!hasAnyData) {
+      function markCurrentRouteSkipped() {
         var key = currentRouteKey();
-        if (key) {
-          var already = skippedRouteDays.some(function (k) {
-            return k.org === key.org && k.dest === key.dest && k.flightDate === key.flightDate;
-          });
-          if (!already) skippedRouteDays.push(key);
-        }
+        if (!key) return;
+        var already = skippedRouteDays.some(function (k) {
+          return k.org === key.org && k.dest === key.dest && k.flightDate === key.flightDate;
+        });
+        if (!already) skippedRouteDays.push(key);
+      }
+
+      // Blank submit ("nothing to log here right now") writes no
+      // observation, so it's this explicit marker - not anything cadence-
+      // related, there's no cadence anymore - that moves the session past
+      // this route.
+      if (!hasAnyData) {
+        markCurrentRouteSkipped();
         status.textContent = 'Skipped. Getting next\u2026';
         fetch('/api/getNextBatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skipRouteDays: skippedRouteDays, includeDeparted: showDeparted })
+          body: JSON.stringify({ skippedRouteDays: skippedRouteDays, includeDeparted: showDeparted })
         })
           .then(function (res) { return res.json(); })
           .then(function (nextResult) {
@@ -918,14 +906,15 @@
         return;
       }
 
-      // Force back to the SAME route+day just logged (currentRouteKey(),
-      // captured before this call fires) rather than letting getNextBatch
-      // pick whatever's chronologically next-eligible across the whole
-      // day - a real log should land him right back on the route he's
-      // working (prev col updated, O/F refreshed, entries blank) so he
-      // can keep going or opportunistically log another departure on it.
-      // Advancing to a genuinely different route stays the blank-submit
-      // skip path's job (below), which intentionally omits forcedRoute.
+      // Mark this route+day skipped (same session-scoped list the blank-
+      // submit path uses) so it stays out of "next" rotation from here
+      // on - but ALSO force the response back to this exact route+day
+      // (forcedRoute bypasses that same list) so a real log lands him
+      // right back where he was (prev col updated, O/F refreshed, entries
+      // blank) to keep going or log another departure on it. Advancing to
+      // a genuinely different route stays the blank-submit path's job
+      // (above), which omits forcedRoute and so actually moves on.
+      markCurrentRouteSkipped();
       fetch('/api/saveAndGetNextBatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

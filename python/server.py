@@ -100,7 +100,7 @@ def api_get_launcher_summary():
 @app.route('/api/getNextBatch', methods=['POST'])
 def api_get_next_batch():
     body = request.get_json(silent=True) or {}
-    skip_route_days = body.get('skipRouteDays')
+    skip_route_days = body.get('skippedRouteDays')
     include_departed = body.get('includeDeparted', False)
     forced_route = body.get('forcedRoute')
     conn = get_conn()

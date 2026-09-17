@@ -1,9 +1,9 @@
 """
-Cadence settings (tier windows, recheck gaps) - what used to live in Apps
-Script's PropertiesService. Local equivalent is a tiny key/value table
-inside nonrev.db itself, so there's still exactly one file holding
-everything about this project, not a second settings file living
-alongside it.
+Small key/value settings blobs (nextUpSettings, decline-curve tunables,
+etc.) - what used to live in Apps Script's PropertiesService. Local
+equivalent is a tiny key/value table inside nonrev.db itself, so there's
+still exactly one file holding everything about this project, not a
+second settings file living alongside it.
 
 load_settings/save_settings take an optional `key`/`defaults` pair so
 other modules can store their own settings blob in this same table
@@ -16,20 +16,13 @@ import json
 
 SETTINGS_KEY = 'nextUpSettings'
 
-# Same gut-feel starting number as the old DEFAULT_NEXT_UP_SETTINGS_ in
-# Entrydialog.gs.js - not derived, just where the old system started too.
-# One tier only, spanning the whole candidate window (see get_next_batch's
-# 4-day schedule_days pool) - maxHours is a fixed ceiling well past
-# anything that pool can ever produce, not something he needs to tune;
-# recheckGapHours is the one real knob (settings pane) - how soon a route
-# can come back up after being logged. There's no separate "logEverything"
-# mode anymore: this single wide-open tier plus the normal 45-minute
-# departure cutoff (DEP_CUTOFF_MINUTES) already covers "keep offering me
-# the same flights every day until they depart."
+# No cadence/eligibility tiers here anymore - his real workflow is
+# walking every scheduled flight in departure order once per session
+# (get_next_batch), logging or blank-skipping each in turn; a tiered
+# eligibility engine sitting on top of that just gave already-handled
+# flights a way to silently cut back in line ahead of ones he hadn't
+# reached yet. goldenTicketHours is the one setting left here.
 DEFAULT_SETTINGS = {
-    'tiers': [
-        {'minHours': 0, 'maxHours': 100, 'recheckGapHours': 0.5},
-    ],
     # "Golden ticket" - his term for a reading close enough to departure
     # to trust as the real go/no-go signal. Configurable rather than
     # hardcoded since he expects to tune it, but tuning it never touches

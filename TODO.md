@@ -22,7 +22,7 @@ working around it.
   falsify history, not heal it. The actual rule, confirmed with him:
   - flightDate == today: compute live, from checkTimestamp + CURRENT
     depTime (same-day schedule corrections are real and should be
-    reflected in same-day cadence/Prev-column lookups).
+    reflected in same-day Prev-column lookups).
   - flightDate in the past: NEVER touch live flightSchedule. The value
     frozen at logging time already IS the correct historical fact - it's
     what was true when that reading was taken, not "Delta's schedule
@@ -31,8 +31,7 @@ working around it.
   - Practically: keep storing hoursBeforeDep exactly as today for
     already-logged rows (already correct, permanent once the flightDate
     passes). Add a live-computed path ONLY for today's-flightDate
-    same-day lookups (Prev column, cadence eligibility in
-    SeatLoggingDialog.py). Curve fitting, GraphObservations.py, and
+    same-day lookups (Prev column). Curve fitting, GraphObservations.py, and
     ServiceGrouping.py's pooled open/full counts keep reading the stored
     value unchanged - they work across many past flightDates, exactly
     the case that must never touch live schedule. Not started.
@@ -57,8 +56,7 @@ regrouped both visibility views (DeclineCurveDialog, ShowServiceDetail.py)
 by clustered service. Checked `get_next_batch` specifically - it does NOT
 need a per-service lookup; the belief that it did was carried over from
 the OLD corner-chasing cadence design (already dead, see Dead ideas
-below), and the fixed-checkpoint cadence actually live now is fully
-self-contained per flight-day.
+below) - get_next_batch itself is fully self-contained per flight-day.
 
 Raw depTime correctly stays exact and untouched by any of this in
 FlightScheduleDialog.py (schedule entry) and ObservationsBrowser.py
@@ -184,6 +182,16 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Dead ideas — do not re-propose
 
+- Automated tiered cadence/eligibility engine in get_next_batch
+  (settings.py's tiers, recheckGapHours, evaluate_eligibility) — removed
+  2026-09-16. His real workflow for the past month has been walking every
+  scheduled flight in departure order each session, logging or blank-
+  skipping each in turn; the tier engine wasn't doing that job, and its
+  near-zero recheck gap let an already-logged flight silently cut back in
+  line ahead of ones not yet reached, starving several routes for a whole
+  evening. Replaced with a plain session-scoped handled-set (logged or
+  blank-skipped this session, cleared on reload) — no eligibility math at
+  all. goldenTicketHours (a display flag, not a gate) is untouched.
 - GraphObservations' t1Old/t1New side-by-side (old two-point method vs.
   floor-substituted variant) comparison feature — never actually used it;
   GraphObservations now calls the same curve-slide estimator
