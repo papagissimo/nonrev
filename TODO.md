@@ -51,6 +51,9 @@ working around it.
 - **Delayed-flight departure time** — very low priority. Doesn't come up
   often enough in practice to be worth designing for. Leave alone until it
   actually becomes a problem.
+- **Flatten the observation type — not yet discussed, on his mind.**
+  Dislikes the current indirection but hasn't defined what "flatten"
+  means yet or what it'd change. Real conversation coming, not today.
 
 ## Service identity (raw depTime vs. clustered service) — CLOSED 2026-09-16
 
@@ -144,23 +147,6 @@ before - a NEW, specific symptom is the bar for reopening it.
   display-only, never persisted or used in any live prediction - so
   either drop it from the print or floor/cap its display, cosmetic only.
 
-## Verdicts / classification / logging UI
-
-- Verdict-text granularity not settled: floated a scheme with "full so
-  far"/"open so far" (fewer than 3 good observations, at least 1) versus
-  plain "full"/"open" (3+, unanimous), plus a possible "middling"/
-  "middling so far" tier for real spread. Wants to test against real
-  service data before committing to any of it.
-- Second glyph for "stop looking, this one's a lock" (distinct from
-  gold-star's "open so far" and green-check's "looking good, keep
-  watching") — verdictType still only has info/warning/axed/starred in the
-  live schema; not yet designed or added. Not ready to work on this yet.
-- Alternating row background bands in the logging dialog (one flight's
-  batch vs. the next) for readability - currently all-white, hard to
-  track where one flight ends and the next begins. Undecided between
-  plain white/light-gray or white/light-green (he has a green already in
-  the palette) - his call when it's picked up.
-
 ## Graphing — low priority, not actively working this area right now
 
 - T1 weekday bar chart (Mon-Sun per service) — mockup approved, still not
@@ -244,6 +230,10 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Dead ideas — do not re-propose
 
+- Verdict/classification-glyph UI work generally (verdict-text granularity
+  scheme, second "lock it in" glyph) — killed 2026-09-18, not interested
+  in pursuing this right now. Alternating row background bands in the
+  logging dialog — done, no longer applicable.
 - Artificial future-zero injection to resolve a slope for a flat/plateaued
   instance (assume that given enough time everything eventually sells out,
   so plant a hypothetical zero reading past the last real one and fit
