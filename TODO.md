@@ -77,6 +77,26 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Decline curve / predictor
 
+- **"No net decline in window" instances (~80 of 363 Friday-service
+  instances behind unresolved slopes, 2026-09-18) - not a bug, not fixable
+  by iteration count (confirmed: 0/80 resolve even at max_iterations=500),
+  needs a design decision.** These have real non-9 data but the window's
+  net change is ≤0 (flat, oscillating, or ends higher than it started) -
+  `fit_instance`'s first attempt never gets a positive slope to correct, so
+  the loop never runs. Open question: is this its own category worth
+  naming explicitly (a resting-value-plus-noise signal, not a decline to
+  force-fit), especially if it recurs on the same service? See the
+  multi-model idea below - this may be exactly the case that needs one.
+- **New idea, not yet designed: 2-3 distinct models depending on service
+  behavior, not one model everywhere.** Current: internal-shape decline fit
+  (fit_instance). Candidate second model: a "found the bottom, sits there
+  with noise" resting-value-plus-band model for services that plateau
+  instead of resolving (see "no net decline" above) - not a slope at all,
+  just a settled value and a spread. Long-haul (Tokyo, NZ, Australia)
+  likely needs its own treatment too, for the reason already in
+  DECLINE_CURVE_DESIGN.md's coverage notes - a 9-seat ceiling means
+  something very different on a wide-body cabin than a small commuter one.
+  Not started; flagged as likely needed once those routes get studied.
 - **New idea, not yet designed: time-to-full is its own signal, separate
   from decline slope/C1/night-ratio.** A service that crosses the "full"
   threshold (currently 2, not literally 0) very early versus one that
@@ -224,6 +244,30 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Dead ideas — do not re-propose
 
+- Artificial future-zero injection to resolve a slope for a flat/plateaued
+  instance (assume that given enough time everything eventually sells out,
+  so plant a hypothetical zero reading past the last real one and fit
+  against it) — considered and rejected 2026-09-18. Circular: the
+  resulting "slope" would be set almost entirely by the arbitrary
+  time-offset chosen for the fake zero, not by data. Also conflicts with
+  the existing right-censored-gets-infinity convention (a flat/unresolved
+  instance should stay unresolved, not get an assumed future value), and
+  would erase the real "usually open" signal for services that
+  legitimately never sell out.
+- Per-instance T4-bracket-to-last-reading rate as a full replacement for
+  fit_instance's internal correction-loop fit (pool a bare two-point rate
+  per instance instead of a multi-point fit) — tested 2026-09-18 via a
+  fair leave-one-out backtest (same test instances, same ground-truth
+  gate, only the pool source varied). Worse on both coverage (fewer
+  instances resolve a usable rate at all than resolve via the internal
+  fit) and accuracy (RMSE 2.58→3.08 seats on y, 2.15→2.64 on cPlus,
+  1.31→1.42 on firstOrPS) across every cabin. The internal fit's use of
+  every reading in an instance, not just two bracket points, isn't
+  redundant richness - it measurably improves the rate estimate. Rejected
+  as a replacement. (Does NOT affect the separate, already-correct
+  step-change/jumpiness display, which compares raw readings against a
+  pooled RATE regardless of how that rate was derived - no dependency on
+  this idea either way.)
 - Bounce-back-to-9 handling via splitting affected readings into
   separate (service, flightDate, excursion) instance keys before
   fit_instance — considered, then superseded 2026-09-17 by widening

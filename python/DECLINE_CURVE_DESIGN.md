@@ -31,11 +31,14 @@ One (service, cabin, flight-day) at a time.
   demand kept building after the plane was already closed out, not an
   artifact to suppress.
 - **The model is not trying to reproduce the true shape of the decline.**
-  It's trying to predict T-1 from T-4 (or whatever the anchor point is)
-  with something repeatable and algorithmic. A single (c1, slope) line is
-  a deliberately simple proxy for that, not an attempt to trace what
-  actually happened seat-by-seat — the fit is judged by predictive
-  usefulness, not by resemblance to the real curve.
+  It's *meant* to predict T-1 from T-4 (or whatever the anchor point is)
+  with something repeatable and algorithmic — that it actually does so
+  well is a separate, unproven question, not something this design
+  establishes on its own. A single (c1, slope) line is a deliberately
+  simple proxy aimed at that goal, not an attempt to trace what actually
+  happened seat-by-seat; the fit should ultimately be judged by
+  predictive usefulness, not by resemblance to the real curve, but that
+  judgment itself is still outstanding.
 - **A bounce-back-and-redecline is two real segments, not one real
   segment with a second one forced onto it.** A cancellation reopening
   seats back toward 9 mid-decline interrupts one continuous erosion into
@@ -97,6 +100,46 @@ ranked per-service list showing slope, gap, C1, night ratio, the late-step
 stats above, and — when a pooled value actually came from an optimization
 rather than agreement or a fallback — how many iterations it took and its
 RMSE.
+
+## Coverage: why some (service, cabin) pairs don't resolve a slope
+
+Snapshot taken 2026-09-18, Friday services only (104 clustered services, 307
+service/cabin pairs with any data). 121 (39%) resolve a slope; 186 (61%)
+don't. D1 excluded — no route studied yet has a D1 cabin.
+
+Broken down per instance (not per pair, since a pair's instances often mix
+causes) across the 363 instances behind those 186 pairs:
+
+- **179 always sat at 9** — the flight never left the rail in the logged
+  window. This is the good case (a full flight) and is expected to never
+  resolve a slope; more logging won't change it.
+- **102 are a single logged reading** — `fit_instance` needs at least two
+  points to compute any gap at all. More logging fixes this over time.
+- **80 have real (non-9) data but no net decline across the window** — flat,
+  oscillating, or ending higher than they started. This is the case worth
+  more design thought (see backlog).
+- 2 more looked ambiguous under a quick first/last-value check but turned
+  out to be genuinely messy multi-segment trajectories on inspection, not a
+  bug — folded into the "no net decline" count above.
+
+Confirmed by direct test: raising `stepChangeMaxIterations` does **not**
+help the "no net decline" case, at any cap. The correction loop only runs
+once `stage_fit`'s first attempt succeeds; when a window's net change is
+≤0, that very first attempt returns nothing to correct, so the loop never
+starts. 0 of 80 flipped to a resolved slope even at max_iterations=500.
+
+## Coverage fix that did and didn't help (2026-09-18)
+
+Isolated the first-edge/last-edge windowing fix's effect on Friday services
+by running old vs. new `window_bounds` against identical current data (same
+day, controls for "more data logged since the last refresh"). Net effect on
+raw coefficient count: a wash — 283 resolved pairs either way — but the
+composition changed: 5 pairs gained a resolved slope (previously-discarded
+leading readings now correctly included), 6 lost one (a previously-reported
+slope turned out to come from a window that had cropped off the one reading
+that would've shown the trajectory wasn't a clean decline — losing that
+"slope" was correct, not a regression). Net-correctness win, not a
+net-coverage win, on this snapshot.
 
 ## Open questions / backlog
 
