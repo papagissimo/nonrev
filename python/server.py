@@ -14,7 +14,7 @@ here ever leaves your Chromebook or touches the network.
 import os
 import sqlite3
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 
 import SeatLoggingDialog
 import FlightScheduleDialog
@@ -444,6 +444,22 @@ def api_get_decline_curve_service_detail():
     conn = get_conn()
     try:
         return jsonify(DeclineCurveDialog.get_service_detail(conn, body['org'], body['dest'], body['dayOfWeek']))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/exportCoefficientsCsv', methods=['GET'])
+def api_export_coefficients_csv():
+    conn = get_conn()
+    try:
+        csv_text = DeclineCurveDialog.coefficients_csv_text(conn)
+        return Response(
+            csv_text,
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment; filename=decline_curve_coefficients.csv'},
+        )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

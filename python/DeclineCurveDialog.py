@@ -19,6 +19,9 @@ PoolingSettingsDialog.save_excluded_date_ranges) - simpler than
 inventing a synthetic key when rowid already does the job.
 """
 
+import csv
+import io
+
 from settings import (
     load_settings, save_settings,
     DECLINE_CURVE_GLOBAL_DEFAULTS_KEY, DEFAULT_DECLINE_CURVE_GLOBAL_DEFAULTS,
@@ -27,6 +30,18 @@ from DeclineCurveHierarchy import resolve_coefficients, DEFAULT_MIN_INSTANCES
 from clustering import cluster_services, service_representative
 
 CABINS = ["y", "cPlus", "firstOrPS", "d1"]
+
+# One flat header row, no grouping - his explicit ask (2026-09-17) for
+# the CSV export below, so every column is independently sortable/
+# filterable in Sheets without a merged-header layer to fight.
+CSV_COLUMNS = [
+    'org', 'dest', 'dayOfWeek', 'depTime', 'cabin',
+    'derivedC1Hours', 'derivedSlopeSeatsPerHour', 'derivedNightSlopeRatio',
+    'nInstancesC1', 'nInstancesSlope', 'nInstancesNightSlope', 'nInstances',
+    'liveC1Hours', 'liveC1Tier',
+    'liveSlopeSeatsPerHour', 'liveSlopeTier',
+    'liveNightSlopeRatio', 'liveNightSlopeRatioTier',
+]
 
 
 # ---------- Tier 1: global defaults ----------
@@ -286,3 +301,59 @@ def get_service_detail(conn, org, dest, day_of_week):
         services.append({'depTime': rep_time, 'memberDepTimes': cluster, 'cabins': cabins_out})
 
     return {'org': org, 'dest': dest, 'dayOfWeek': day_of_week, 'services': services}
+
+
+# ---------- CSV export (all routes/days at once) ----------
+
+def _dep_time_to_hhmm(dep_time_minutes):
+    """Minutes-since-midnight -> the same hhmm value as an int (e.g.
+    930 -> 1530, 65 -> 105) rather than the raw minutes count - his
+    ask (2026-09-17), so the CSV's depTime column reads like a clock
+    time. Stays a real number (not zero-padded text) so it's sortable/
+    filterable as a number in Sheets; he can apply a custom "0000"
+    number format there if he wants the on-screen leading zero without
+    turning the underlying value into text."""
+    hh, mm = divmod(dep_time_minutes, 60)
+    return hh * 100 + mm
+
+
+def get_all_coefficients_flat(conn):
+    """Every service+cabin's coefficients, across every (org, dest,
+    dayOfWeek) that has derived data - flattened to one row per
+    service+cabin for the CSV export below (his ask, 2026-09-17):
+    something he can filter broadly in Google Sheets, so this is
+    deliberately the aggregate-only view. Reuses get_service_detail's
+    per-route-day grouping (same service clustering, same
+    dedup-by-flightDate nInstances) across every route/day at once,
+    but drops the per-instance-fit rows entirely - those stay on the
+    visibility page for now; this is a separate, simpler export."""
+    rows = []
+    for opt in get_route_day_options(conn)['options']:
+        detail = get_service_detail(conn, opt['org'], opt['dest'], opt['dayOfWeek'])
+        for svc in detail['services']:
+            for c in svc['cabins']:
+                rows.append({
+                    'org': detail['org'], 'dest': detail['dest'], 'dayOfWeek': detail['dayOfWeek'],
+                    'depTime': _dep_time_to_hhmm(svc['depTime']), 'cabin': c['cabin'],
+                    'derivedC1Hours': c['derivedC1'], 'derivedSlopeSeatsPerHour': c['derivedSlope'],
+                    'derivedNightSlopeRatio': c['derivedNightSlopeRatio'],
+                    'nInstancesC1': c['nInstancesC1'], 'nInstancesSlope': c['nInstancesSlope'],
+                    'nInstancesNightSlope': c['nInstancesNightSlope'], 'nInstances': c['nInstances'],
+                    'liveC1Hours': c['liveC1'], 'liveC1Tier': c['liveC1Tier'],
+                    'liveSlopeSeatsPerHour': c['liveSlope'], 'liveSlopeTier': c['liveSlopeTier'],
+                    'liveNightSlopeRatio': c['liveNightSlopeRatio'],
+                    'liveNightSlopeRatioTier': c['liveNightSlopeRatioTier'],
+                })
+    return rows
+
+
+def coefficients_csv_text(conn):
+    """Renders get_all_coefficients_flat as CSV text - CSV_COLUMNS is
+    the one and only header row, in order, so Sheets sees a normal
+    single-row header with nothing to merge or misparse."""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, extrasaction='ignore')
+    writer.writeheader()
+    for row in get_all_coefficients_flat(conn):
+        writer.writerow(row)
+    return buf.getvalue()

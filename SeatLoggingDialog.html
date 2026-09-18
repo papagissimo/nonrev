@@ -17,7 +17,7 @@
     th { text-align: left; font-size: 13px; color: #888; padding: 3px 5px; overflow: hidden; }
     th.groupHead { font-size: 11px; color: #aaa; text-align: center; font-weight: normal; padding: 0; }
     td { padding: 5px 5px; vertical-align: middle; overflow: hidden; }
-    tr.next { background: #e6f4ea; }
+    #rows tr:nth-child(odd) { background: #e6f4ea; }
     .dep { font-weight: bold; font-size: 17px; }
     .hrs { font-size: 15px; color: #666; }
     .hrs.soon { color: #c5221f; font-weight: bold; }
@@ -708,7 +708,6 @@
       tbody.innerHTML = '';
       batch.rows.forEach(function (row, i) {
         var tr = document.createElement('tr');
-        if (row.isNext) tr.className = 'next';
         if (row.departed) tr.className = (tr.className ? tr.className + ' ' : '') + 'departedRow';
         var hrsClass = 'hrs' + (row.hoursUntilDep <= 2 ? ' soon' : '');
         var seatDisabled = row.departed ? ' disabled' : '';
