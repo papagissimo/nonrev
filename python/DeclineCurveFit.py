@@ -616,21 +616,6 @@ def solve_zero_crossing_from_reading(hbd_r, val_r, slope, night_ratio=1.0, depar
         return hbd_r - target_elapsed
 
 
-def find_c1_bracket(readings):
-    """Last-known-9 -> first-known-non-9, in hoursBeforeDep terms. None
-    if this instance never left 9, or never showed a 9 to begin with."""
-    last_nine_hbd = None
-    first_non9_hbd = None
-    for hbd, v in readings:  # already chronological (descending hbd)
-        if v >= 9:
-            last_nine_hbd = hbd
-        elif first_non9_hbd is None and last_nine_hbd is not None:
-            first_non9_hbd = hbd
-    if last_nine_hbd is None or first_non9_hbd is None:
-        return None
-    return (first_non9_hbd, last_nine_hbd)  # (lower, upper)
-
-
 def fit_slope_and_night_ratio(window_readings, departure_dt, night_start_hour, night_end_hour,
                                default_night_ratio):
     """STAGE 1 of fit_instance. Solves day-slope and night-slope
@@ -718,17 +703,44 @@ def fit_instance(readings, rmse_threshold, max_iterations,
     reading at all (never left 9), off the window's own start as a
     placeholder with slope left unidentified.
 
-    TRANSITION WINDOW: bounded by the FIRST observed 9 and the LAST
-    observed 0 (inclusive of both) - widened 2026-09-17 from the
-    earlier last-9-to-first-0 version, which silently discarded a real
-    decline whenever a service bounced back to 9 partway through and
-    declined again (last_nine_i always jumped to the LATEST 9,
-    throwing away everything before it - confirmed via direct code
-    read, not assumed). Every reading strictly between the window's
-    own edges - interior values, whatever wobbles got corrected in
-    place - feeds stage 1. When there's no 9 at all (starts already
-    off 9) or no 0 at all (never fully declines), the window falls
-    back to the full readings list from whichever edge IS anchored.
+    TRANSITION WINDOW (first-edge/last-edge, 2026-09-18): anchored
+    independently at each end, not by scanning for rail values
+    anywhere in the middle. Start: if the readings' own first point is
+    a 9, walk forward through however many 9s lead the sequence and
+    anchor on the LAST one - the single 9 immediately before this
+    instance's first-ever departure from 9. If the first point isn't a
+    9 (logging picked up mid-decline), there's no edge to trim, so the
+    window starts at index 0. End: symmetric - if the last point is a
+    0, walk backward through the trailing 0s and anchor on the FIRST
+    one; if the last point isn't a 0 (still declining, unresolved as
+    of the latest check - including an instance that hit 0 once,
+    bounced back to 9, and is declining again), there's no edge yet,
+    so the window ends at the last index. Only genuinely redundant
+    flat rail time at the two ends gets trimmed this way; every
+    reading between the two anchors - interior values, a full bounce
+    back to 9, a second decline, whatever wobbles got corrected in
+    place - feeds stage 1 untouched. Superseded the 2026-09-17
+    first-seen-9/last-seen-0 version, which kept the full flat run at
+    both ends and measurably diluted the fitted slope toward zero
+    (every 9->9 or 0->0 pair in the window still fed the least-squares
+    solve).
+
+    Both declining segments in a bounce-back-and-redecline case are
+    real - not one "true" segment with the other forced onto it. A
+    cancellation reopening seats back toward 9 mid-decline interrupts
+    one continuous erosion into two; correction is what puts the
+    pieces back into one fittable line, not a tool bending a fake
+    segment to match a real one. Because correction is unclamped, a
+    heavily-corrected interior point can legitimately land outside the
+    0-9 range (an implied 11, an implied -2) once enough step-change
+    activity gets folded in - that's the model working as intended,
+    not a bug: the rail bounds are physical limits on what gets
+    OBSERVED, not limits on what a corrected fitting point is allowed
+    to be. This windowing accepts that a genuine two-segment
+    bounce-back won't always converge cleanly to one (c1, slope) line
+    (see DECLINE_CURVE_DESIGN.md) - a fit gained on the instances
+    where it does converge is a net win regardless of the ones where
+    it still doesn't.
 
     CORRECTION-IN-PLACE, RESCOPED: a correction pass can land on an
     interior residual OR a bracket residual - the model's predicted
@@ -737,20 +749,19 @@ def fit_instance(readings, rmse_threshold, max_iterations,
     interior reading further in, implies the corner happened earlier
     than a genuine 9 actually observed) - exactly the same footing as
     an interior step change: a booking event can land right at a
-    crossing (or a bounce back to 9) as easily as mid-decline. Widened
-    2026-09-17 alongside the window itself - every 9/0-valued point in
-    the window is now correction-eligible, not just its two edges, so
-    a mid-sequence bounce-back gets the same unclamped repair an
-    interior point already gets rather than silently forcing a window
-    restart (see TRANSITION WINDOW above). Only INTERIOR residuals
-    count toward the rmse_threshold convergence check, though - rails
-    should sit exactly on the clamped model once things are
-    consistent, so a residual there doesn't get to loosen the stopping
-    bar, it just stays eligible for correction like anything else.
-    max_iterations remains a hard cap regardless of convergence, same
-    as before - required whenever correcting in place doesn't shrink
-    the candidate set the way removal would, so there's no structural
-    convergence guarantee.
+    crossing (or a bounce back to 9) as easily as mid-decline. Every
+    9/0-valued point in the window is correction-eligible, not just
+    its two edges, so a mid-sequence bounce-back gets the same
+    unclamped repair an interior point already gets rather than
+    silently forcing a window restart (see TRANSITION WINDOW above).
+    Only INTERIOR residuals count toward the rmse_threshold
+    convergence check, though - rails should sit exactly on the
+    clamped model once things are consistent, so a residual there
+    doesn't get to loosen the stopping bar, it just stays eligible for
+    correction like anything else. max_iterations remains a hard cap
+    regardless of convergence, same as before - required whenever
+    correcting in place doesn't shrink the candidate set the way
+    removal would, so there's no structural convergence guarantee.
 
     Returns a dict with c1, slope (None if unidentifiable - see above),
     nightRatio (this instance's own solved ratio, or the externally
@@ -771,19 +782,24 @@ def fit_instance(readings, rmse_threshold, max_iterations,
     corrections = defaultdict(int)
 
     def window_bounds(cur_pts):
-        first_nine_i = None
-        for i, (h, v) in enumerate(cur_pts):
-            if v >= 9:
-                first_nine_i = i
-                break
-        last_zero_i = None
-        for i, (h, v) in enumerate(cur_pts):
-            if v <= 0:
-                last_zero_i = i
-        lo = first_nine_i if first_nine_i is not None else 0
-        hi = last_zero_i if last_zero_i is not None else len(cur_pts) - 1
-        if hi < lo:
-            hi = len(cur_pts) - 1
+        n = len(cur_pts)
+
+        lo = 0
+        if cur_pts[0][1] >= 9:
+            for i, (h, v) in enumerate(cur_pts):
+                if v >= 9:
+                    lo = i
+                else:
+                    break
+
+        hi = n - 1
+        if cur_pts[-1][1] <= 0:
+            for i in range(n - 1, -1, -1):
+                if cur_pts[i][1] <= 0:
+                    hi = i
+                else:
+                    break
+
         return lo, hi
 
     def stage_fit(cur_pts):

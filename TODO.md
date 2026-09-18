@@ -77,50 +77,6 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Decline curve / predictor
 
-- **fit_instance's single (c1, slope) line breaks down in real, confirmed
-  ways beyond the 2026-09-17 bounce-back widening — not fully resolved,
-  needs a design decision before building anything.** Three distinct
-  failure modes found and confirmed against real data/live code
-  2026-09-18:
-  1. **Window mis-anchoring when no confirmed 9 precedes a dip.**
-     window_bounds's `hi < lo` fallback (triggers when the window's first
-     real 9 comes AFTER its last real 0) throws away the real dip and
-     anchors on unrelated later readings, instead of falling back to the
-     start of the readings. Confirmed live: affects 9 of 3236 real
-     instances across all cabins, including y service 270 / 2026-09-15 —
-     the actual cvg-msp 10:50am dip-then-recover case (8,2,0,9,9,9), the
-     exact scenario the 9/17 widening was meant to fix. Proposed fix, not
-     yet built: `lo` should fall back to 0 whenever `first_nine_i` is None
-     OR comes after `last_zero_i`, rather than forcing `hi` to the end.
-  2. **Flat rail dead-time measurably dilutes the solved slope**, even
-     with a real departure_dt driving the two-unknown day/night solve —
-     confirmed numerically (0.429 vs. 0.333 seats/hr for the identical
-     decline, differing only in how many redundant leading 9s sit in the
-     window). Every consecutive-gap pair in the window, including a
-     9→9 or 0→0 pair, feeds the least-squares slope solve, so extra flat
-     time before/after a decline pulls the rate toward zero.
-  3. **A window spanning a real bounce-back plateau (two separate decline
-     segments) doesn't reliably converge.** Synthetic same-slope
-     two-decline test (bounce plateau between them) hit max_iterations
-     with RMSE oscillating rather than settling (2.36 → 0.66 → 0.86 →
-     1.05 across 20 iterations), and corrected a genuinely CONFIRMED 0
-     reading away from its observed value by 3 seats to compensate —
-     evidence one (c1, slope) pair structurally can't represent two
-     offset decline segments, however many correction iterations are
-     allowed.
-  Open design question, NOT settled: whether flat leading/trailing rail
-  readings should collapse to a single boundary point before slope-fitting
-  (addresses #1 and #2), while a genuinely interior plateau (bordered by
-  declines on both sides) stays real correction-eligible data, since a
-  plateau is live signal, not noise to filter out — but #3 suggests that
-  may not be enough on its own, since the single-line model may lack the
-  degrees of freedom to represent a true multi-segment instance at all.
-  Test cases worth keeping for whatever gets built: cvg-msp 2026-09-15
-  10:50am Y cabin (real, live in nonrev.db) for #1; a synthetic
-  same-slope bounce-back case for #3 (hourly readings, departure_dt
-  anchoring day/night: 9×6, 8,7,6,5,4,3,2,1, 0×2, 9×4, 8,7,6,5,4,3,2,1,
-  0×3 — not saved as code anywhere yet).
-
 - **New idea, not yet designed: time-to-full is its own signal, separate
   from decline slope/C1/night-ratio.** A service that crosses the "full"
   threshold (currently 2, not literally 0) very early versus one that
@@ -271,13 +227,15 @@ before - a NEW, specific symptom is the bar for reopening it.
 - Bounce-back-to-9 handling via splitting affected readings into
   separate (service, flightDate, excursion) instance keys before
   fit_instance — considered, then superseded 2026-09-17 by widening
-  window_bounds (first-seen-9 to last-seen-0) and bracket_idx (every
-  9/0-valued point in that window, not just the edges) so the existing
-  correction loop handles a bounce-back in place, without a second
-  algorithm or a pre-fit splitting pass. Splitting itself is still not
-  being reconsidered, but the widening implementation was found
-  incomplete 2026-09-18 — see the open "Decline curve / predictor" entry
-  above; this is not fully dead.
+  window_bounds and bracket_idx (every 9/0-valued point in the window,
+  not just the edges) so the existing correction loop handles a
+  bounce-back in place, without a second algorithm or a pre-fit
+  splitting pass. Splitting itself is still not being reconsidered. The
+  2026-09-17 widening (first-seen-9 to last-seen-0) was found incomplete
+  2026-09-18 — mis-anchored when no 9 preceded a dip, and diluted the
+  fitted slope with redundant flat-rail time — and fixed the same day
+  with first-edge/last-edge anchoring instead (see
+  DECLINE_CURVE_DESIGN.md); fully dead now.
 - Automated tiered cadence/eligibility engine in get_next_batch
   (settings.py's tiers, recheckGapHours, evaluate_eligibility) — removed
   2026-09-16. His real workflow for the past month has been walking every
