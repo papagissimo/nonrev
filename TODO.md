@@ -10,11 +10,8 @@ working around it.
 ## Core dialogs / SQLite rewrite
 
 - **hoursBeforeDep computed-live for TODAY only (not stored, or blindly
-  always-live either) — refined 2026-09-16, still fully open.** Orphan
-  DETECTION itself is built (schedule-edit save diffs the route+day's
-  depTimes before vs. after; any depTime present before but missing
-  after is surfaced as an orphan) - this is the separate, bigger piece.
-  The recovered handoff doc's original design said "stop storing
+  always-live either) — refined 2026-09-16, still fully open.** The
+  recovered handoff doc's original design said "stop storing
   hoursBeforeDep, always compute live from checkTimestamp + current
   depTime" - discussed further and that's WRONG as stated: a service's
   schedule genuinely wobbles week to week (a ~9:30am departure might be a
@@ -24,30 +21,51 @@ working around it.
   falsify history, not heal it. The actual rule, confirmed with him:
   - flightDate == today: compute live, from checkTimestamp + CURRENT
     depTime (same-day schedule corrections are real and should be
-    reflected in same-day Prev-column lookups).
-  - flightDate in the past: NEVER touch live flightSchedule. The value
-    frozen at logging time already IS the correct historical fact - it's
-    what was true when that reading was taken, not "Delta's schedule
-    that day." Recomputing it against today's schedule would be actively
-    wrong, not a fix.
-  - Practically: keep storing hoursBeforeDep exactly as today for
-    already-logged rows (already correct, permanent once the flightDate
-    passes). Add a live-computed path ONLY for today's-flightDate
-    same-day lookups (Prev column). Curve fitting, GraphObservations.py, and
-    ServiceGrouping.py's pooled open/full counts keep reading the stored
-    value unchanged - they work across many past flightDates, exactly
-    the case that must never touch live schedule. Not started.
-- **New idea, not yet designed: scan HISTORY for orphans that predate
-  the detection fix above.** Detection only catches a schedule edit
-  going forward from whenever it runs - anything orphaned before that
-  existed is still sitting wrong in already-logged data, uncorrected,
-  and nothing has ever gone looking for it. Separate piece of work from
-  live detection - independent of everything else on this list.
-- **confirmedAirports gate not yet in FlightScheduleDialog** — the
-  confirm-before-trusting-a-timezone check (confirm_airports.py) only
-  runs from the logging-entry flow. FlightScheduleDialog is the more
-  natural place a genuinely new route/airport gets added, but doesn't
-  run the check yet. Not urgent.
+    reflected in same-day Prev-column lookups). Match today's own
+    already-logged readings to the current schedule row by clustering
+    (clustering.cluster_services), not exact depTime equality - exact
+    match silently drops readings the moment a same-day correction lands
+    (his real routes run up to 7 flights/day on one route/day, ~90+ min
+    apart, so the 60-min cluster gap is safe).
+  - flightDate in the past: NEVER recompute against TODAY's live
+    flightSchedule - that's a different route's/week's truth, not a
+    correction of that date's. Not started (the today-only live path
+    itself - see below for a separate, already-done historical
+    cleanup this does NOT supersede).
+- **Historical hoursBeforeDep/depTime backfill — DONE 2026-09-18.**
+  Different from the above: no live schedule involved at all. Empirically
+  (674 flight-day groups checked), a flight's own depTime converges
+  toward its last same-day reading as departure nears (avg deviation 2.2
+  min at 8+ hrs out, down to 0.3 min inside the final hour) rather than
+  bouncing randomly - Delta's displayed time sharpening as departure
+  approaches, not noise. His call: use each flight's own last reading
+  that day as truth, back-correct the earlier ones to match (both
+  depTime and hoursBeforeDep, so they stay consistent with each other).
+  Not chasing precision far out (his call: +/-15 min at 4+ hrs out is
+  fine) - 1458 rows corrected, avg change 0.043 hr, max 0.6 hr. Script:
+  python/backfill_deptime_convergence.py - re-runnable if new data drifts
+  the same way, finds nothing left to do on a clean dataset.
+- **Orphan detection does NOT exist yet - TODO previously claimed
+  otherwise, that was wrong (checked the actual code 2026-09-18, no
+  before/after depTime diff anywhere in FlightScheduleDialog or
+  elsewhere).** One-time historical SCAN done instead (2026-09-18):
+  compared every observation's depTime against the CURRENT schedule for
+  its (org, dest, dayOfWeek), 60-min cluster gap as the match tolerance.
+  - 559 observations on still-scheduled routes have no current depTime
+    match at all (real orphans - something drifted or was corrected far
+    enough that they no longer correspond to anything live). Of those,
+    247 have hoursBeforeDep < 4 - i.e. were logged within 4 hours of
+    their (now-vanished) departure, so these are the readings that
+    mattered most at the time and are the ones most worth fixing first
+    if this gets built.
+  - 82 more are on routes/days no longer in the schedule AT ALL (route
+    dropped entirely) - expected drift from routes coming and going, not
+    a bug, probably not worth chasing.
+  - Not designed or built: what to actually DO with a confirmed orphan
+    (best guess: same self-consistency idea as the backfill above -
+    would need a live anchor design of its own, not automatic from that
+    backfill). Scan script not saved to the repo - one-off, ask if
+    re-running it is ever useful.
 - **Delayed-flight departure time** — very low priority. Doesn't come up
   often enough in practice to be worth designing for. Leave alone until it
   actually becomes a problem.
