@@ -4,6 +4,14 @@ import sqlite3
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nonrev.db')
 
 SCHEMA = """
+-- flightSchedule is a snapshot of THIS WEEK's Delta schedule ONLY - not a
+-- record of any other week, past or future. Delta doesn't publish anything
+-- more durable than that: no flight-number stability, no guarantee a time
+-- holds even one week out. Editing a row overwrites it in place with no
+-- history kept - the OLD depTime is gone the moment you save, not archived
+-- anywhere. Never compare an observations row's depTime against this table
+-- to judge whether that reading was "correct" - a mismatch just means the
+-- schedule moved since, which happens constantly and is not an error.
 CREATE TABLE flightSchedule (
     carrier                              TEXT NOT NULL,
     carriersFltNum_notStable_DO_NOT_USE  TEXT NOT NULL,

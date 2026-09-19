@@ -6,15 +6,27 @@ Sheets/PropertiesService.
 Flight identity: a real Delta flight number is not a stable identifier
 (see domainKnowledge.md / flightSchedule's carriersFltNum_notStable_
 DO_NOT_USE column) - never matched on, anywhere. "Today's readings for
-this flight" is instead an exact match on (carrier, org, dest, depTime,
-flightDate): depTime is captured directly on each observation at logging
-time (from whatever the schedule said then), not read back from
-flightSchedule afterward - so a later depTime correction there can never
-make an already-logged observation's own recorded time go stale, and
-nothing here needs flightSchedule at all once a reading exists. This is
-a real simplification versus the old Sheets version too, which had no
-reliable flight-number field at all and had to fuzzy-match org/dest/dep
-time within +/-30 min - exact match now, on data each row owns outright.
+this flight" is an exact match on (carrier, org, dest, depTime,
+flightDate) for any date OTHER than today: depTime is captured directly
+on each observation at logging time and never read back from
+flightSchedule afterward, so once flightDate is in the past that row's
+own recorded time can never go stale - flightSchedule itself only ever
+holds THIS WEEK's values anyway (see its CREATE TABLE comment in
+create_db.py), so there'd be nothing meaningful to compare an old row
+against even if we wanted to.
+
+For flightDate == today specifically, exact depTime match is WRONG
+(settled 2026-09-18, real bug, not a hypothetical): a same-day schedule
+correction changes flightSchedule's depTime while every reading already
+logged under the old value keeps its own old depTime forever, so exact
+match would silently drop them from view the moment the correction
+lands, same day, same flight. previous_readings_for instead clusters
+today's own readings together with the current depTime (clustering.
+cluster_services, 60-min gap) and recomputes each kept reading's
+displayed hours-before-dep from its own checkTimestamp against the
+CURRENT depTime - safe specifically because it's the same calendar day,
+same actual departure, not a claim that spans across weeks (that
+broader claim is false - see flightSchedule's comment).
 
 Cross-midnight handling: a flight can still be legitimately "in play"
 even after the calendar has rolled over in ET, if its own origin airport
@@ -34,6 +46,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
+from clustering import cluster_services
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
@@ -148,11 +161,19 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     flight_date is the flight's own schedule date, not necessarily
     "today" in ET (see module docstring).
 
-    Matched on (carrier, org, dest, depTime, flightDate) - never
-    flightNumber (see module docstring). Scoped to org/dest as well as
-    depTime - two different routes can share a depTime by coincidence,
-    and without org/dest in the filter this would silently pull the
-    OTHER route's readings in as if they were this flight's own history.
+    Matched on (carrier, org, dest, depTime, flightDate) for any date
+    OTHER than today - never flightNumber (see module docstring). Scoped
+    to org/dest as well as depTime - two different routes can share a
+    depTime by coincidence, and without org/dest in the filter this
+    would silently pull the OTHER route's readings in as if they were
+    this flight's own history.
+
+    For flightDate == today, depTime match is by clustering instead of
+    exact equality (see module docstring for why), and each kept
+    reading's 'hrs' is recomputed live from its own checkTimestamp
+    against the CURRENT depTime rather than trusting the value stored
+    at logging time - the one place in this file a reading's displayed
+    hours-before-dep can differ from what's in the observations table.
 
     Each cabin value is the real actual if one was logged, else blank -
     no glance/cheap fallback of any kind (retired 2026-09-14, his call:
@@ -203,13 +224,42 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     docstring for why it used to ignore it and why that was a real gap,
     not by design past today).
     """
-    rows = conn.execute(
-        """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1
-           FROM observations
-           WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
-           ORDER BY hoursBeforeDep ASC""",
-        (carrier, dep_time, org, dest, flight_date),
-    ).fetchall()
+    is_today = flight_date == eastern_now().strftime('%Y-%m-%d')
+
+    if is_today:
+        rows = conn.execute(
+            """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime
+               FROM observations
+               WHERE readingType='avail' AND carrier=? AND org=? AND dest=? AND flightDate=?""",
+            (carrier, org, dest, flight_date),
+        ).fetchall()
+
+        # Cluster today's own logged depTimes together with the CURRENT
+        # depTime so a same-day schedule correction can't silently drop
+        # readings logged under the old value - see module docstring.
+        clusters = cluster_services([r[6] for r in rows] + [dep_time])
+        this_flights_cluster = next(c for c in clusters if dep_time in c)
+
+        current_dep_dt = et_equivalent_datetime(
+            conn, dep_time, org, datetime.strptime(flight_date, '%Y-%m-%d').date()
+        )
+        readings_raw = []
+        for hbd, y, cplus, first_or_ps, d1, check_ts, own_dep in rows:
+            if own_dep not in this_flights_cluster:
+                continue
+            check_dt = datetime.strptime(check_ts, '%Y-%m-%d %H:%M').replace(tzinfo=current_dep_dt.tzinfo)
+            live_hbd = round((current_dep_dt - check_dt).total_seconds() / 3600, 2)
+            readings_raw.append((live_hbd, y, cplus, first_or_ps, d1))
+        readings_raw.sort(key=lambda r: r[0])  # most-recent-check first, same convention as below
+    else:
+        readings_raw = conn.execute(
+            """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1
+               FROM observations
+               WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
+               ORDER BY hoursBeforeDep ASC""",
+            (carrier, dep_time, org, dest, flight_date),
+        ).fetchall()
+
     readings = [
         {
             'hrs': r[0],
@@ -218,7 +268,7 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
             'onePS': r[3],
             'd1': r[4],
         }
-        for r in rows
+        for r in readings_raw
     ]
     t1_column = compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings)
     for reading, t1 in zip(readings, t1_column):
