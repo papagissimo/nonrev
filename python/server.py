@@ -23,6 +23,7 @@ import GraphObservations
 import ServiceGrouping
 import PoolingSettingsDialog
 import DeclineCurveDialog
+import T1GridReport
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -84,6 +85,11 @@ def pooling():
 @app.route('/decline-curve')
 def decline_curve():
     return send_from_directory(STATIC_DIR, 'DeclineCurveDialog.html')
+
+
+@app.route('/t1-grid')
+def t1_grid():
+    return send_from_directory(STATIC_DIR, 'T1GridReport.html')
 
 
 @app.route('/api/getLauncherSummary', methods=['GET'])
@@ -460,6 +466,29 @@ def api_export_coefficients_csv():
             mimetype='text/csv',
             headers={'Content-Disposition': 'attachment; filename=decline_curve_coefficients.csv'},
         )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getT1GridRoutes', methods=['GET'])
+def api_get_t1_grid_routes():
+    conn = get_conn()
+    try:
+        return jsonify({'routes': T1GridReport.studied_routes(conn)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/getT1Grid', methods=['POST'])
+def api_get_t1_grid():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(T1GridReport.get_t1_grid(conn, body['org'], body['dest'], body['dayOfWeek']))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
