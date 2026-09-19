@@ -16,16 +16,12 @@ server side" beats "All rows, then filter in the browser" for a table
 that only grows.
 """
 
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
-from SeatLoggingDialog import eastern_now, ET_ZONE, minutes_to_12h
-from timezones import get_confirmed_timezone, UnconfirmedAirportError
+from SeatLoggingDialog import eastern_now, minutes_to_12h
 
 REAL_COLUMNS = [
     'observationId', 'checkTimestamp', 'flightDate', 'carrier', 'flightNumber',
     'org', 'dest', 'readingType', 'y', 'cPlus', 'firstOrPS', 'd1',
-    'hoursBeforeDep', 'nextDesiredLog',
+    'hoursBeforeDep', 'nextDesiredLog', 'depTime',
 ]
 
 # REAL_COLUMNS above are display/dict-key names (what this module's
@@ -38,52 +34,11 @@ REAL_COLUMNS = [
 # column, which never had a name mismatch.
 SQL_COLUMN_FOR = {'flightNumber': 'carriersFltNum_notStable_DO_NOT_USE'}
 
+SORTABLE_COLUMNS = set(REAL_COLUMNS)
+
 
 def _sql_col(display_col):
     return SQL_COLUMN_FOR.get(display_col, display_col)
-
-# depTime isn't a real observations column, and deliberately isn't joined
-# in from flightSchedule's current row either - a flightNumber can be
-# renamed or dropped from flightSchedule entirely (the known bogus-number
-# fragmentation), which would leave the join with nothing to match and
-# the column blank for exactly the rows most worth troubleshooting.
-# Instead it's derived per-row from data the observation already owns:
-# checkTimestamp + hoursBeforeDep together fix the exact instant the
-# flight departed (that's the whole point of correcting hoursBeforeDep
-# in place rather than freezing it), converted to the origin airport's
-# own local clock. This is the flight's own frozen departure time for
-# that specific day, independent of whatever flightSchedule says right
-# now - never blank just because a flightNumber was later reassigned.
-COLUMNS = REAL_COLUMNS + ['depTime']
-SORTABLE_COLUMNS = set(COLUMNS)
-
-
-def dep_time_minutes(conn, org, check_timestamp, hours_before_dep):
-    """
-    Origin-local minutes-since-midnight for this observation's departure,
-    reconstructed from its own checkTimestamp + hoursBeforeDep - not a
-    flightSchedule lookup. Returns None if hoursBeforeDep was never
-    computed (an unconfirmed-airport gap at logging time, or a handful
-    of legacy rows carrying a stray non-numeric value) or if the origin
-    isn't confirmed right now.
-    """
-    if hours_before_dep is None:
-        return None
-    try:
-        hours_before_dep = float(hours_before_dep)
-    except (TypeError, ValueError):
-        return None
-    try:
-        tz_name = get_confirmed_timezone(conn, org)
-    except UnconfirmedAirportError:
-        return None
-    try:
-        check_dt = datetime.strptime(check_timestamp, '%Y-%m-%d %H:%M').replace(tzinfo=ET_ZONE)
-    except (TypeError, ValueError):
-        return None  # a handful of legacy rows carry a malformed checkTimestamp (e.g. "24:03")
-    dep_dt_et = check_dt + timedelta(hours=hours_before_dep)
-    local_dt = dep_dt_et.astimezone(ZoneInfo(tz_name))
-    return local_dt.hour * 60 + local_dt.minute
 
 
 def get_filter_options(conn):
@@ -108,9 +63,6 @@ def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20,
     sort_dir_sql = 'ASC' if str(sort_dir).lower() == 'asc' else 'DESC'
     reverse = str(sort_dir).lower() != 'asc'
 
-    # Only the real columns can be pushed down into SQL. depTime is
-    # computed in Python below, so it's excluded from the WHERE clause
-    # here and handled separately once every candidate row has a value.
     where_clauses = []
     params = []
     dep_time_filter = None
@@ -131,12 +83,9 @@ def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20,
         params.extend(f"%{p}%" for p in parts)
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-    needs_python_pass = dep_time_filter is not None or sort_col == 'depTime'
+    needs_python_pass = dep_time_filter is not None
 
     if not needs_python_pass:
-        # Common case (no depTime filter/sort involved): SQL does the
-        # sorting, filtering, and paging exactly as before - fast, and
-        # depTime only needs computing for the one page actually shown.
         total = conn.execute(
             f"SELECT COUNT(*) FROM observations {where_sql}", params
         ).fetchone()[0]
@@ -149,29 +98,17 @@ def get_observations(conn, sort_col='checkTimestamp', sort_dir='desc', limit=20,
                 {limit_sql}""",
             query_params,
         ).fetchall()
+        return {'rows': [dict(zip(REAL_COLUMNS, r)) for r in rows], 'total': total}
 
-        result_rows = []
-        for r in rows:
-            row = dict(zip(REAL_COLUMNS, r))
-            row['depTime'] = dep_time_minutes(conn, row['org'], row['checkTimestamp'], row['hoursBeforeDep'])
-            result_rows.append(row)
-        return {'rows': result_rows, 'total': total}
-
-    # depTime is involved: every row matching the other filters needs its
-    # depTime computed before the depTime filter/sort/limit can be applied,
-    # so this pass can't push the LIMIT down to SQL - it fetches every
-    # matching row instead. Observations is a few thousand rows, still
-    # cheap; a table that outgrows this would need a different approach.
+    # The depTime filter matches the 12-hour text a person types ("7:27 pm"),
+    # which SQL can't do against the stored integer, so the LIMIT can't be
+    # pushed down here - every matching row is fetched. Fine at a few
+    # thousand rows; a table that outgrows this would need a different approach.
     rows = conn.execute(
         f"SELECT {', '.join(_sql_col(c) for c in REAL_COLUMNS)} FROM observations {where_sql}",
         params,
     ).fetchall()
-
-    all_rows = []
-    for r in rows:
-        row = dict(zip(REAL_COLUMNS, r))
-        row['depTime'] = dep_time_minutes(conn, row['org'], row['checkTimestamp'], row['hoursBeforeDep'])
-        all_rows.append(row)
+    all_rows = [dict(zip(REAL_COLUMNS, r)) for r in rows]
 
     if dep_time_filter:
         needle = dep_time_filter.lower()
