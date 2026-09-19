@@ -9,7 +9,8 @@ working around it.
 
 ## Core dialogs / SQLite rewrite
 
-- **hoursBeforeDep computed-live for TODAY only — DONE 2026-09-18.** The
+- **hoursBeforeDep computed-live for TODAY only (not stored, or blindly
+  always-live either) — refined 2026-09-16, still fully open.** The
   recovered handoff doc's original design said "stop storing
   hoursBeforeDep, always compute live from checkTimestamp + current
   depTime" - discussed further and that's WRONG as stated: a service's
@@ -47,33 +48,24 @@ working around it.
 - **Orphan detection does NOT exist yet - TODO previously claimed
   otherwise, that was wrong (checked the actual code 2026-09-18, no
   before/after depTime diff anywhere in FlightScheduleDialog or
-  elsewhere).**
-  **The "orphan" framing itself was wrong (settled 2026-09-18, do NOT
-  revisit) - flightSchedule is a snapshot of THIS WEEK only (see the
-  comment on its CREATE TABLE in create_db.py), and Delta gives no
-  guarantee any depTime holds even one week out. A historical
-  observation's depTime not matching the CURRENT schedule isn't damage -
-  there's no continuity for it to have fallen out of. There is no
-  "true" value to recover and nothing to fix. Ran the numbers three
-  different ways before landing here (same-day convergence backfill,
-  snap-to-nearest-current-schedule, then literally graphing a route's
-  depTime history) and the honest answer only showed up on the third
-  one: CMH-MSP Monday's 3rd flight bounced between 1:34pm and 4:36pm
-  for three straight weeks before settling - real, repeated Delta
-  schedule churn, not one hidden correction. That's not a puzzle we
-  failed to solve, it's missing information that was never recorded
-  anywhere (no flight ID, just a time-of-day number that Delta doesn't
-  promise to keep). Do NOT build a "fix" for this - touching these
-  values would be exactly the kind of history-falsification already
-  ruled out elsewhere in this file, just applied across weeks instead
-  of within a day.
-  - 559 observations don't match the current schedule for their route.
-    Leave every one of them exactly as logged. Not flagged, not
-    corrected, not touched. This is not a backlog item - there's
-    nothing left to do here.
-  - This does NOT apply to the same-day backfill below, which is a
-    different, narrower claim (same calendar day, same actual
-    departure, not a cross-week identity) and stands as done and valid.
+  elsewhere).** One-time historical SCAN done instead (2026-09-18):
+  compared every observation's depTime against the CURRENT schedule for
+  its (org, dest, dayOfWeek), 60-min cluster gap as the match tolerance.
+  - 559 observations on still-scheduled routes have no current depTime
+    match at all (real orphans - something drifted or was corrected far
+    enough that they no longer correspond to anything live). Of those,
+    247 have hoursBeforeDep < 4 - i.e. were logged within 4 hours of
+    their (now-vanished) departure, so these are the readings that
+    mattered most at the time and are the ones most worth fixing first
+    if this gets built.
+  - 82 more are on routes/days no longer in the schedule AT ALL (route
+    dropped entirely) - expected drift from routes coming and going, not
+    a bug, probably not worth chasing.
+  - Not designed or built: what to actually DO with a confirmed orphan
+    (best guess: same self-consistency idea as the backfill above -
+    would need a live anchor design of its own, not automatic from that
+    backfill). Scan script not saved to the repo - one-off, ask if
+    re-running it is ever useful.
 - **Delayed-flight departure time** — very low priority. Doesn't come up
   often enough in practice to be worth designing for. Leave alone until it
   actually becomes a problem.
@@ -126,6 +118,13 @@ before - a NEW, specific symptom is the bar for reopening it.
   DECLINE_CURVE_DESIGN.md's coverage notes - a 9-seat ceiling means
   something very different on a wide-body cabin than a small commuter one.
   Not started; flagged as likely needed once those routes get studied.
+  PARKED 2026-09-18 pending more data: a flat-level model looks plausible
+  for the no-net-decline instances (of 78 checked, 58 stay within 2 seats
+  of one level; 20 swing 3+ and aren't flat at all), but only 27 of those
+  58 have 4+ readings over 8+ hrs, and all 78 come from four Fridays.
+  Revisit once more Fridays are logged. Judge it by total step-change
+  corrections needed and the T4→T1 backtest, not leftover residual (a
+  flat line with free corrections fits anything).
 - **New idea, not yet designed: time-to-full is its own signal, separate
   from decline slope/C1/night-ratio.** A service that crosses the "full"
   threshold (currently 2, not literally 0) very early versus one that
