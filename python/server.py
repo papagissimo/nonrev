@@ -495,6 +495,20 @@ def api_get_t1_grid():
         conn.close()
 
 
+@app.route('/api/getConnectionChart', methods=['POST'])
+def api_get_connection_chart():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(T1GridReport.get_connection_chart(
+            conn, body['firstOrg'], body['firstDest'], body['secondOrg'], body['secondDest'], body['dayOfWeek'],
+        ))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
 if __name__ == '__main__':
     print(f"SeatLoggingDialog running at http://localhost:{PORT}")
     app.run(host='localhost', port=PORT, debug=True)
