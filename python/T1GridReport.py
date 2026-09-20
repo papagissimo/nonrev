@@ -28,13 +28,13 @@ DAY_NAMES = {'Mon': 'Monday', 'Tue': 'Tuesday', 'Wed': 'Wednesday', 'Thu': 'Thur
 
 def studied_routes(conn):
     rows = conn.execute(
-        """SELECT DISTINCT o.org, o.dest
+        """SELECT DISTINCT o.org, o.dest, rs.durationMinutes
            FROM observations o
            LEFT JOIN routeSettings rs ON rs.org = o.org AND rs.dest = o.dest
            WHERE COALESCE(rs.studyThisRoute, 1) = 1
            ORDER BY o.org, o.dest"""
     ).fetchall()
-    return [{'org': org, 'dest': dest} for org, dest in rows]
+    return [{'org': org, 'dest': dest, 'durationMinutes': duration} for org, dest, duration in rows]
 
 
 def format_t1(value):
@@ -298,7 +298,8 @@ def leg_bars(conn, org, dest, day_of_week, clock_airport, on_date, thresholds):
     route_name = f'{org.upper()}\u2192{dest.upper()}'
     duration = route_duration_minutes(conn, org, dest)
     if duration is None:
-        return {'route': route_name, 'bars': [], 'problem': f'no duration on file for {route_name}'}
+        return {'route': route_name, 'bars': [],
+                'problem': f'no flight time on file for {route_name} (set it in Edit Schedule)'}
     dep_times = scheduled_dep_times(conn, org, dest, day_of_week)
     if not dep_times:
         return {'route': route_name, 'bars': [], 'problem': f'no {day_of_week} flights scheduled for {route_name}'}

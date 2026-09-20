@@ -20,6 +20,7 @@
     td.serviceCol { text-align: left; color: #444; }
     .warnings { color: #b06000; font-size: 12px; margin-top: 8px; }
     #chartCaption { color: #666; font-size: 12px; margin: 22px 0 6px 0; }
+    #chartProblems { margin: 0 0 6px 0; }
     #chartWrap { overflow-x: auto; }
     #legend { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px 0; font-size: 12px; color: #555; }
     #legendStrip { width: 220px; height: 10px; border-radius: 2px; border: 1px solid #bbb; }
@@ -38,7 +39,7 @@
 
   <div class="legRow">
     <div class="legBlock">
-      <label>First leg <select id="routeSelectFirst" onchange="load()"></select></label>
+      <label>First leg <select id="routeSelectFirst" onchange="onFirstLegChange()"></select></label>
       <div id="gridFirst"></div>
     </div>
     <div class="legBlock">
@@ -48,6 +49,7 @@
   </div>
 
   <div id="chartCaption"></div>
+  <div id="chartProblems" class="warnings"></div>
   <div id="chartWrap"></div>
   <div id="legend"></div>
   <div id="legendNote"></div>
@@ -68,8 +70,13 @@
     const NUMBER_ROW_PX = 13;
     const NUMBER_TOP_PAD = 6;
     const UNCOUNTED_NUMBER_OPACITY = 0.55;
+    const PLACEHOLDER_WIDTH = 190;
+    const PLACEHOLDER_WRAP_CHARS = 26;
+    const NO_FLIGHT_TIME_SUFFIX = '  (no flight time)';
 
     let lastChart = null;
+    let allRoutes = [];
+    let loadSequence = 0;
 
     function cell(tag, text, className) {
       const el = document.createElement(tag);
@@ -91,24 +98,56 @@
 
     function routeValue(r) { return r.org + '|' + r.dest; }
 
-    function fillRouteSelect(select, routes) {
+    function routeLabel(r) {
+      return r.org.toUpperCase() + '\u2192' + r.dest.toUpperCase() + (r.durationMinutes ? '' : NO_FLIGHT_TIME_SUFFIX);
+    }
+
+    function fillRouteSelect(select, routes, keepValue) {
+      select.replaceChildren();
       routes.forEach(function (r) {
         const option = document.createElement('option');
         option.value = routeValue(r);
-        option.textContent = r.org.toUpperCase() + '\u2192' + r.dest.toUpperCase();
+        option.textContent = routeLabel(r);
         select.appendChild(option);
       });
+      if (routes.some(function (r) { return routeValue(r) === keepValue; })) select.value = keepValue;
+    }
+
+    function selectedRoute(selectId) {
+      const value = document.getElementById(selectId).value;
+      if (!value) return null;
+      const parts = value.split('|');
+      return { org: parts[0], dest: parts[1] };
+    }
+
+    function refreshSecondLegOptions() {
+      const second = document.getElementById('routeSelectSecond');
+      const first = selectedRoute('routeSelectFirst');
+      const onward = allRoutes.filter(function (r) { return r.org === first.dest; });
+      const previous = second.value;
+      fillRouteSelect(second, onward, previous);
+      second.disabled = onward.length === 0;
+      if (second.value === previous || !onward.length) return;
+      const withFlightTime = onward.find(function (r) { return r.durationMinutes; });
+      second.value = routeValue(withFlightTime || onward[0]);
+    }
+
+    function defaultPair(routes) {
+      const hasFlightTime = function (r) { return r.durationMinutes; };
+      for (const first of routes.filter(hasFlightTime)) {
+        const second = routes.find(function (r) { return r.org === first.dest && hasFlightTime(r); });
+        if (second) return [first, second];
+      }
+      const first = routes[0];
+      return [first, routes.find(function (r) { return r.org === first.dest; }) || first];
     }
 
     function fillSelects(routes) {
-      const first = document.getElementById('routeSelectFirst');
-      const second = document.getElementById('routeSelectSecond');
-      fillRouteSelect(first, routes);
-      fillRouteSelect(second, routes);
-      const firstRoute = routes[0];
-      const onward = routes.find(function (r) { return r.org === firstRoute.dest; });
-      first.value = routeValue(firstRoute);
-      second.value = routeValue(onward || routes[0]);
+      allRoutes = routes;
+      const pair = defaultPair(routes);
+      fillRouteSelect(document.getElementById('routeSelectFirst'), routes, routeValue(pair[0]));
+      refreshSecondLegOptions();
+      document.getElementById('routeSelectSecond').value = routeValue(pair[1]);
 
       const daySelect = document.getElementById('daySelect');
       DAYS_OF_WEEK.forEach(function (d) {
@@ -120,9 +159,9 @@
       daySelect.value = DEFAULT_DAY;
     }
 
-    function selectedRoute(selectId) {
-      const parts = document.getElementById(selectId).value.split('|');
-      return { org: parts[0], dest: parts[1] };
+    function onFirstLegChange() {
+      refreshSecondLegOptions();
+      load();
     }
 
     function post(url, body) {
@@ -169,7 +208,23 @@
     }
 
     function panelWidth(bars) {
+      if (!bars.length) return PLACEHOLDER_WIDTH;
       return bars.length * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_GAP;
+    }
+
+    function wrapText(text, maxChars) {
+      const lines = [];
+      let current = '';
+      text.split(' ').forEach(function (word) {
+        if (current && (current + ' ' + word).length > maxChars) {
+          lines.push(current);
+          current = word;
+        } else {
+          current = current ? current + ' ' + word : word;
+        }
+      });
+      if (current) lines.push(current);
+      return lines;
     }
 
     function drawWeekNumbers(group, bar, x, top, height) {
@@ -210,13 +265,15 @@
 
     function drawChart() {
       const caption = document.getElementById('chartCaption');
+      const problemLine = document.getElementById('chartProblems');
       const wrap = document.getElementById('chartWrap');
       wrap.replaceChildren();
       caption.textContent = '';
+      problemLine.textContent = '';
       drawLegend(null);
       if (!lastChart) return;
       if (lastChart.problem) {
-        caption.textContent = lastChart.problem;
+        problemLine.textContent = lastChart.problem;
         return;
       }
 
@@ -227,8 +284,8 @@
       const problems = legs.filter(function (leg) { return leg.problem; })
         .map(function (leg) { return leg.problem; });
       caption.textContent = 'Left axis: ' + axes.left.airport + ' local time. Right axis: ' + axes.right.airport +
-        ' local time. Bar labels are each flight\u2019s departure at its own origin, rounded to 15 min \u2014 hover a bar for exact local times and the weekly numbers.' +
-        (problems.length ? '  \u2014  ' + problems.join('; ') : '');
+        ' local time. Bar labels are each flight\u2019s departure at its own origin, rounded to 15 min \u2014 hover a bar for exact local times and the weekly numbers.';
+      problemLine.textContent = problems.join(' \u00b7 ');
 
       const allBars = [];
       legs.forEach(function (leg, i) {
@@ -253,11 +310,17 @@
       const svg = svgEl('svg', { width: totalWidth, height: totalHeight, 'font-family': 'Arial, sans-serif' });
 
       [[firstX, firstWidth, 0], [secondX, secondWidth, 1]].forEach(function (p) {
-        if (!drawable[p[2]]) return;
         svg.appendChild(svgEl('rect', { x: p[0], y: TOP_PAD, width: p[1], height: y(axisEnd) - TOP_PAD, fill: '#f6f6f6' }));
         svg.appendChild(svgEl('text', {
           x: p[0] + p[1] / 2, y: 20, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 'bold', fill: '#333',
         }, legs[p[2]].route));
+        if (!drawable[p[2]]) {
+          wrapText(legs[p[2]].problem, PLACEHOLDER_WRAP_CHARS).forEach(function (line, k) {
+            svg.appendChild(svgEl('text', {
+              x: p[0] + p[1] / 2, y: TOP_PAD + 28 + k * 15, 'text-anchor': 'middle', 'font-size': 11, fill: '#b06000',
+            }, line));
+          });
+        }
       });
 
       [[axes.left, firstX - 8, 'end'], [axes.right, rightEdge + 8, 'start']].forEach(function (a) {
@@ -308,27 +371,30 @@
     }
 
     function load() {
+      const sequence = ++loadSequence;
       const first = selectedRoute('routeSelectFirst');
       const second = selectedRoute('routeSelectSecond');
       const dayOfWeek = document.getElementById('daySelect').value;
       setStatus('Loading\u2026');
       Promise.all([
         post('/api/getT1Grid', { org: first.org, dest: first.dest, dayOfWeek: dayOfWeek }),
-        post('/api/getT1Grid', { org: second.org, dest: second.dest, dayOfWeek: dayOfWeek }),
-        post('/api/getConnectionChart', {
+        second ? post('/api/getT1Grid', { org: second.org, dest: second.dest, dayOfWeek: dayOfWeek }) : Promise.resolve(null),
+        second ? post('/api/getConnectionChart', {
           firstOrg: first.org, firstDest: first.dest, secondOrg: second.org, secondDest: second.dest, dayOfWeek: dayOfWeek,
-        }),
+        }) : Promise.resolve({ problem: 'No studied route leaves from ' + first.dest.toUpperCase() + '.' }),
       ])
         .then(function (results) {
-          const failed = results.find(function (r) { return r.error; });
+          if (sequence !== loadSequence) return;
+          const failed = results.find(function (r) { return r && r.error; });
           if (failed) { setStatus('Error: ' + failed.error); return; }
           renderGrid('gridFirst', results[0]);
-          renderGrid('gridSecond', results[1]);
+          if (results[1]) renderGrid('gridSecond', results[1]);
+          else document.getElementById('gridSecond').replaceChildren();
           lastChart = results[2];
           drawChart();
           setStatus('');
         })
-        .catch(function (err) { setStatus('Error: ' + err); });
+        .catch(function (err) { if (sequence === loadSequence) setStatus('Error: ' + err); });
     }
 
     fetch('/api/getT1GridRoutes')
