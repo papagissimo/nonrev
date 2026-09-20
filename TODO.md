@@ -45,27 +45,11 @@ working around it.
   fine) - 1458 rows corrected, avg change 0.043 hr, max 0.6 hr. Script:
   python/backfill_deptime_convergence.py - re-runnable if new data drifts
   the same way, finds nothing left to do on a clean dataset.
-- **Orphan detection does NOT exist yet - TODO previously claimed
-  otherwise, that was wrong (checked the actual code 2026-09-18, no
-  before/after depTime diff anywhere in FlightScheduleDialog or
-  elsewhere).** One-time historical SCAN done instead (2026-09-18):
-  compared every observation's depTime against the CURRENT schedule for
-  its (org, dest, dayOfWeek), 60-min cluster gap as the match tolerance.
-  - 559 observations on still-scheduled routes have no current depTime
-    match at all (real orphans - something drifted or was corrected far
-    enough that they no longer correspond to anything live). Of those,
-    247 have hoursBeforeDep < 4 - i.e. were logged within 4 hours of
-    their (now-vanished) departure, so these are the readings that
-    mattered most at the time and are the ones most worth fixing first
-    if this gets built.
-  - 82 more are on routes/days no longer in the schedule AT ALL (route
-    dropped entirely) - expected drift from routes coming and going, not
-    a bug, probably not worth chasing.
-  - Not designed or built: what to actually DO with a confirmed orphan
-    (best guess: same self-consistency idea as the backfill above -
-    would need a live anchor design of its own, not automatic from that
-    backfill). Scan script not saved to the repo - one-off, ask if
-    re-running it is ever useful.
+- **Orphans (same-day depTime drift) — believed fixed 2026-09-19.** The
+  backfill above corrected the existing ones, and logging now converges a
+  flight's earlier same-day readings to its newest
+  (python/deptime_convergence.py), so none are expected. If drift is ever
+  spotted, re-run the backfill.
 - **Delayed-flight departure time** — very low priority. Doesn't come up
   often enough in practice to be worth designing for. Leave alone until it
   actually becomes a problem.
@@ -255,6 +239,11 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Dead ideas — do not re-propose
 
+- Orphan detection by comparing past observations to the current
+  flightSchedule — killed 2026-09-19. That table is this week's snapshot
+  only, so a mismatch says nothing about a past reading (see
+  domainKnowledge.md, "Schedule volatility"); a reading's own depTime is
+  its record.
 - Verdict/classification-glyph UI work generally (verdict-text granularity
   scheme, second "lock it in" glyph) — killed 2026-09-18, not interested
   in pursuing this right now. Alternating row background bands in the

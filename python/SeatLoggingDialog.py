@@ -47,6 +47,7 @@ from zoneinfo import ZoneInfo
 
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from clustering import cluster_services
+from deptime_convergence import converge_flight_date
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
@@ -752,6 +753,9 @@ def save_entry_dialog(conn, payload):
              flight_date, check_timestamp, hours_before_dep, entry['dep'], 'avail',
              num('y'), num('cplus'), num('onePS'), num('d1')),
         )
+
+    for org, dest in {(e['org'], e['dest']) for e in to_write}:
+        converge_flight_date(conn, org, dest, flight_date)
 
     conn.commit()
     return {'logged': len(to_write)}

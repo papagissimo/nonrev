@@ -1,5 +1,7 @@
 """
-One-time historical cleanup (2026-09-18), his call.
+Historical cleanup (2026-09-18), his call. The same correction now also runs
+at logging time (deptime_convergence.converge_flight_date), so this script is
+the safety net for anything that gets past it.
 
 Within a same-day flight instance (identified by clustering.cluster_services
 - see that module for why, same identity mechanism GraphObservations already
@@ -15,12 +17,11 @@ time, not an arbitrary pick.
 
 This backfill uses that last-reading depTime as truth and back-corrects every
 earlier reading in the same cluster - both depTime and hoursBeforeDep, so the
-two stay consistent with each other (ObservationsBrowser's own depTime
-reconstruction assumes they agree). Explicitly not chasing precision far out
+two stay consistent with each other. Explicitly not chasing precision far out
 - his call: +/-15 min at 4+ hours from departure is fine, this is data
 hygiene, not a push for minute-level accuracy where it doesn't matter.
 
-Run once:
+Run:
     python backfill_deptime_convergence.py            # dry run, prints a summary
     python backfill_deptime_convergence.py --apply     # writes the corrections
 
@@ -36,13 +37,11 @@ change 0.043 hr (~2.6 min), max 0.6 hr (36 min). No unconfirmed airports hit.
 import argparse
 import sqlite3
 from collections import defaultdict
-from datetime import datetime
 
-from clustering import cluster_services
-from timezones import et_equivalent_datetime, UnconfirmedAirportError
+from deptime_convergence import apply_corrections, corrections_for_flight_date
+from timezones import UnconfirmedAirportError
 
 DB_PATH = '../nonrev.db'
-CHECK_TS_FORMAT = '%Y-%m-%d %H:%M'
 
 
 def compute_updates(conn):
@@ -53,41 +52,22 @@ def compute_updates(conn):
     stored depTime differs from their cluster's anchor).
     """
     rows = conn.execute(
-        """SELECT observationId, org, dest, flightDate, checkTimestamp, depTime, hoursBeforeDep
+        """SELECT observationId, org, dest, flightDate, checkTimestamp, depTime
            FROM observations WHERE depTime IS NOT NULL"""
     ).fetchall()
 
     by_key = defaultdict(list)
-    for obs_id, org, dest, flight_date, check_ts, dep, hbd in rows:
-        by_key[(org, dest, flight_date)].append((obs_id, check_ts, dep, hbd))
+    for obs_id, org, dest, flight_date, check_ts, dep in rows:
+        by_key[(org, dest, flight_date)].append((obs_id, check_ts, dep))
 
     updates = []
     skipped_unconfirmed = set()
 
     for (org, dest, flight_date), readings in by_key.items():
-        dep_times = [r[2] for r in readings]
-        clusters = cluster_services(dep_times)
-        for cluster in clusters:
-            if len(set(cluster)) <= 1:
-                continue  # no drift in this instance, nothing to correct
-
-            members = [r for r in readings if r[2] in cluster]
-            members.sort(key=lambda r: r[1])  # chronological by checkTimestamp
-            anchor_dep = members[-1][2]        # last reading's depTime = truth
-
-            flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()
-            try:
-                anchor_dt = et_equivalent_datetime(conn, anchor_dep, org, flight_date_obj)
-            except UnconfirmedAirportError:
-                skipped_unconfirmed.add(org)
-                continue
-
-            for obs_id, check_ts, dep, hbd in members:
-                if dep == anchor_dep:
-                    continue  # already matches the anchor
-                check_dt = datetime.strptime(check_ts, CHECK_TS_FORMAT).replace(tzinfo=anchor_dt.tzinfo)
-                new_hbd = (anchor_dt - check_dt).total_seconds() / 3600
-                updates.append((anchor_dep, round(new_hbd, 2), obs_id))
+        try:
+            updates.extend(corrections_for_flight_date(conn, org, dest, flight_date, readings))
+        except UnconfirmedAirportError:
+            skipped_unconfirmed.add(org)
 
     return updates, skipped_unconfirmed
 
@@ -105,10 +85,7 @@ def main():
         print(f"Skipped (unconfirmed airport code, couldn't resolve): {sorted(skipped_unconfirmed)}")
 
     if args.apply:
-        conn.executemany(
-            "UPDATE observations SET depTime=?, hoursBeforeDep=? WHERE observationId=?",
-            updates,
-        )
+        apply_corrections(conn, updates)
         conn.commit()
         print(f"Applied - {len(updates)} row(s) updated.")
     else:
