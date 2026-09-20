@@ -16,7 +16,21 @@ STRIKE_WEIGHTS = {'open': 0.0, 'iffy': 0.25, 'full': 1.0}
 RED_END_STRIKE_RATE = 0.5
 MIN_COUNTED_WEEKS_FOR_FULL_COLOR = 3
 FEW_WEEKS_WHITE_BLEND = 0.5
-RAMP_STOPS = [(0.0, '#2c7bb6'), (0.25, '#7fc4d8'), (0.5, '#f4d35e'), (0.75, '#f28e4b'), (1.0, '#c8302f')]
+COLOR_RAMPS = [
+    {'id': 'stoplight', 'label': 'Stoplight, smoothed',
+     'stops': [(0.0, '#2e9e4f'), (0.5, '#f4d03f'), (1.0, '#d63a2f')]},
+    {'id': 'muted', 'label': 'Stoplight, muted',
+     'stops': [(0.0, '#6bb98a'), (0.5, '#f3dc7a'), (1.0, '#d9705a')]},
+    {'id': 'threeColors', 'label': 'Just three colors',
+     'steps': ['#3aa655', '#f4d03f', '#d9432f']},
+    {'id': 'heatMap', 'label': 'Green-red heat map',
+     'stops': [(0.0, '#1a9850'), (0.25, '#a6d96a'), (0.5, '#fee08b'), (0.75, '#f46d43'), (1.0, '#a50026')]},
+    {'id': 'blueOrange', 'label': 'Blue to orange (colorblind-safe)',
+     'stops': [(0.0, '#2c7bb6'), (0.5, '#efe3b0'), (1.0, '#e66101')]},
+    {'id': 'weatherMap', 'label': 'Weather map (blue to red)',
+     'stops': [(0.0, '#2c7bb6'), (0.25, '#7fc4d8'), (0.5, '#f4d35e'), (0.75, '#f28e4b'), (1.0, '#c8302f')]},
+]
+DEFAULT_RAMP_ID = 'stoplight'
 NO_HISTORY_FILL = '#c9ced6'
 DARK_TEXT = '#222222'
 LIGHT_TEXT = '#ffffff'
@@ -218,13 +232,28 @@ def rgb_to_hex(rgb):
     return '#' + ''.join(f'{round(channel):02x}' for channel in rgb)
 
 
-def ramp_rgb(position):
-    for (low_at, low_color), (high_at, high_color) in zip(RAMP_STOPS, RAMP_STOPS[1:]):
+def ramp_rgb(ramp, position):
+    if 'steps' in ramp:
+        step = min(int(position * len(ramp['steps'])), len(ramp['steps']) - 1)
+        return hex_to_rgb(ramp['steps'][step])
+    stops = ramp['stops']
+    for (low_at, low_color), (high_at, high_color) in zip(stops, stops[1:]):
         if position <= high_at:
             fraction = (position - low_at) / (high_at - low_at)
             low, high = hex_to_rgb(low_color), hex_to_rgb(high_color)
             return tuple(low[i] + (high[i] - low[i]) * fraction for i in range(3))
-    return hex_to_rgb(RAMP_STOPS[-1][1])
+    return hex_to_rgb(stops[-1][1])
+
+
+def ramp_preview_stops(ramp):
+    if 'stops' in ramp:
+        return [{'offset': at, 'color': color} for at, color in ramp['stops']]
+    count = len(ramp['steps'])
+    preview = []
+    for index, color in enumerate(ramp['steps']):
+        preview.append({'offset': index / count, 'color': color})
+        preview.append({'offset': (index + 1) / count, 'color': color})
+    return preview
 
 
 def blend_toward_white(rgb, amount):
@@ -260,14 +289,18 @@ def service_appearance(weeks, thresholds):
     classes = [classify_week(week['t1'], thresholds) for week in weeks if week['countsForColor']]
     classes = [c for c in classes if c]
     if not classes:
-        return {'fill': NO_HISTORY_FILL, 'textColor': DARK_TEXT, 'tally': None}
+        no_history = {'fill': NO_HISTORY_FILL, 'textColor': DARK_TEXT}
+        return {'fills': {ramp['id']: no_history for ramp in COLOR_RAMPS}, 'tally': None}
     strike_rate = sum(STRIKE_WEIGHTS[c] for c in classes) / len(classes)
-    rgb = ramp_rgb(min(strike_rate / RED_END_STRIKE_RATE, 1.0))
-    if len(classes) < MIN_COUNTED_WEEKS_FOR_FULL_COLOR:
-        rgb = blend_toward_white(rgb, FEW_WEEKS_WHITE_BLEND)
+    position = min(strike_rate / RED_END_STRIKE_RATE, 1.0)
+    fills = {}
+    for ramp in COLOR_RAMPS:
+        rgb = ramp_rgb(ramp, position)
+        if len(classes) < MIN_COUNTED_WEEKS_FOR_FULL_COLOR:
+            rgb = blend_toward_white(rgb, FEW_WEEKS_WHITE_BLEND)
+        fills[ramp['id']] = {'fill': rgb_to_hex(rgb), 'textColor': readable_text_color(rgb)}
     return {
-        'fill': rgb_to_hex(rgb),
-        'textColor': readable_text_color(rgb),
+        'fills': fills,
         'tally': {'weeks': len(classes), 'open': classes.count('open'),
                   'iffy': classes.count('iffy'), 'full': classes.count('full')},
     }
@@ -324,8 +357,7 @@ def leg_bars(conn, org, dest, day_of_week, clock_airport, on_date, thresholds):
             'startMinutes': minutes_on_clock(departure, clock_zone, on_date),
             'endMinutes': minutes_on_clock(arrival, clock_zone, on_date),
             'weeks': [{'date': w['date'], 'display': w['display'], 'counted': w['countsForColor']} for w in weeks],
-            'fill': appearance['fill'],
-            'textColor': appearance['textColor'],
+            'fills': appearance['fills'],
             'tooltip': bar_tooltip(
                 route_name, day_of_week,
                 format_local_moment(departure.astimezone(origin_zone), on_date),
@@ -350,7 +382,9 @@ def axis_description(conn, airport, clock_airport, on_date):
 
 def legend_description():
     return {
-        'stops': [{'offset': position, 'color': color} for position, color in RAMP_STOPS],
+        'ramps': [{'id': ramp['id'], 'label': ramp['label'], 'previewStops': ramp_preview_stops(ramp)}
+                  for ramp in COLOR_RAMPS],
+        'defaultRampId': DEFAULT_RAMP_ID,
         'openLabel': LEGEND_OPEN_LABEL,
         'fullLabel': LEGEND_FULL_LABEL,
         'fewWeeksBelow': MIN_COUNTED_WEEKS_FOR_FULL_COLOR,

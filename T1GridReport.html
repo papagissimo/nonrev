@@ -22,8 +22,11 @@
     #chartCaption { color: #666; font-size: 12px; margin: 22px 0 6px 0; }
     #chartProblems { margin: 0 0 6px 0; }
     #chartWrap { overflow-x: auto; }
-    #legend { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px 0; font-size: 12px; color: #555; }
-    #legendStrip { width: 220px; height: 10px; border-radius: 2px; border: 1px solid #bbb; }
+    #legend { margin: 14px 0 4px 0; font-size: 12px; color: #555; }
+    .legendTitle { font-weight: bold; color: #444; margin-bottom: 2px; }
+    .legendHint { color: #888; font-size: 11px; margin-bottom: 6px; }
+    .rampRow { display: flex; align-items: center; gap: 10px; margin: 5px 0; cursor: pointer; }
+    .rampStrip { width: 240px; height: 14px; border-radius: 2px; border: 1px solid #bbb; }
     #legendNote { color: #888; font-size: 11px; margin-bottom: 20px; }
   </style>
 </head>
@@ -74,7 +77,10 @@
     const PLACEHOLDER_WRAP_CHARS = 26;
     const NO_FLIGHT_TIME_SUFFIX = '  (no flight time)';
 
+    const RAMP_STORAGE_KEY = 't1GridColorRamp';
+
     let lastChart = null;
+    let selectedRampId = null;
     let allRoutes = [];
     let loadSequence = 0;
 
@@ -227,6 +233,25 @@
       return lines;
     }
 
+    function fillOf(bar) {
+      return bar.fills[selectedRampId];
+    }
+
+    function storedRampId() {
+      try { return localStorage.getItem(RAMP_STORAGE_KEY); } catch (e) { return null; }
+    }
+
+    function rememberRampId(id) {
+      try { localStorage.setItem(RAMP_STORAGE_KEY, id); } catch (e) { /* choice just won't persist */ }
+    }
+
+    function chooseRamp(legend) {
+      const known = function (id) { return legend.ramps.some(function (r) { return r.id === id; }); };
+      if (known(selectedRampId)) return;
+      const stored = storedRampId();
+      selectedRampId = known(stored) ? stored : legend.defaultRampId;
+    }
+
     function drawWeekNumbers(group, bar, x, top, height) {
       const rowsFit = Math.floor((height - NUMBER_TOP_PAD) / NUMBER_ROW_PX);
       if (!bar.weeks.length || rowsFit < 1) return;
@@ -235,14 +260,14 @@
       for (let i = 0; i < shown; i++) {
         group.appendChild(svgEl('text', {
           x: x + COLUMN_WIDTH / 2, y: rowY(i), 'text-anchor': 'middle', 'font-size': 11,
-          fill: bar.textColor, opacity: bar.weeks[i].counted ? 1 : UNCOUNTED_NUMBER_OPACITY,
+          fill: fillOf(bar).textColor, opacity: bar.weeks[i].counted ? 1 : UNCOUNTED_NUMBER_OPACITY,
         }, bar.weeks[i].display));
       }
       const extra = bar.weeks.length - shown;
       if (extra > 0) {
         group.appendChild(svgEl('text', {
           x: x + COLUMN_WIDTH / 2, y: rowY(shown), 'text-anchor': 'middle', 'font-size': 10,
-          fill: bar.textColor, opacity: 0.8,
+          fill: fillOf(bar).textColor, opacity: 0.8,
         }, '+' + extra));
       }
     }
@@ -253,13 +278,30 @@
       el.replaceChildren();
       note.textContent = '';
       if (!legend) return;
-      const strip = document.createElement('div');
-      strip.id = 'legendStrip';
-      strip.style.background = 'linear-gradient(to right, ' +
-        legend.stops.map(function (s) { return s.color + ' ' + (s.offset * 100) + '%'; }).join(', ') + ')';
-      el.appendChild(cell('span', legend.openLabel));
-      el.appendChild(strip);
-      el.appendChild(cell('span', legend.fullLabel));
+      el.appendChild(cell('div', 'Color scheme', 'legendTitle'));
+      el.appendChild(cell('div', 'Each strip runs from \u201c' + legend.openLabel + '\u201d (left) to \u201c' + legend.fullLabel + '\u201d (right).', 'legendHint'));
+      legend.ramps.forEach(function (ramp) {
+        const row = document.createElement('label');
+        row.className = 'rampRow';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'colorRamp';
+        radio.value = ramp.id;
+        radio.checked = ramp.id === selectedRampId;
+        radio.onchange = function () {
+          selectedRampId = ramp.id;
+          rememberRampId(ramp.id);
+          drawChart();
+        };
+        const strip = document.createElement('div');
+        strip.className = 'rampStrip';
+        strip.style.background = 'linear-gradient(to right, ' +
+          ramp.previewStops.map(function (s) { return s.color + ' ' + (s.offset * 100) + '%'; }).join(', ') + ')';
+        row.appendChild(radio);
+        row.appendChild(strip);
+        row.appendChild(cell('span', ramp.label));
+        el.appendChild(row);
+      });
       note.textContent = 'Paler = fewer than ' + legend.fewWeeksBelow + ' counted weeks. Dimmed numbers = estimate had no late reading, so it does not count toward color.';
     }
 
@@ -277,6 +319,7 @@
         return;
       }
 
+      chooseRamp(lastChart.legend);
       const bandMinutes = Math.max(0, Number(document.getElementById('bandMinutes').value) || 0);
       const legs = lastChart.legs;
       const axes = lastChart.axes;
@@ -352,7 +395,7 @@
           const group = svgEl('g', {});
           group.appendChild(svgEl('title', {}, b.tooltip));
           group.appendChild(svgEl('rect', {
-            x: x, y: top, width: COLUMN_WIDTH, height: barHeight, fill: b.fill, rx: 2,
+            x: x, y: top, width: COLUMN_WIDTH, height: barHeight, fill: fillOf(b).fill, rx: 2,
             stroke: '#444', 'stroke-width': 0.8, 'stroke-opacity': 0.45,
           }));
           group.appendChild(svgEl('text', { x: x + COLUMN_WIDTH / 2, y: top - 5, 'text-anchor': 'middle', 'font-size': 11, fill: '#333' }, b.label));
