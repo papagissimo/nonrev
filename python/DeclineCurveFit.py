@@ -191,6 +191,7 @@ from clustering import cluster_services, service_representative
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from DeclineCurveHierarchy import resolve_coefficients
 from PoolingSettingsDialog import excluded_date_where_clause
+from observation_filters import not_seat_map_only_where_clause
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 
 # Anchored to this script's own location, not the current working
@@ -240,6 +241,7 @@ def load_observations(conn):
                y, cPlus, firstOrPS, d1
         FROM observations
         WHERE {excluded_date_where_clause()}
+          AND {not_seat_map_only_where_clause()}
         """
     )
     obs_rows = cur.fetchall()

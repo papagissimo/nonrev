@@ -42,14 +42,15 @@ CREATE TABLE flightSchedule (
     verdictType                         TEXT NOT NULL DEFAULT 'info'
 );
 
+-- Cabin sizes: NULL = unknown, 0 = the aircraft has no such cabin.
 CREATE TABLE aircraftConfigs (
     configKey    TEXT PRIMARY KEY,
     aircraft     TEXT NOT NULL,
-    d1           INTEGER NOT NULL DEFAULT 0,
-    first        INTEGER NOT NULL DEFAULT 0,
-    comfortPlus  INTEGER NOT NULL DEFAULT 0,
-    main         INTEGER NOT NULL DEFAULT 0,
-    total        INTEGER NOT NULL DEFAULT 0,
+    d1           INTEGER,
+    first        INTEGER,
+    comfortPlus  INTEGER,
+    main         INTEGER,
+    total        INTEGER,
     status       TEXT,
     note         TEXT,
     source       TEXT

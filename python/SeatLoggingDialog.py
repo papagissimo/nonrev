@@ -54,6 +54,8 @@ from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_t
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
 from Scenarios import studied_cells
+from AircraftConfigs import load_aircraft_list
+from observation_filters import SEAT_MAP_COLUMNS, not_seat_map_only_where_clause
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -70,10 +72,23 @@ def minutes_to_12h(dep_minutes):
     return f"{h12}:{m:02d} {period}"
 
 
-def load_aircraft_options(conn):
-    return [r[0] for r in conn.execute(
-        "SELECT configKey FROM aircraftConfigs ORDER BY rowid"
-    ).fetchall()]
+# Every field a logging entry can carry, entry key -> observations column.
+# One list drives the save gate (an entry with any of these non-blank is
+# logged) and is sent to the page so its own "is there anything to log"
+# check reads the same list. Adding a field means adding it here and giving
+# it an input in SeatLoggingDialog.html.
+CAN_BUY_ENTRY_COLUMNS = {
+    'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': 'd1',
+}
+SEAT_MAP_ENTRY_COLUMNS = {column: column for column in SEAT_MAP_COLUMNS}
+ENTRY_COLUMNS = {**CAN_BUY_ENTRY_COLUMNS, **SEAT_MAP_ENTRY_COLUMNS}
+
+
+def entry_field_config():
+    return {
+        'canBuyFields': list(CAN_BUY_ENTRY_COLUMNS),
+        'seatMapFields': list(SEAT_MAP_ENTRY_COLUMNS),
+    }
 
 
 def load_d1_map(conn):
@@ -230,9 +245,9 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
 
     if is_today:
         rows = conn.execute(
-            """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime
+            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime
                FROM observations
-               WHERE carrier=? AND org=? AND dest=? AND flightDate=?""",
+               WHERE {not_seat_map_only_where_clause()} AND carrier=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, org, dest, flight_date),
         ).fetchall()
 
@@ -255,9 +270,9 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
         readings_raw.sort(key=lambda r: r[0])  # most-recent-check first, same convention as below
     else:
         readings_raw = conn.execute(
-            """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1
+            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1
                FROM observations
-               WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
+               WHERE {not_seat_map_only_where_clause()} AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
                ORDER BY hoursBeforeDep ASC""",
             (carrier, dep_time, org, dest, flight_date),
         ).fetchall()
@@ -345,8 +360,9 @@ def recent_observations(conn, limit=9):
     schedule row the way a join-based lookup could.
     """
     rows = conn.execute(
-        """SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1, depTime
+        f"""SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1, depTime
            FROM observations
+           WHERE {not_seat_map_only_where_clause()}
            ORDER BY checkTimestamp DESC LIMIT ?""",
         (limit,),
     ).fetchall()
@@ -542,9 +558,10 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'flightDate': now.date().isoformat(),
             'routeOrg': None, 'routeDest': None, 'summaryText': summary_text,
             'waitMinutes': None, 'waitMessage': wait_message, 'rows': [],
-            'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
+            'aircraftList': load_aircraft_list(conn), 'settings': settings,
             'openFullSettings': load_open_full_settings(conn),
             'recentObservations': recent_observations(conn),
+            **entry_field_config(),
         }
 
     d1_map = load_d1_map(conn)
@@ -632,9 +649,10 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         'routeOrg': next_candidate['org'], 'routeDest': next_candidate['dest'],
         'carrier': next_candidate['car'], 'routeFlag': route_flag,
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
-        'aircraftOptions': load_aircraft_options(conn), 'settings': settings,
+        'aircraftList': load_aircraft_list(conn), 'settings': settings,
         'openFullSettings': load_open_full_settings(conn),
         'recentObservations': recent_observations(conn),
+        **entry_field_config(),
     }
 
 
@@ -646,8 +664,10 @@ def save_entry_dialog(conn, payload):
                                    # handling above, not always ET-today
       entries: [{ scheduleRow, org, dest, car, dep, aircraftConfig,
                   flightNumber,
-                  y, cplus, onePS, d1 (each '' or a value as typed) }]
+                  every key in ENTRY_COLUMNS (each '' or a value as typed) }]
     }
+    An entry is logged when any ENTRY_COLUMNS field is non-blank - a
+    seat-map-only entry is valid, blank can-buy just means not observed.
     No cheap/glance keys anymore (retired 2026-09-14, "every whiff of it,
     gone" - his call) - the cheapY/cheapCplus/cheapOnePS/cheapD1 columns
     still exist on the observations table itself (historical data from
@@ -656,10 +676,9 @@ def save_entry_dialog(conn, payload):
     flight_date = payload['flightDate']
     flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()
 
-    SEAT_KEYS = ('y', 'cplus', 'onePS', 'd1')
     to_write = [
         e for e in payload['entries']
-        if any(e.get(f, '') not in ('', None) for f in SEAT_KEYS)
+        if any(e.get(f, '') not in ('', None) for f in ENTRY_COLUMNS)
     ]
     if not to_write:
         conn.commit()
@@ -685,13 +704,13 @@ def save_entry_dialog(conn, payload):
             hours_before_dep = None
 
         conn.execute(
-            """INSERT INTO observations
+            f"""INSERT INTO observations
                (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, flightDate, checkTimestamp,
-                hoursBeforeDep, depTime, y, cPlus, firstOrPS, d1)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                hoursBeforeDep, depTime, {', '.join(ENTRY_COLUMNS.values())})
+               VALUES ({', '.join('?' * (8 + len(ENTRY_COLUMNS)))})""",
             (entry['car'], entry['flightNumber'], entry['org'], entry['dest'],
              flight_date, check_timestamp, hours_before_dep, entry['dep'],
-             num('y'), num('cplus'), num('onePS'), num('d1')),
+             *[num(field) for field in ENTRY_COLUMNS]),
         )
 
     for org, dest in {(e['org'], e['dest']) for e in to_write}:

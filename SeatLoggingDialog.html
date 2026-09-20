@@ -17,7 +17,7 @@
     th { text-align: left; font-size: 13px; color: #888; padding: 3px 5px; overflow: hidden; }
     th.groupHead { font-size: 11px; color: #aaa; text-align: center; font-weight: normal; padding: 0; }
     td { padding: 5px 5px; vertical-align: middle; overflow: hidden; }
-    #rows tr:nth-child(odd) { background: #e6f4ea; }
+    #rows tr.stripe { background: #e6f4ea; }
     .dep { font-weight: bold; font-size: 17px; }
     .hrs { font-size: 15px; color: #666; }
     .hrs.soon { color: #c5221f; font-weight: bold; }
@@ -86,6 +86,21 @@
     #recentPanel { font-size: 18px; color: #888; margin-top: 10px; }
     .recentRow { line-height: 1.3; white-space: pre; font-family: 'Courier New', monospace; font-weight: bold; }
     .recentRow.cur { color: #333; }
+    .seatMapLink { display: block; font-size: 11px; color: #1a73e8; cursor: pointer; margin-top: 2px; }
+    .seatMapLink.hasData { font-weight: bold; }
+    tr.seatMapRow td { padding: 0 5px 8px 24px; }
+    .smPanel { border-left: 3px solid #1a73e8; padding: 4px 12px; font-size: 13px; color: #444; }
+    .smLine { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
+    .smSizes { color: #666; }
+    .smLink { color: #1a73e8; cursor: pointer; font-size: 12px; }
+    .smGrid { display: grid; grid-template-columns: 40px repeat(4, 48px); gap: 3px 6px; align-items: center; margin: 4px 0; }
+    .smHead { font-size: 11px; color: #888; text-align: center; }
+    input.seatn { width: 44px; font-size: 15px; text-align: center; box-sizing: border-box; }
+    input.seatn.auto { color: #999; background: #f2f2f2; }
+    .aircraftForm { border: 1px solid #ddd; border-radius: 4px; padding: 6px 8px; margin: 4px 0; background: #fff; }
+    .aircraftForm input { font-size: 13px; margin-right: 6px; }
+    .aircraftForm input.afSize { width: 40px; text-align: center; }
+    .afStatus { color: #c5221f; margin-left: 8px; }
   </style>
 </head>
 <body>
@@ -125,7 +140,6 @@
       <thead><tr id="groupHeaderRow"></tr><tr id="headerRow"></tr></thead>
       <tbody id="rows"></tbody>
     </table>
-    <datalist id="aircraftOptions"></datalist>
     <div class="btnRow" id="btnRow" style="display:none;">
       <span id="status">Blank rows aren't logged.</span>
       <button id="logBtn" onclick="logReadings()">Log these readings</button>
@@ -141,11 +155,68 @@
   </div>
 
   <script>
-    var initData = {}; // aircraftOptions now arrives on the batch result itself, see renderAircraftOptions
     var batch = null;
-    var SEAT_FIELDS = ['y', 'cplus', 'onePS', 'd1'];
-    var aircraftOptionsRendered = false;
     var showDeparted = false;
+    var CABIN_SIZE_KEYS = { Y: 'main', CPlus: 'comfortPlus', FirstOrPS: 'first', D1: 'd1' };
+    var CABIN_LABELS = { Y: 'Y', CPlus: 'C+', FirstOrPS: '1/PS', D1: 'D1' };
+    var PLACEHOLDER_AIRCRAFT = ['', 'tbd'];
+
+    function canBuyFields() { return (batch && batch.canBuyFields) || []; }
+    function seatMapFields() { return (batch && batch.seatMapFields) || []; }
+    function dataFields() { return canBuyFields().concat(seatMapFields()); }
+
+    function escapeHtml(s) {
+      return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function postJson(url, body) {
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
+          return result;
+        });
+    }
+
+    function inputFor(field, i) {
+      return document.querySelector('input[data-field="' + field + '"][data-i="' + i + '"]');
+    }
+    function fieldValue(field, i) {
+      var el = inputFor(field, i);
+      return el ? el.value.trim() : '';
+    }
+    function isAutoFilled(field, i) {
+      var el = inputFor(field, i);
+      return !!(el && el.getAttribute('data-auto') === '1');
+    }
+    function markAuto(el) { el.setAttribute('data-auto', '1'); el.classList.add('auto'); }
+    function clearAuto(el) { el.removeAttribute('data-auto'); el.classList.remove('auto'); }
+    function panelFor(i) { return document.querySelector('tr.seatMapRow[data-i="' + i + '"]'); }
+
+    function collectEntry(row, i) {
+      var entry = {
+        scheduleRow: row.scheduleRow, org: row.org, dest: row.dest, car: row.car,
+        dep: row.dep, aircraftConfig: row.aircraftConfig, flightNumber: row.flightNumber,
+        hoursUntilDep: row.hoursUntilDep, depDisplay: row.depDisplay
+      };
+      canBuyFields().forEach(function (f) { entry[f] = fieldValue(f, i); });
+      var typedSeatMapValue = seatMapFields().some(function (f) {
+        return fieldValue(f, i) !== '' && !isAutoFilled(f, i);
+      });
+      seatMapFields().forEach(function (f) { entry[f] = typedSeatMapValue ? fieldValue(f, i) : ''; });
+      return entry;
+    }
+    function entryHasData(entry) {
+      return dataFields().some(function (f) { return entry[f] !== ''; });
+    }
+    function entryHasCanBuy(entry) {
+      return canBuyFields().some(function (f) { return entry[f] !== ''; });
+    }
 
     // Route+days skipped this session - resets on reload. A route+day
     // lands in here the moment it's either logged for real or explicitly
@@ -406,6 +477,9 @@
         });
         lines.push('  current input (unsaved): y=' + blankDash(cur.y) + ' cplus=' + blankDash(cur.cplus) +
           ' onePS=' + blankDash(cur.onePS) + ' d1=' + blankDash(cur.d1));
+        var seatMapTyped = seatMapFields().filter(function (f) { return fieldValue(f, i) !== ''; })
+          .map(function (f) { return f + '=' + fieldValue(f, i) + (isAutoFilled(f, i) ? '(auto)' : ''); });
+        lines.push('  current seat-map input (unsaved): ' + (seatMapTyped.length ? seatMapTyped.join(' ') : '-'));
 
         var ce = row.curveEstimate || {};
         lines.push('  curve estimate hint (right now): y=' + blankDash(ce.y) + ' cplus=' + blankDash(ce.cplus) +
@@ -488,15 +562,228 @@
       }).join('');
     }
 
-    function renderAircraftOptions(options) {
-      if (aircraftOptionsRendered) return;
-      var dl = document.getElementById('aircraftOptions');
-      (options || []).forEach(function (opt) {
-        var o = document.createElement('option');
-        o.value = opt;
-        dl.appendChild(o);
+    function findAircraft(key) {
+      var lower = String(key || '').toLowerCase();
+      return (batch.aircraftList || []).find(function (a) { return a.key.toLowerCase() === lower; }) || null;
+    }
+
+    function formatAircraftSizes(aircraft) {
+      var sizes = aircraft ? [aircraft.d1, aircraft.first, aircraft.comfortPlus, aircraft.main] : [];
+      if (sizes.length === 0 || sizes.some(function (n) { return n === null || n === undefined; })) {
+        return 'sizes unknown';
+      }
+      var parts = [];
+      if (aircraft.d1 > 0) parts.push(aircraft.d1 + ' D1');
+      if (aircraft.first > 0) parts.push(aircraft.first + ' 1st');
+      if (aircraft.comfortPlus > 0) parts.push(aircraft.comfortPlus + ' C+');
+      parts.push(aircraft.main + ' Y');
+      return parts.join(' \u00b7 ') + ' = ' + aircraft.total;
+    }
+
+    function aircraftOptionsHtml(currentKey) {
+      var currentLower = String(currentKey || '').toLowerCase();
+      var found = false;
+      var html = (batch.aircraftList || []).map(function (a) {
+        var selected = a.key.toLowerCase() === currentLower;
+        if (selected) found = true;
+        return '<option value="' + escapeHtml(a.key) + '"' + (selected ? ' selected' : '') + '>' +
+          escapeHtml(a.key) + ' \u2014 ' + escapeHtml(a.name) + '</option>';
+      }).join('');
+      if (!found && currentKey) {
+        html = '<option value="' + escapeHtml(currentKey) + '" selected>' +
+          escapeHtml(currentKey) + ' (no cabin sizes yet)</option>' + html;
+      }
+      return html + '<option value="__new__">+ new aircraft\u2026</option>';
+    }
+
+    function seatMapInputHtml(field, i) {
+      return '<input class="seatn" data-i="' + i + '" data-field="' + field +
+        '" placeholder="-" maxlength="3" inputmode="numeric">';
+    }
+
+    function buildSeatMapPanel(row, i) {
+      var suffixes = Object.keys(CABIN_SIZE_KEYS);
+      var grid = '<span></span>' + suffixes.map(function (s) {
+        return '<span class="smHead">' + CABIN_LABELS[s] + '</span>';
+      }).join('');
+      [['solo', 'Solo'], ['pair', 'Pair']].forEach(function (group) {
+        grid += '<span>' + group[1] + '</span>' + suffixes.map(function (s) {
+          return seatMapInputHtml(group[0] + s, i);
+        }).join('');
       });
-      aircraftOptionsRendered = true;
+      return '<div class="smPanel">' +
+        '<div class="smLine"><span>Aircraft</span>' +
+        '<select class="smAircraft" data-i="' + i + '">' + aircraftOptionsHtml(row.aircraftConfig) + '</select>' +
+        '<span class="smSizes"></span><a class="smLink smEdit" data-i="' + i + '"></a></div>' +
+        '<div class="aircraftForm" data-i="' + i + '" style="display:none;">' +
+        'key <input class="afKey" size="9"> name <input class="afName" size="24"> ' +
+        'D1 <input class="afSize" data-size="d1" maxlength="3"> 1st <input class="afSize" data-size="first" maxlength="3"> ' +
+        'C+ <input class="afSize" data-size="comfortPlus" maxlength="3"> Y <input class="afSize" data-size="main" maxlength="3"> ' +
+        '<button class="afSave" data-i="' + i + '">Save aircraft</button> ' +
+        '<a class="smLink afCancel" data-i="' + i + '">cancel</a><span class="afStatus"></span></div>' +
+        '<div class="smGrid">' + grid + '</div>' +
+        '<div class="smLine">X <input class="seatn" data-i="' + i + '" data-field="blockedTotal" placeholder="-" maxlength="3" inputmode="numeric"> blocked seats, all cabins</div>' +
+        '</div>';
+    }
+
+    function updateAircraftLabels(i) {
+      var panelRow = panelFor(i);
+      if (!panelRow) return;
+      var key = batch.rows[i].aircraftConfig;
+      var aircraft = findAircraft(key);
+      panelRow.querySelector('.smSizes').textContent = formatAircraftSizes(aircraft);
+      var edit = panelRow.querySelector('.smEdit');
+      edit.textContent = aircraft ? 'edit sizes' : 'add sizes';
+      edit.style.display = PLACEHOLDER_AIRCRAFT.indexOf(String(key || '').toLowerCase()) !== -1 ? 'none' : '';
+    }
+
+    function refreshAircraftSelects() {
+      batch.rows.forEach(function (row, i) {
+        var panelRow = panelFor(i);
+        if (!panelRow) return;
+        panelRow.querySelector('.smAircraft').innerHTML = aircraftOptionsHtml(row.aircraftConfig);
+        updateAircraftLabels(i);
+      });
+    }
+
+    function applyAircraftFill(i) {
+      var panelRow = panelFor(i);
+      if (!panelRow) return;
+      Array.prototype.forEach.call(panelRow.querySelectorAll('input.seatn.auto'), function (el) {
+        el.value = '';
+        clearAuto(el);
+      });
+      var aircraft = findAircraft(batch.rows[i].aircraftConfig);
+      if (aircraft) {
+        Object.keys(CABIN_SIZE_KEYS).forEach(function (suffix) {
+          if (aircraft[CABIN_SIZE_KEYS[suffix]] !== 0) return;
+          ['solo', 'pair'].forEach(function (prefix) {
+            var el = inputFor(prefix + suffix, i);
+            if (el && el.value === '') { el.value = '0'; markAuto(el); }
+          });
+        });
+      }
+      updateAircraftLabels(i);
+      refreshSeatMapLink(i);
+    }
+
+    function refreshSeatMapLink(i) {
+      var link = document.querySelector('a.seatMapLink[data-i="' + i + '"]');
+      if (!link) return;
+      var typed = seatMapFields().some(function (f) { return fieldValue(f, i) !== '' && !isAutoFilled(f, i); });
+      link.classList.toggle('hasData', typed);
+    }
+
+    function showSeatMapPanel(i) {
+      var panelRow = panelFor(i);
+      if (!panelRow) return null;
+      panelRow.style.display = '';
+      if (!panelRow.getAttribute('data-filled')) {
+        panelRow.setAttribute('data-filled', '1');
+        applyAircraftFill(i);
+      }
+      return panelRow;
+    }
+
+    function toggleSeatMap(i) {
+      var panelRow = panelFor(i);
+      if (!panelRow) return;
+      if (panelRow.style.display === 'none') {
+        showSeatMapPanel(i);
+        var first = inputFor('soloY', i);
+        if (first) first.focus();
+      } else {
+        panelRow.style.display = 'none';
+      }
+    }
+
+    function onAircraftChange(i, selectEl) {
+      var row = batch.rows[i];
+      if (selectEl.value === '__new__') {
+        selectEl.innerHTML = aircraftOptionsHtml(row.aircraftConfig);
+        openAircraftForm(i, 'new');
+        return;
+      }
+      postJson('/api/setScheduleAircraft', { scheduleRow: row.scheduleRow, aircraftConfig: selectEl.value })
+        .then(function (result) {
+          row.aircraftConfig = result.aircraftConfig;
+          applyAircraftFill(i);
+        })
+        .catch(function (err) {
+          alert('Aircraft not changed: ' + err.message);
+          selectEl.innerHTML = aircraftOptionsHtml(row.aircraftConfig);
+        });
+    }
+
+    function openAircraftForm(i, mode) {
+      var row = batch.rows[i];
+      var form = panelFor(i).querySelector('.aircraftForm');
+      var aircraft = mode === 'edit' ? findAircraft(row.aircraftConfig) : null;
+      var keyInput = form.querySelector('.afKey');
+      form.setAttribute('data-mode', mode);
+      keyInput.value = mode === 'edit' ? String(row.aircraftConfig).toLowerCase() : '';
+      keyInput.readOnly = mode === 'edit';
+      form.querySelector('.afName').value = aircraft ? aircraft.name : '';
+      Array.prototype.forEach.call(form.querySelectorAll('.afSize'), function (input) {
+        var size = aircraft ? aircraft[input.getAttribute('data-size')] : null;
+        input.value = (size === null || size === undefined) ? '' : size;
+      });
+      form.querySelector('.afStatus').textContent = '';
+      form.style.display = '';
+      (mode === 'edit' ? form.querySelector('.afName') : keyInput).focus();
+    }
+
+    function closeAircraftForm(i) {
+      panelFor(i).querySelector('.aircraftForm').style.display = 'none';
+    }
+
+    function saveAircraftForm(i) {
+      var row = batch.rows[i];
+      var form = panelFor(i).querySelector('.aircraftForm');
+      var mode = form.getAttribute('data-mode');
+      var payload = {
+        mode: mode,
+        configKey: form.querySelector('.afKey').value,
+        aircraft: form.querySelector('.afName').value,
+        scheduleRow: mode === 'new' ? row.scheduleRow : null
+      };
+      Array.prototype.forEach.call(form.querySelectorAll('.afSize'), function (input) {
+        payload[input.getAttribute('data-size')] = input.value;
+      });
+      var status = form.querySelector('.afStatus');
+      status.textContent = 'Saving\u2026';
+      postJson('/api/saveAircraft', payload)
+        .then(function (result) {
+          batch.aircraftList = result.aircraftList;
+          if (mode === 'new') row.aircraftConfig = result.configKey;
+          refreshAircraftSelects();
+          applyAircraftFill(i);
+          form.style.display = 'none';
+        })
+        .catch(function (err) {
+          status.textContent = err.message;
+        });
+    }
+
+    function handleSeatMapClick(e) {
+      var el = e.target;
+      if (!el.classList) return;
+      var i = parseInt(el.getAttribute('data-i'), 10);
+      if (el.classList.contains('seatMapLink')) toggleSeatMap(i);
+      else if (el.classList.contains('smEdit')) openAircraftForm(i, 'edit');
+      else if (el.classList.contains('afCancel')) closeAircraftForm(i);
+      else if (el.classList.contains('afSave')) saveAircraftForm(i);
+    }
+
+    function handleSeatMapChange(e) {
+      var el = e.target;
+      if (el.classList && el.classList.contains('smAircraft')) {
+        onAircraftChange(parseInt(el.getAttribute('data-i'), 10), el);
+      }
+    }
+
+    function selectSeatMapInputOnFocus(e) {
+      if (e.target.classList && e.target.classList.contains('seatn')) e.target.select();
     }
 
     function toggleSettings() {
@@ -592,8 +879,8 @@
     }
 
     function captureUnsavedSeatValues() {
-      // Snapshots whatever's currently typed into seat fields, keyed by
-      // scheduleRow (not array index i, since toggling the departed-
+      // Snapshots whatever's currently typed into the input fields, keyed
+      // by scheduleRow (not array index i, since toggling the departed-
       // flights view can shuffle row order even when the same flights
       // persist). ONLY call this before a re-render that does NOT
       // represent a completed save - i.e. the departed-flights toggle,
@@ -602,43 +889,45 @@
       // batch renders; that next batch is always this same route+day
       // reshown on purpose (see saveEntryDialog's forcedRoute), so those
       // already-saved values must NOT be copied back in as if still
-      // pending - doing so
-      // makes a second, harmless "log this blank row to move on" click
-      // silently resave the same reading as a near-duplicate observation
-      // instead. That's exactly what calling this from every renderBatch
-      // used to cause; it's now scoped to the toggle alone, the only
-      // place values are genuinely still unsaved across a re-render.
+      // pending - doing so makes a second, harmless "log this blank row
+      // to move on" click silently resave the same reading as a near-
+      // duplicate observation instead.
       var map = {};
       if (!batch || !batch.rows) return map;
       batch.rows.forEach(function (row, i) {
-        function val(field) {
-          var el = document.querySelector('input[data-field="' + field + '"][data-i="' + i + '"]');
-          return el ? el.value : '';
-        }
-        var vals = {
-          y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
-        };
-        var hasAny = SEAT_FIELDS.some(function (f) { return vals[f]; });
-        if (hasAny) map[row.scheduleRow] = vals;
+        var panelRow = panelFor(i);
+        var panelOpen = !!panelRow && panelRow.style.display !== 'none';
+        var vals = {};
+        var autoFields = [];
+        dataFields().forEach(function (f) {
+          vals[f] = fieldValue(f, i);
+          if (isAutoFilled(f, i)) autoFields.push(f);
+        });
+        var hasTyped = dataFields().some(function (f) {
+          return vals[f] !== '' && autoFields.indexOf(f) === -1;
+        });
+        if (hasTyped || panelOpen) map[row.scheduleRow] = { vals: vals, autoFields: autoFields, panelOpen: panelOpen };
       });
       return map;
     }
 
     function restoreUnsavedSeatValues(map) {
       batch.rows.forEach(function (row, i) {
-        var vals = map[row.scheduleRow];
-        if (!vals) return;
-        ['y', 'cplus', 'onePS', 'd1'].forEach(function (f) {
-          if (!vals[f]) return;
-          var el = document.querySelector('input[data-field="' + f + '"][data-i="' + i + '"]');
-          if (el) el.value = vals[f];
+        var saved = map[row.scheduleRow];
+        if (!saved) return;
+        if (saved.panelOpen) showSeatMapPanel(i);
+        dataFields().forEach(function (f) {
+          var el = inputFor(f, i);
+          if (!el || !saved.vals[f]) return;
+          el.value = saved.vals[f];
+          if (saved.autoFields.indexOf(f) !== -1) markAuto(el); else clearAuto(el);
         });
+        refreshSeatMapLink(i);
       });
     }
 
     function renderBatch(result) {
       batch = result;
-      renderAircraftOptions(initData.aircraftOptions || result.aircraftOptions);
       if (batch.settings) populateSettingsForm(batch.settings);
       if (batch.openFullSettings) populateOpenFullSettingsForm(batch.openFullSettings);
 
@@ -714,12 +1003,14 @@
       tbody.innerHTML = '';
       batch.rows.forEach(function (row, i) {
         var tr = document.createElement('tr');
-        if (row.departed) tr.className = (tr.className ? tr.className + ' ' : '') + 'departedRow';
+        var stripe = (i % 2 === 0) ? 'stripe' : '';
+        tr.className = [row.departed ? 'departedRow' : '', stripe].join(' ').trim();
         var hrsClass = 'hrs' + (row.hoursUntilDep <= 2 ? ' soon' : '');
         var seatDisabled = row.departed ? ' disabled' : '';
 
         var cellHtml = {
-          dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>',
+          dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>' +
+            (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat map</a>'),
           y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.y) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.y) + '</div>',
           cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',
@@ -755,6 +1046,15 @@
         }).join('');
         tbody.appendChild(tr);
 
+        if (!row.departed) {
+          var panelTr = document.createElement('tr');
+          panelTr.className = ('seatMapRow ' + stripe).trim();
+          panelTr.setAttribute('data-i', i);
+          panelTr.style.display = 'none';
+          panelTr.innerHTML = '<td colspan="' + columns.length + '">' + buildSeatMapPanel(row, i) + '</td>';
+          tbody.appendChild(panelTr);
+        }
+
         var flagInput = tr.querySelector('#flagInput' + i);
         if (flagInput) {
           flagInput.addEventListener('blur', function () {
@@ -767,16 +1067,30 @@
       tbody.addEventListener('keydown', handleArrowNav);
       tbody.removeEventListener('input', sanitizeSeatInput);
       tbody.addEventListener('input', sanitizeSeatInput);
+      tbody.removeEventListener('click', handleSeatMapClick);
+      tbody.addEventListener('click', handleSeatMapClick);
+      tbody.removeEventListener('change', handleSeatMapChange);
+      tbody.addEventListener('change', handleSeatMapChange);
+      tbody.removeEventListener('focusin', selectSeatMapInputOnFocus);
+      tbody.addEventListener('focusin', selectSeatMapInputOnFocus);
     }
 
     function sanitizeSeatInput(e) {
       // Hard block at the source - the whole reason a stray "65" ever
-      // got into observations. A single digit 0-9, nothing else, no
+      // got into observations. Can-buy counts are a single digit 0-9;
+      // seat-map counts run to three digits; digits only either way, no
       // matter how it got typed or pasted in.
       var el = e.target;
-      if (!el.classList || !el.classList.contains('seat')) return;
-      var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, 1);
+      if (!el.classList) return;
+      var isCanBuy = el.classList.contains('seat');
+      var isSeatMap = el.classList.contains('seatn');
+      if (!isCanBuy && !isSeatMap) return;
+      var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, isCanBuy ? 1 : 3);
       if (cleaned !== el.value) el.value = cleaned;
+      if (isSeatMap) {
+        clearAuto(el);
+        refreshSeatMapLink(parseInt(el.getAttribute('data-i'), 10));
+      }
     }
 
     function handleArrowNav(e) {
@@ -787,14 +1101,15 @@
 
       var i = parseInt(el.getAttribute('data-i'), 10);
       var field = el.getAttribute('data-field');
-      var fieldIdx = SEAT_FIELDS.indexOf(field);
+      var canBuy = canBuyFields();
+      var fieldIdx = canBuy.indexOf(field);
       var target = null;
 
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         var dir = key === 'ArrowLeft' ? -1 : 1;
         var idx = fieldIdx + dir;
-        while (idx >= 0 && idx < SEAT_FIELDS.length) {
-          var candidate = document.querySelector('input[data-field="' + SEAT_FIELDS[idx] + '"][data-i="' + i + '"]');
+        while (idx >= 0 && idx < canBuy.length) {
+          var candidate = document.querySelector('input[data-field="' + canBuy[idx] + '"][data-i="' + i + '"]');
           if (candidate) { target = candidate; break; }
           idx += dir;
         }
@@ -844,29 +1159,13 @@
       btn.disabled = true;
       status.textContent = 'Logging\u2026';
 
-      var entries = batch.rows.map(function (row, i) {
-        function val(field) {
-          var el = document.querySelector('input[data-field="' + field + '"][data-i="' + i + '"]');
-          return el ? el.value.trim() : '';
-        }
-        return {
-          scheduleRow: row.scheduleRow, org: row.org, dest: row.dest, car: row.car,
-          dep: row.dep, aircraftConfig: row.aircraftConfig, flightNumber: row.flightNumber,
-          y: val('y'), cplus: val('cplus'), onePS: val('onePS'), d1: val('d1'),
-          hoursUntilDep: row.hoursUntilDep,
-          depDisplay: row.depDisplay
-        };
-      });
+      var entries = batch.rows.map(collectEntry);
 
-      var hasAnyData = entries.some(function (e) {
-        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
-      });
+      var hasAnyData = entries.some(entryHasData);
 
-      var loggedEntries = entries.filter(function (e) {
-        return e.y !== '' || e.cplus !== '' || e.onePS !== '' || e.d1 !== '';
-      });
+      var loggedEntries = entries.filter(entryHasData);
       function recordRecentlyLogged() {
-        loggedEntries.forEach(function (e) {
+        loggedEntries.filter(entryHasCanBuy).forEach(function (e) {
           recentlyLogged.push({
             org: e.org, dest: e.dest, depDisplay: e.depDisplay, hrs: e.hoursUntilDep,
             y: e.y, cplus: e.cplus, onePS: e.onePS, d1: e.d1

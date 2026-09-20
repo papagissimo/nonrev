@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from clustering import SERVICE_GAP_MINUTES, cluster_services, service_representative
+from observation_filters import not_seat_map_only_where_clause
 from PoolingSettingsDialog import excluded_date_where_clause
 from Scenarios import studied_routes
 from ServiceGrouping import get_route_services, load_open_full_settings
@@ -84,7 +85,7 @@ def observation_rows_for_day(conn, org, dest, day_of_week):
     rows = conn.execute(
         f"""SELECT flightDate, depTime, hoursBeforeDep, y, cPlus, firstOrPS, d1
             FROM observations
-            WHERE org = ? AND dest = ?
+            WHERE org = ? AND dest = ? AND {not_seat_map_only_where_clause()}
               AND depTime IS NOT NULL AND hoursBeforeDep IS NOT NULL
               AND {excluded_date_where_clause()}""",
         (org, dest),

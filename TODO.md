@@ -53,33 +53,19 @@ working around it.
 - **Delayed-flight departure time** — very low priority. Doesn't come up
   often enough in practice to be worth designing for. Leave alone until it
   actually becomes a problem.
-- **Seat-map observations — decided, not built.** The observations table
-  already has soloY/soloCPlus/soloFirstOrPS/soloD1, pairY/.../pairD1 and
-  blockedTotal (one total across cabins); nothing writes them yet. One row
-  per sitting, NULL = didn't observe, 0 = observed none.
-  - Entry: a per-flight "seat map" button in the logging dialog reveals the
-    optional inputs under that flight's row, so can-buy-only looks stay as
-    fast as today. They save with the can-buy values in the same entry. A
-    seat-map-only entry is valid (blank can-buy = not observed).
-  - Save gate: any non-blank data field logs the entry; only a fully blank
-    entry skips. The field list is defined once in Python and sent to the
-    page, not retyped in the HTML.
-  - Aircraft: stored in flightSchedule.aircraftConfig only (corrected in
-    place like everything else there), never on observation rows. The
-    aircraft picker becomes a real pick list with an "add new aircraft"
-    path (key, name, cabin sizes) in the same dialog. Choosing an aircraft
-    pre-fills 0 in the seat-map inputs for cabins it doesn't have (visible,
-    editable). Unknown cabin sizes must be NULL, not 0 - TBD and
-    a321neoxcon currently hold 0s meaning "unknown", and e175skyw's cabins
-    sum to 70 against a total of 76.
-  - After it lands, audit readers that assume every row carries can-buy
-    counts (recent_observations, today's readings in SeatLoggingDialog,
-    anything measuring "last checked") - a seat-map-only row has NULL
-    can-buy.
-  - Modeling on the selectable counts keys off time and doesn't require a
-    seat-map reading to share a can-buy reading's exact timestamp.
-  - His kid's numbers: no design yet; each becomes a column when it
-    actually shows up.
+- **Aircraft entry in FlightScheduleDialog — not yet discussed.** Its
+  aircraft field is still free text with a suggestion list, which is how
+  keys with no aircraftConfigs row got into flightSchedule (crj900, crj700,
+  a321). The seat-map panel now handles those (its "add sizes" fills the
+  missing row); whether the schedule dialog should become a real pick list
+  too is open.
+- **Glance-only observation rows — decision pending.** 26 old rows
+  (2026-09-01 to 09-13) hold only the retired cheap* values: y, cPlus,
+  firstOrPS and d1 are all NULL. GraphObservations counts a missing cabin
+  as 0, so the 15 outside excluded date ranges plot as zero-seat points.
+  Delete them, or leave them.
+- **Seat-map modeling** — when the selectable counts get modeled, key off
+  time; a seat-map reading needn't share a can-buy reading's timestamp.
 
 ## Service identity (raw depTime vs. clustered service) — CLOSED 2026-09-16
 

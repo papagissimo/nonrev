@@ -16,6 +16,7 @@ import sqlite3
 
 from flask import Flask, jsonify, request, send_from_directory, Response
 
+import AircraftConfigs
 import SeatLoggingDialog
 import FlightScheduleDialog
 import ObservationsBrowser
@@ -145,6 +146,34 @@ def api_save_and_get_next_batch():
     conn = get_conn()
     try:
         return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, include_departed, forced_route))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveAircraft', methods=['POST'])
+def api_save_aircraft():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(AircraftConfigs.save_aircraft(conn, payload))
+    except AircraftConfigs.AircraftError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/setScheduleAircraft', methods=['POST'])
+def api_set_schedule_aircraft():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(AircraftConfigs.set_schedule_aircraft(conn, body['scheduleRow'], body['aircraftConfig']))
+    except AircraftConfigs.AircraftError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
