@@ -468,17 +468,9 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
     night_end_hour = decline_settings['nightEndHour']
     now = eastern_now()
 
-    # Consider yesterday's, today's, tomorrow's, AND the day-after's (ET)
-    # day-of-week schedule rows - see module docstring for the yesterday
-    # leg (cross-midnight west-coast flights). Tomorrow and the day after
-    # are included so a session can walk all the way through tonight's
-    # remaining flights and on into tomorrow's, not stop at midnight. A
-    # flight that's already departed falls out through the normal
-    # 45-minute cutoff regardless of which of the four days its schedule
-    # row came from.
-    schedule_days = [
-        now.date() - timedelta(days=1), now.date(),
-        now.date() + timedelta(days=1), now.date() + timedelta(days=2),
+    days_ahead_of_today = settings['lookaheadDays']
+    schedule_days = [now.date() - timedelta(days=1)] + [
+        now.date() + timedelta(days=offset) for offset in range(days_ahead_of_today + 1)
     ]
 
     candidates = []

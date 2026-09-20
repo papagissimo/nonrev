@@ -101,6 +101,10 @@
         <input type="number" step="0.1" id="setGoldenTicket"> h before departure
       </div>
       <div class="tierRow">
+        <b>Lookahead</b> - how many days past today the logging walk reaches into<br>
+        <input type="number" step="1" min="0" id="setLookaheadDays"> days
+      </div>
+      <div class="tierRow">
         <b>Open/full counts</b> - what the O/F column pools and how it classifies a reading<br>
         Only count flight-dates on or after <input type="date" id="setOpenFullDateFrom"><br>
         Full at or below <input type="number" step="1" id="setFullThreshold"> total seats &middot;
@@ -502,6 +506,7 @@
 
     function populateSettingsForm(settings) {
       document.getElementById('setGoldenTicket').value = settings.goldenTicketHours;
+      document.getElementById('setLookaheadDays').value = settings.lookaheadDays;
     }
 
     function populateOpenFullSettingsForm(settings) {
@@ -513,7 +518,8 @@
 
     function saveSettings() {
       var settings = {
-        goldenTicketHours: parseFloat(document.getElementById('setGoldenTicket').value)
+        goldenTicketHours: parseFloat(document.getElementById('setGoldenTicket').value),
+        lookaheadDays: parseInt(document.getElementById('setLookaheadDays').value, 10)
       };
       var openFullSettings = {
         dateFrom: document.getElementById('setOpenFullDateFrom').value,

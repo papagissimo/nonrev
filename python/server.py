@@ -138,6 +138,7 @@ def api_save_settings():
     new_settings = request.get_json(force=True)
     conn = get_conn()
     try:
+        settings_module.validate_next_up_settings(new_settings)
         settings_module.save_settings(conn, new_settings)
         return jsonify({'saved': True})
     except Exception as e:

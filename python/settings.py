@@ -28,7 +28,14 @@ DEFAULT_SETTINGS = {
     # hardcoded since he expects to tune it, but tuning it never touches
     # already-logged data - see goldenTicketHours usage in get_launcher_summary.
     'goldenTicketHours': 1.5,
+    'lookaheadDays': 2,
 }
+
+
+def validate_next_up_settings(new_settings):
+    lookahead = new_settings.get('lookaheadDays')
+    if isinstance(lookahead, bool) or not isinstance(lookahead, int) or lookahead < 0:
+        raise ValueError('lookaheadDays must be a whole number, 0 or more')
 
 
 def ensure_table(conn):
