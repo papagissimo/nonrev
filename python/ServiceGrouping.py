@@ -5,14 +5,18 @@ A "service" (his term) is a real flight - org+dest+time-of-day - as
 distinct from Delta's flightNumber, which changes unpredictably and is
 never used for matching (see flightSchedule's naming convention on that
 column - not touched here, but same rule applies). Within one route,
-service identity is found by simple gap-based clustering on depTime
-across all 7 flightSchedule rows: sort every depTime for the route,
-split wherever the gap to the next one exceeds SERVICE_GAP_MINUTES. His
+service identity is found by simple gap-based clustering on depTime:
+sort every depTime for the route, split wherever the gap to the next
+one exceeds SERVICE_GAP_MINUTES. For open/full counts the times
+clustered are the logged flights', never flightSchedule's, which only
+describes this week. His
 call: exact cluster boundaries barely matter (a flight landing in the
 "wrong" cluster still has roughly the right time of day, which is what
 actually matters) - real schedule data already showed well-separated
 clusters (hours apart) with small intra-cluster spread, so a simple gap
 split is enough, no confidence score or fixed-K clustering needed.
+get_route_services applies the same clustering to flightSchedule rows,
+to group the current schedule itself.
 
 Open/full counts are always a real fraction (e.g. "5/7"), never a bare
 percentage - a percentage alone hides the sample size, which matters as
@@ -138,6 +142,11 @@ def get_grouped_days(conn, org, dest, day_of_week):
     return days
 
 
+def logged_service_containing(dep_time, logged_times):
+    clusters = cluster_services(sorted(set(logged_times) | {dep_time}))
+    return set(next(cluster for cluster in clusters if dep_time in cluster))
+
+
 def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
     """
     For the service that (org, dest, day_of_week, dep_time) belongs to,
@@ -150,28 +159,21 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
     measured = qualifying flight-date instances with a computable t1
     for this service on a grouped day, within the date range. open/full
     are classified against the settings' openThreshold/fullThreshold -
-    a t1 between them counts toward measured but neither bucket. (t1
+    a t1 between them counts toward measured but is neither open nor
+    full. (t1
     is now the curve-slide estimate via T1Estimator, not the old
     two-point method - see GraphObservations.py's module docstring;
     this function didn't need to change beyond the field's name, since
     it only ever consumed whatever get_flight_points called its single
     point estimate.)
 
-    Matched against get_flight_points' own depTimeMinutes - which is
-    ITSELF a cluster representative (rounded to the nearest 15 min from
-    real observations), not a raw depTime - by the service's own
-    repMinutes (the same kind of representative, computed from
-    flightSchedule's raw depTimes). Comparing representative-to-
-    representative is deliberate: comparing a raw schedule depTime
-    (rarely a clean multiple of 15) against a rounded graph point would
-    essentially never match.
+    The service is found from the logged flights alone: the depTimes of
+    every flight logged on the grouped days are clustered together with
+    dep_time itself (the live flightSchedule time is only the lookup key
+    for today's flight, never what defines the service), and the flights
+    in dep_time's cluster are that service's history.
     """
     settings = load_open_full_settings(conn)
-
-    services = get_route_services(conn, org, dest)
-    target_service = find_service_for_row(services, day_of_week, dep_time)
-    if target_service is None:
-        return {'measured': 0, 'open': 0, 'full': 0}
 
     grouped_days = get_grouped_days(conn, org, dest, day_of_week)
 
@@ -181,9 +183,11 @@ def get_open_full_counts(conn, org, dest, day_of_week, dep_time):
         date_from=settings['dateFrom'], date_to=None,
     )
 
+    service_times = logged_service_containing(dep_time, (p['depTimeMinutes'] for p in points))
+
     measured = open_count = full_count = 0
     for p in points:
-        if p['depTimeMinutes'] != target_service['repMinutes']:
+        if p['depTimeMinutes'] not in service_times:
             continue
         measured += 1
         if p['t1Old'] >= settings['openThreshold']:
