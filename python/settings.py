@@ -26,7 +26,7 @@ DEFAULT_SETTINGS = {
     # "Golden ticket" - his term for a reading close enough to departure
     # to trust as the real go/no-go signal. Configurable rather than
     # hardcoded since he expects to tune it, but tuning it never touches
-    # already-logged data - see goldenTicketHours usage in get_launcher_summary.
+    # already-logged data.
     'goldenTicketHours': 1.5,
     'lookaheadDays': 2,
 }

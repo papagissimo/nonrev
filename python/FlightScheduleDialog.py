@@ -17,13 +17,10 @@ Real differences from the Sheets version, not just syntax:
     depTime/hoursBeforeDep snapshot from when it was logged (see
     SeatLoggingDialog.save_entry_dialog), so there's nothing here left
     to cascade-rename or recompute.
-  - routeSettings (duration + studyThisRoute, org/dest-keyed) already
-    exists as its own table in nonrev.db (see create_db.py) - there's no
-    separate sheet to set up or gate behind a one-time menu action the
-    way RouteDurations was in Sheets. get_schedule_for_route_day ensures
-    a row exists for every route it loads (INSERT OR IGNORE), so
-    studyThisRoute is never implicitly absent for a route that's actually
-    being looked at.
+  - routeSettings (flight duration, org/dest-keyed) already exists as
+    its own table in nonrev.db (see create_db.py) - there's no separate
+    sheet to set up or gate behind a one-time menu action the way
+    RouteDurations was in Sheets.
   - Since SQLite has no row-shift-on-delete concern (rowid is stable
     regardless of other rows), the old three-pass update/delete/insert
     order is kept only where it still matters: deletes and inserts can
@@ -72,55 +69,29 @@ def get_next_bogus_number(conn):
     return max_n + 1
 
 
-def ensure_route_settings_row(conn, org, dest):
-    """Guarantees a routeSettings row exists for this route before it's
-    ever displayed or checked - studyThisRoute defaults to 1 via the
-    column default, so a route this has never touched is never silently
-    excluded from the cadence pool (get_next_batch) for lack of a row."""
-    conn.execute(
-        "INSERT OR IGNORE INTO routeSettings (org, dest) VALUES (?,?)",
-        (org, dest),
-    )
-
-
-def get_route_settings(conn, org, dest):
+def get_route_duration(conn, org, dest):
     row = conn.execute(
-        "SELECT durationMinutes, studyThisRoute FROM routeSettings WHERE org=? AND dest=?",
+        "SELECT durationMinutes FROM routeSettings WHERE org=? AND dest=?",
         (org, dest),
     ).fetchone()
-    if row is None:
-        return {'durationMinutes': None, 'studyThisRoute': True}
-    return {'durationMinutes': row[0], 'studyThisRoute': bool(row[1])}
+    return row[0] if row else None
 
 
-def save_route_settings(conn, org, dest, duration_minutes, study_this_route):
-    """duration_minutes=None means "leave whatever's already stored
-    alone" (an intentionally blank field shouldn't wipe out a real
-    value someone already entered) - studyThisRoute always has a real
-    checkbox state on save, so it's always written."""
-    if duration_minutes is not None:
-        conn.execute(
-            """INSERT INTO routeSettings (org, dest, durationMinutes, studyThisRoute)
-               VALUES (?,?,?,?)
-               ON CONFLICT(org, dest) DO UPDATE
-               SET durationMinutes=excluded.durationMinutes, studyThisRoute=excluded.studyThisRoute""",
-            (org, dest, duration_minutes, 1 if study_this_route else 0),
-        )
-    else:
-        conn.execute(
-            """INSERT INTO routeSettings (org, dest, studyThisRoute)
-               VALUES (?,?,?)
-               ON CONFLICT(org, dest) DO UPDATE SET studyThisRoute=excluded.studyThisRoute""",
-            (org, dest, 1 if study_this_route else 0),
-        )
+def save_route_duration(conn, org, dest, duration_minutes):
+    if duration_minutes is None:
+        return
+    conn.execute(
+        """INSERT INTO routeSettings (org, dest, durationMinutes)
+           VALUES (?,?,?)
+           ON CONFLICT(org, dest) DO UPDATE SET durationMinutes=excluded.durationMinutes""",
+        (org, dest, duration_minutes),
+    )
 
 
 def get_schedule_for_route_day(conn, org, dest, dow):
     org = str(org or '').strip().lower()
     dest = str(dest or '').strip().lower()
     dow = normalize_dow(dow)
-
-    ensure_route_settings_row(conn, org, dest)
 
     rows = conn.execute(
         """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, depTime, aircraftConfig, ignore, verdict, verdictType
@@ -148,7 +119,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
         for rowid, carrier, flight_number, dep_time, aircraft_config, ignore, verdict, verdict_type in rows
     ]
 
-    route_settings = get_route_settings(conn, org, dest)
+    duration_minutes = get_route_duration(conn, org, dest)
     day_grouping = get_day_grouping_row(conn, org, dest, dow)
 
     return {
@@ -157,8 +128,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
         'isNewRoute': len(row_dicts) == 0 and not any_other_day,
         'nextBogusNumber': get_next_bogus_number(conn),
         'aircraftOptions': load_aircraft_options(conn),
-        'durationMinutes': route_settings['durationMinutes'] if route_settings['durationMinutes'] is not None else '',
-        'studyThisRoute': route_settings['studyThisRoute'],
+        'durationMinutes': duration_minutes if duration_minutes is not None else '',
         'dayGrouping': day_grouping['dayGrouping'],
         'knownDayGroupings': get_known_day_groupings(conn),
     }
@@ -172,7 +142,6 @@ def save_schedule_for_route_day(conn, payload):
                carrier, flightNumber, dep (minutes-since-midnight int),
                aircraftConfig, ignore (bool), deleted (bool) }],
       durationMinutes: '' or a number,
-      studyThisRoute: bool,
       dayGrouping: '' or a string (see ServiceGrouping.save_day_grouping)
     }
     """
@@ -232,7 +201,7 @@ def save_schedule_for_route_day(conn, payload):
 
     duration_minutes = payload.get('durationMinutes')
     duration_minutes = int(duration_minutes) if duration_minutes not in ('', None) else None
-    save_route_settings(conn, org, dest, duration_minutes, bool(payload.get('studyThisRoute', True)))
+    save_route_duration(conn, org, dest, duration_minutes)
 
     day_grouping = payload.get('dayGrouping')
     if day_grouping not in ('', None):

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>Scenarios</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    h1 { font-size: 18px; margin: 6px 0 4px 0; }
+    a.back { color: #1a73e8; text-decoration: none; font-size: 12px; }
+    #studying { font-size: 14px; color: #444; margin-bottom: 16px; }
+    .num { font-weight: bold; color: #222; }
+    #layout { display: flex; gap: 28px; align-items: flex-start; }
+    #listPane { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
+    #scenarioList { display: flex; flex-direction: column; gap: 8px; }
+    .scenarioCard { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 4px; background: #fff; border: 1px solid #ddd; }
+    .scenarioCard.selected { background: #eef4fe; border-color: #1a73e8; }
+    .pickBtn { flex-grow: 1; min-width: 0; text-align: left; background: none; border: none; padding: 0; cursor: pointer; font-family: inherit; color: #222; }
+    .pickBtn .name { display: block; font-size: 14px; font-weight: bold; overflow-wrap: anywhere; }
+    .pickBtn .meta { display: block; font-size: 12px; color: #666; margin-top: 2px; }
+    .onLabel { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #444; cursor: pointer; }
+    .onLabel input { margin: 0; width: 16px; height: 16px; cursor: pointer; }
+    #addBtn { align-self: flex-start; margin-top: 4px; font-size: 12px; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 6px 10px; cursor: pointer; color: #444; }
+    #editorPane { flex-grow: 1; min-width: 0; max-width: 720px; }
+    #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; }
+    .nameRow label { display: block; font-size: 11px; color: #666; margin-bottom: 2px; }
+    #scenarioName { width: 240px; font-size: 13px; padding: 4px; }
+    #gridScroll { max-height: 372px; overflow-y: auto; border-bottom: 1px solid #e5e5e5; margin-top: 12px; }
+    #gridHeader { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; height: 26px; background: #fff; border-bottom: 1px solid #ccc; }
+    .routeCol { width: 130px; flex-shrink: 0; padding-left: 4px; font-size: 11px; color: #666; }
+    .days { flex-grow: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+    .dayHead { text-align: center; font-size: 11px; color: #666; }
+    .gridRow { display: flex; align-items: center; height: 30px; border-bottom: 1px solid #eee; }
+    .gridRow.inScenario { background: #eef4fe; }
+    .routeBtn { width: 130px; flex-shrink: 0; text-align: left; background: none; border: none; padding: 0 0 0 4px; font-size: 13px; font-family: inherit; color: #222; cursor: pointer; }
+    .cell { display: flex; justify-content: center; align-items: center; height: 30px; }
+    .cell input { margin: 0; width: 16px; height: 16px; cursor: pointer; }
+    .noFlights { color: #767676; }
+    .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; border-top: 1px solid #eee; padding-top: 10px; }
+    #status { color: #666; font-size: 12px; }
+    #deleteBtn { background: none; border: none; color: #c5221f; font-size: 12px; cursor: pointer; padding: 8px 4px; }
+    #saveBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    #saveBtn:disabled { background: #a9c6f2; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Launcher</a>
+  <h1>Scenarios</h1>
+  <div id="studying">Studying now: <span id="studyingText" class="num"></span></div>
+
+  <div id="layout">
+    <div id="listPane">
+      <div id="scenarioList"></div>
+      <button id="addBtn" type="button">+ New scenario</button>
+    </div>
+
+    <div id="editorPane">
+      <div id="emptyMsg" style="display:none;">No scenarios yet - add one.</div>
+      <div id="editor" style="display:none;">
+        <div class="nameRow">
+          <label for="scenarioName">name</label>
+          <input id="scenarioName" type="text">
+        </div>
+
+        <div id="gridScroll">
+          <div id="gridHeader">
+            <div class="routeCol">route</div>
+            <div class="days" id="dayHeads"></div>
+          </div>
+          <div id="gridRows"></div>
+        </div>
+
+        <div class="btnRow">
+          <span id="status"></span>
+          <span>
+            <button id="deleteBtn" type="button">Delete scenario</button>
+            <button id="saveBtn" type="button">Save</button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const state = { scenarios: [], routes: [], selectedKey: null, pinned: [], deletedIds: [], dirty: false, newCounter: 0 };
+
+    function el(tag, props) {
+      const node = document.createElement(tag);
+      Object.keys(props || {}).forEach(function (name) { node[name] = props[name]; });
+      return node;
+    }
+
+    function routeKey(org, dest) { return org + '|' + dest; }
+
+    function routeLabel(route) { return route.org + ' \u2192 ' + route.dest; }
+
+    function selected() {
+      return state.scenarios.find(function (s) { return s.key === state.selectedKey; }) || null;
+    }
+
+    function setStatus(text) {
+      document.getElementById('status').textContent = text;
+    }
+
+    function fromServer(scenario) {
+      const cells = {};
+      scenario.cells.forEach(function (cell) { cells[routeKey(cell.org, cell.dest)] = new Set(cell.days); });
+      return { key: 'id-' + scenario.id, id: scenario.id, name: scenario.name, active: scenario.active, cells: cells };
+    }
+
+    function toPayload(scenario) {
+      const cells = Object.keys(scenario.cells).map(function (key) {
+        const parts = key.split('|');
+        return { org: parts[0], dest: parts[1], days: DAYS.filter(function (d) { return scenario.cells[key].has(d); }) };
+      });
+      return { id: scenario.id, name: scenario.name, active: scenario.active, cells: cells };
+    }
+
+    function metaText(scenario) {
+      const keys = Object.keys(scenario.cells);
+      if (!keys.length) return 'no routes yet';
+      const used = DAYS.filter(function (d) { return keys.some(function (k) { return scenario.cells[k].has(d); }); });
+      return keys.length + (keys.length === 1 ? ' route' : ' routes') + ' \u00b7 ' + used.join(' ');
+    }
+
+    function studyingText() {
+      const seen = new Set();
+      let onCount = 0;
+      state.scenarios.forEach(function (s) {
+        if (!s.active) return;
+        onCount += 1;
+        Object.keys(s.cells).forEach(function (k) {
+          s.cells[k].forEach(function (d) { seen.add(k + '|' + d); });
+        });
+      });
+      const text = onCount === 0
+        ? 'nothing - no scenario is switched on'
+        : seen.size + (seen.size === 1 ? ' route-day' : ' route-days') + ' across ' + onCount + (onCount === 1 ? ' scenario' : ' scenarios');
+      return state.dirty ? text + ' (unsaved - press Save)' : text;
+    }
+
+    function refreshSummary() {
+      state.scenarios.forEach(function (s) {
+        const meta = document.querySelector('[data-meta="' + s.key + '"]');
+        if (meta) meta.textContent = metaText(s);
+      });
+      document.getElementById('studyingText').textContent = studyingText();
+    }
+
+    function markDirty() {
+      state.dirty = true;
+      setStatus('Unsaved changes');
+      refreshSummary();
+    }
+
+    function renderList() {
+      const list = document.getElementById('scenarioList');
+      list.replaceChildren();
+      state.scenarios.forEach(function (s) {
+        const card = el('div', { className: 'scenarioCard' + (s.key === state.selectedKey ? ' selected' : '') });
+
+        const pick = el('button', { type: 'button', className: 'pickBtn' });
+        const name = el('span', { className: 'name', textContent: s.name });
+        name.setAttribute('data-name', s.key);
+        const meta = el('span', { className: 'meta', textContent: metaText(s) });
+        meta.setAttribute('data-meta', s.key);
+        pick.append(name, meta);
+        pick.addEventListener('click', function () { select(s.key); });
+
+        const onLabel = el('label', { className: 'onLabel' });
+        const onBox = el('input', { type: 'checkbox', checked: s.active });
+        onBox.addEventListener('change', function () { s.active = onBox.checked; markDirty(); });
+        onLabel.append(onBox, 'on');
+
+        card.append(pick, onLabel);
+        list.appendChild(card);
+      });
+    }
+
+    function buildRow(route, scenario) {
+      const key = routeKey(route.org, route.dest);
+      const row = el('div', { className: 'gridRow' + (scenario.cells[key] ? ' inScenario' : '') });
+
+      const routeBtn = el('button', {
+        type: 'button', className: 'routeBtn', textContent: routeLabel(route),
+        title: 'Tick or clear every day for this route',
+      });
+      routeBtn.addEventListener('click', function () { toggleRow(route, row); });
+
+      const days = el('div', { className: 'days' });
+      DAYS.forEach(function (day) {
+        const cell = el('div', { className: 'cell' });
+        const hasFlights = route.flightDays.indexOf(day) !== -1;
+        const checked = !!(scenario.cells[key] && scenario.cells[key].has(day));
+        if (hasFlights || checked) {
+          const box = el('input', { type: 'checkbox', checked: checked });
+          box.setAttribute('aria-label', routeLabel(route) + ' ' + day);
+          box.addEventListener('change', function () { setCell(route, day, box.checked, row); });
+          cell.appendChild(box);
+        } else {
+          cell.appendChild(el('span', { className: 'noFlights', title: 'no scheduled flights', textContent: '\u2013' }));
+        }
+        days.appendChild(cell);
+      });
+
+      row.append(routeBtn, days);
+      return row;
+    }
+
+    function renderGrid() {
+      const scenario = selected();
+      const rows = document.getElementById('gridRows');
+      rows.replaceChildren();
+      document.getElementById('gridScroll').scrollTop = 0;
+      const pinned = new Set(state.pinned);
+      const ordered = state.routes.filter(function (r) { return pinned.has(routeKey(r.org, r.dest)); })
+        .concat(state.routes.filter(function (r) { return !pinned.has(routeKey(r.org, r.dest)); }));
+      ordered.forEach(function (route) { rows.appendChild(buildRow(route, scenario)); });
+    }
+
+    function renderEditor() {
+      const scenario = selected();
+      document.getElementById('editor').style.display = scenario ? 'block' : 'none';
+      document.getElementById('emptyMsg').style.display = scenario ? 'none' : 'block';
+      if (!scenario) return;
+      document.getElementById('scenarioName').value = scenario.name;
+      renderGrid();
+    }
+
+    function select(key) {
+      state.selectedKey = key;
+      const scenario = selected();
+      state.pinned = scenario ? Object.keys(scenario.cells) : [];
+      renderList();
+      renderEditor();
+    }
+
+    function setCell(route, day, checked, rowEl) {
+      const scenario = selected();
+      const key = routeKey(route.org, route.dest);
+      const days = scenario.cells[key] || new Set();
+      if (checked) days.add(day); else days.delete(day);
+      if (days.size) scenario.cells[key] = days; else delete scenario.cells[key];
+      rowEl.classList.toggle('inScenario', !!scenario.cells[key]);
+      markDirty();
+    }
+
+    function toggleRow(route, rowEl) {
+      const scenario = selected();
+      const key = routeKey(route.org, route.dest);
+      const current = scenario.cells[key] || new Set();
+      const allOn = route.flightDays.length > 0 && route.flightDays.every(function (d) { return current.has(d); });
+      if (allOn) delete scenario.cells[key];
+      else if (route.flightDays.length) scenario.cells[key] = new Set(route.flightDays);
+      rowEl.replaceWith(buildRow(route, scenario));
+      markDirty();
+    }
+
+    function addScenario() {
+      const taken = new Set(state.scenarios.map(function (s) { return s.name.trim().toLowerCase(); }));
+      let name = 'New scenario';
+      let n = 2;
+      while (taken.has(name.toLowerCase())) { name = 'New scenario ' + n; n += 1; }
+      state.newCounter += 1;
+      const scenario = { key: 'new-' + state.newCounter, id: null, name: name, active: false, cells: {} };
+      state.scenarios.push(scenario);
+      markDirty();
+      select(scenario.key);
+      const nameInput = document.getElementById('scenarioName');
+      nameInput.focus();
+      nameInput.select();
+    }
+
+    function deleteSelected() {
+      const scenario = selected();
+      if (!scenario) return;
+      if (!confirm('Delete "' + scenario.name + '"? It is removed for good when you press Save.')) return;
+      if (scenario.id !== null) state.deletedIds.push(scenario.id);
+      state.scenarios = state.scenarios.filter(function (s) { return s !== scenario; });
+      markDirty();
+      select(state.scenarios.length ? state.scenarios[0].key : null);
+    }
+
+    function applyServerData(data, preferredName) {
+      state.scenarios = data.scenarios.map(fromServer);
+      state.routes = data.routes;
+      state.deletedIds = [];
+      state.dirty = false;
+      const wanted = (preferredName || '').trim().toLowerCase();
+      const match = state.scenarios.find(function (s) { return s.name.toLowerCase() === wanted; }) || state.scenarios[0];
+      select(match ? match.key : null);
+      refreshSummary();
+    }
+
+    function save() {
+      const saveBtn = document.getElementById('saveBtn');
+      const current = selected();
+      const preferredName = current ? current.name : null;
+      saveBtn.disabled = true;
+      setStatus('Saving\u2026');
+
+      fetch('/api/saveScenarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenarios: state.scenarios.map(toPayload), deletedIds: state.deletedIds })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          saveBtn.disabled = false;
+          if (result.error) throw new Error(result.error);
+          applyServerData(result, preferredName);
+          setStatus('Saved.');
+        })
+        .catch(function (err) {
+          saveBtn.disabled = false;
+          setStatus('Error: ' + err.message);
+        });
+    }
+
+    function load() {
+      fetch('/api/getScenarioScreen')
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
+          applyServerData(result, null);
+        })
+        .catch(function (err) { setStatus('Error: ' + err.message); });
+    }
+
+    DAYS.forEach(function (d) {
+      document.getElementById('dayHeads').appendChild(el('div', { className: 'dayHead', textContent: d }));
+    });
+    document.getElementById('addBtn').addEventListener('click', addScenario);
+    document.getElementById('deleteBtn').addEventListener('click', deleteSelected);
+    document.getElementById('saveBtn').addEventListener('click', save);
+    document.getElementById('scenarioName').addEventListener('input', function (e) {
+      const scenario = selected();
+      scenario.name = e.target.value;
+      const nameEl = document.querySelector('[data-name="' + scenario.key + '"]');
+      if (nameEl) nameEl.textContent = scenario.name;
+      markDirty();
+    });
+    window.addEventListener('beforeunload', function (e) {
+      if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
+    });
+
+    load();
+  </script>
+</body>
+</html>

@@ -53,6 +53,7 @@ from ServiceGrouping import get_open_full_counts, format_open_full, load_open_fu
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
+from Scenarios import studied_cells
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -360,65 +361,6 @@ def recent_observations(conn, limit=9):
     return list(reversed(result))
 
 
-def get_launcher_summary(conn):
-    """
-    Whole-day, all-routes tally for the launcher page: how many scheduled
-    flights are left to check, how many have already departed, and how
-    many have already caught a "golden ticket" reading (a real logged
-    hoursBeforeDep at or under the configurable threshold in settings) -
-    a glance-at-once view of where the day's logging stands, distinct
-    from get_next_batch's per-route walk.
-    """
-    settings = load_settings(conn)
-    threshold = settings.get('goldenTicketHours', 1.5)
-    now = eastern_now()
-    schedule_days = [now.date(), now.date() - timedelta(days=1)]
-
-    total = 0
-    departed = 0
-    golden = 0
-
-    for schedule_date in schedule_days:
-        dow = schedule_date.strftime('%a')
-        flight_date_str = schedule_date.isoformat()
-
-        sched_rows = conn.execute(
-            """SELECT carrier, org, dest, depTime
-               FROM flightSchedule WHERE dayOfWeek = ? AND ignore = 0""",
-            (dow,),
-        ).fetchall()
-
-        for carrier, org, dest, dep_time in sched_rows:
-            try:
-                dep_dt = et_equivalent_datetime(conn, dep_time, org, schedule_date)
-            except UnconfirmedAirportError:
-                continue
-
-            hours_until_dep = (dep_dt - now).total_seconds() / 3600
-            total += 1
-            if hours_until_dep * 60 <= DEP_CUTOFF_MINUTES:
-                departed += 1
-                continue
-
-            best_hrs = conn.execute(
-                """SELECT MIN(hoursBeforeDep) FROM observations
-                   WHERE readingType='avail' AND carrier=? AND depTime=?
-                   AND org=? AND dest=? AND flightDate=?
-                   AND hoursBeforeDep IS NOT NULL""",
-                (carrier, dep_time, org, dest, flight_date_str),
-            ).fetchone()[0]
-            if best_hrs is not None and best_hrs <= threshold:
-                golden += 1
-
-    return {
-        'totalScheduled': total,
-        'departed': departed,
-        'remaining': total - departed,
-        'goldenTickets': golden,
-        'goldenTicketHours': threshold,
-    }
-
-
 def get_flight_day_flag(conn, carrier, dep_time, org, dest, flight_date):
     row = conn.execute(
         """SELECT flag FROM flightDayFlag
@@ -468,6 +410,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
     night_end_hour = decline_settings['nightEndHour']
     now = eastern_now()
 
+    studied = studied_cells(conn)
     days_ahead_of_today = settings['lookaheadDays']
     schedule_days = [now.date() - timedelta(days=1)] + [
         now.date() + timedelta(days=offset) for offset in range(days_ahead_of_today + 1)
@@ -484,15 +427,16 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         flight_date_str = schedule_date.isoformat()
 
         sched_rows = conn.execute(
-            """SELECT fs.rowid, fs.carrier, fs.carriersFltNum_notStable_DO_NOT_USE, fs.org, fs.dest,
-                      fs.depTime, fs.aircraftConfig, fs.verdict, fs.verdictType
-               FROM flightSchedule fs
-               LEFT JOIN routeSettings rs ON rs.org = fs.org AND rs.dest = fs.dest
-               WHERE fs.dayOfWeek = ? AND fs.ignore = 0 AND COALESCE(rs.studyThisRoute, 1) = 1""",
+            """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest,
+                      depTime, aircraftConfig, verdict, verdictType
+               FROM flightSchedule
+               WHERE dayOfWeek = ? AND ignore = 0""",
             (dow,),
         ).fetchall()
 
         for rowid, carrier, flight_number, org, dest, dep_time, aircraft_config, verdict, verdict_type in sched_rows:
+            if (org, dest, dow) not in studied:
+                continue
             try:
                 dep_dt = et_equivalent_datetime(conn, dep_time, org, schedule_date)
             except UnconfirmedAirportError:
@@ -588,7 +532,11 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             f"{total_departed} flight{'s' if total_departed != 1 else ''} already left"
             if total_departed > 0 else ''
         )
-        wait_message = "Nothing left to check this session - refresh to start over."
+        wait_message = (
+            "Nothing left to check this session - refresh to start over."
+            if studied else
+            "Nothing is being studied - switch on a scenario in Scenarios, then refresh."
+        )
         return {
             'dowDisplay': now.strftime('%a'), 'dateDisplay': now.strftime('%b %-d'),
             'flightDate': now.date().isoformat(),

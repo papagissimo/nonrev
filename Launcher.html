@@ -12,8 +12,6 @@
       text-decoration: none; border-radius: 4px; font-size: 14px; text-align: center;
     }
     a.tool:hover { background: #1558b0; }
-    #summary { font-size: 14px; color: #444; margin-bottom: 20px; }
-    #summary .num { font-weight: bold; color: #222; }
     #refreshEstimatesBtn {
       margin-top: 16px; padding: 8px 14px; font-size: 13px; color: #444;
       background: #fff; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;
@@ -24,31 +22,15 @@
 </head>
 <body>
   <h1>nonrev tools</h1>
-  <div id="summary">Loading today's tally&hellip;</div>
   <div class="tools">
     <a class="tool" href="/log">Log Observations</a>
     <a class="tool" href="/schedule">Edit Schedule</a>
+    <a class="tool" href="/scenarios">Scenarios</a>
     <a class="tool" href="/observations">Browse Observations</a>
     <a class="tool" href="/graph">Graph Observations</a>
     <a class="tool" href="/t1-grid">T1 Grid Report</a>
     <a class="tool" href="/pooling">Pooling Settings</a>
     <a class="tool" href="/decline-curve">Decline Curve Coefficients</a>
   </div>
-  <script>
-    fetch('/api/getLauncherSummary')
-      .then(function (res) { return res.json(); })
-      .then(function (r) {
-        var el = document.getElementById('summary');
-        if (r.error) { el.textContent = ''; return; }
-        el.innerHTML =
-          '<span class="num">' + r.remaining + '</span> flight' + (r.remaining === 1 ? '' : 's') +
-          ' left today &middot; <span class="num">' + r.departed + '</span> already left &middot; ' +
-          '<span class="num">' + r.goldenTickets + '</span> golden ticket' + (r.goldenTickets === 1 ? '' : 's') +
-          ' (\u2264' + r.goldenTicketHours + 'h)';
-      })
-      .catch(function () {
-        document.getElementById('summary').textContent = '';
-      });
-  </script>
 </body>
 </html>

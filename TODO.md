@@ -182,6 +182,11 @@ before - a NEW, specific symptom is the bar for reopening it.
 - Step-change sequence graph: sequence of detected step changes over time
   (seats up/down, when each occurred) - also a way to quantify how "jumpy"
   a service is, comparable across day-of-week/season/service.
+- **T1 chart side-by-side comparison — decided, not started.** Show
+  parallel (non-connecting) alternatives together, e.g. SLC-CMH beside
+  SLC-CVG, and several weekdays on one chart (Mon vs Tue), instead of
+  flipping browser tabs. The route-and-weekday set to draw comes from a
+  scenario (chart "this scenario's" pairs) rather than a second picker.
 
 ## Forward-looking schedule import (blocked on him, not stuck)
 
@@ -236,6 +241,10 @@ before - a NEW, specific symptom is the bar for reopening it.
   now - not enough data, and he doubts it moves the needle much even with
   more. Worth a backtest comparison someday to check whether it's real
   before doing anything else with it.
+
+- Launcher daily tally (flights left / departed / golden tickets) was
+  removed 2026-09-20: it never worked right and went unused. If it comes
+  back it belongs on the logging dialog and counts only studied flights.
 
 ## Dead ideas — do not re-propose
 

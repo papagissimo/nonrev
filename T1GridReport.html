@@ -424,7 +424,7 @@
         second ? post('/api/getT1Grid', { org: second.org, dest: second.dest, dayOfWeek: dayOfWeek }) : Promise.resolve(null),
         second ? post('/api/getConnectionChart', {
           firstOrg: first.org, firstDest: first.dest, secondOrg: second.org, secondDest: second.dest, dayOfWeek: dayOfWeek,
-        }) : Promise.resolve({ problem: 'No studied route leaves from ' + first.dest.toUpperCase() + '.' }),
+        }) : Promise.resolve({ problem: 'No route with history leaves from ' + first.dest.toUpperCase() + '.' }),
       ])
         .then(function (results) {
           if (sequence !== loadSequence) return;

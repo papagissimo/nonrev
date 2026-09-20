@@ -3,6 +3,22 @@ import sqlite3
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nonrev.db')
 
+SCENARIO_TABLES = """
+CREATE TABLE scenarios (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    name    TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    active  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE scenarioCells (
+    scenarioId  INTEGER NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+    org         TEXT NOT NULL,
+    dest        TEXT NOT NULL,
+    dayOfWeek   TEXT NOT NULL,
+    PRIMARY KEY (scenarioId, org, dest, dayOfWeek)
+);
+"""
+
 SCHEMA = """
 -- flightSchedule is a snapshot of THIS WEEK's Delta schedule ONLY - not a
 -- record of any other week, past or future. Delta doesn't publish anything
@@ -43,7 +59,6 @@ CREATE TABLE routeSettings (
     org               TEXT NOT NULL,
     dest              TEXT NOT NULL,
     durationMinutes   INTEGER,
-    studyThisRoute    INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (org, dest)
 );
 
@@ -289,7 +304,7 @@ def create_db():
             f"setup. Delete it first if you really mean to start over."
         )
     conn = sqlite3.connect(DB_PATH)
-    conn.executescript(SCHEMA)
+    conn.executescript(SCHEMA + SCENARIO_TABLES)
     conn.commit()
     conn.close()
     print(f"Created {DB_PATH}")

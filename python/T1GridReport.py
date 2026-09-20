@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from clustering import SERVICE_GAP_MINUTES, cluster_services, service_representative
 from PoolingSettingsDialog import excluded_date_where_clause
+from Scenarios import studied_routes
 from ServiceGrouping import get_route_services, load_open_full_settings
 from settings import load_settings
 from T1Estimator import compute_t1_replay_column
@@ -40,15 +41,19 @@ DAY_NAMES = {'Mon': 'Monday', 'Tue': 'Tuesday', 'Wed': 'Wednesday', 'Thu': 'Thur
              'Fri': 'Friday', 'Sat': 'Saturday', 'Sun': 'Sunday'}
 
 
-def studied_routes(conn):
+def routes_with_history(conn):
     rows = conn.execute(
         """SELECT DISTINCT o.org, o.dest, rs.durationMinutes
            FROM observations o
            LEFT JOIN routeSettings rs ON rs.org = o.org AND rs.dest = o.dest
-           WHERE COALESCE(rs.studyThisRoute, 1) = 1
            ORDER BY o.org, o.dest"""
     ).fetchall()
-    return [{'org': org, 'dest': dest, 'durationMinutes': duration} for org, dest, duration in rows]
+    routes = [{'org': org, 'dest': dest, 'durationMinutes': duration} for org, dest, duration in rows]
+    being_studied = studied_routes(conn)
+    return (
+        [r for r in routes if (r['org'], r['dest']) in being_studied]
+        + [r for r in routes if (r['org'], r['dest']) not in being_studied]
+    )
 
 
 def format_t1(value):

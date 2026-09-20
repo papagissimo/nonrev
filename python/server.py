@@ -24,6 +24,7 @@ import ServiceGrouping
 import PoolingSettingsDialog
 import DeclineCurveDialog
 import T1GridReport
+import Scenarios
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -92,11 +93,28 @@ def t1_grid():
     return send_from_directory(STATIC_DIR, 'T1GridReport.html')
 
 
-@app.route('/api/getLauncherSummary', methods=['GET'])
-def api_get_launcher_summary():
+@app.route('/scenarios')
+def scenarios():
+    return send_from_directory(STATIC_DIR, 'Scenarios.html')
+
+
+@app.route('/api/getScenarioScreen', methods=['GET'])
+def api_get_scenario_screen():
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.get_launcher_summary(conn))
+        return jsonify(Scenarios.get_screen_data(conn))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveScenarios', methods=['POST'])
+def api_save_scenarios():
+    payload = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(Scenarios.save_scenarios(conn, payload))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -477,7 +495,7 @@ def api_export_coefficients_csv():
 def api_get_t1_grid_routes():
     conn = get_conn()
     try:
-        return jsonify({'routes': T1GridReport.studied_routes(conn)})
+        return jsonify({'routes': T1GridReport.routes_with_history(conn)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
