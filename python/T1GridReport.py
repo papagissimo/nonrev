@@ -4,12 +4,26 @@ from zoneinfo import ZoneInfo
 
 from clustering import SERVICE_GAP_MINUTES, cluster_services, service_representative
 from PoolingSettingsDialog import excluded_date_where_clause
-from ServiceGrouping import get_route_services
+from ServiceGrouping import get_route_services, load_open_full_settings
+from settings import load_settings
 from T1Estimator import compute_t1_replay_column
 from timezones import UnconfirmedAirportError, et_equivalent_datetime, get_confirmed_timezone
 
 DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 NO_ESTIMATE_DISPLAY = '\u2014'
+
+STRIKE_WEIGHTS = {'open': 0.0, 'iffy': 0.25, 'full': 1.0}
+RED_END_STRIKE_RATE = 0.5
+MIN_COUNTED_WEEKS_FOR_FULL_COLOR = 3
+FEW_WEEKS_WHITE_BLEND = 0.5
+RAMP_STOPS = [(0.0, '#2c7bb6'), (0.25, '#7fc4d8'), (0.5, '#f4d35e'), (0.75, '#f28e4b'), (1.0, '#c8302f')]
+NO_HISTORY_FILL = '#c9ced6'
+DARK_TEXT = '#222222'
+LIGHT_TEXT = '#ffffff'
+LEGEND_OPEN_LABEL = 'always open'
+LEGEND_FULL_LABEL = 'full half the time or more'
+DAY_NAMES = {'Mon': 'Monday', 'Tue': 'Tuesday', 'Wed': 'Wednesday', 'Thu': 'Thursday',
+             'Fri': 'Friday', 'Sat': 'Saturday', 'Sun': 'Sunday'}
 
 
 def studied_routes(conn):
@@ -106,6 +120,7 @@ def last_t1_instances(conn, org, dest, day_of_week):
                 'depTime': latest[1],
                 'ownServiceMinutes': service_representative(cluster),
                 'numReadings': len(readings),
+                'lastReadingHours': readings[0]['hrs'],
                 't1': t1,
             })
     return instances
@@ -113,6 +128,7 @@ def last_t1_instances(conn, org, dest, day_of_week):
 
 def get_t1_grid(conn, org, dest, day_of_week):
     find_scheduled_service = scheduled_service_finder(conn, org, dest, day_of_week)
+    golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
     cells_by_service = defaultdict(dict)
     warnings = []
 
@@ -138,7 +154,11 @@ def get_t1_grid(conn, org, dest, day_of_week):
         rows.append({
             'label': format_minutes(service_minutes),
             'cells': [
-                {'t1': cells[date]['t1'], 'display': format_t1(cells[date]['t1'])} if date in cells else None
+                {
+                    't1': cells[date]['t1'],
+                    'display': format_t1(cells[date]['t1']),
+                    'countsForColor': cells[date]['lastReadingHours'] <= golden_ticket_hours,
+                } if date in cells else None
                 for date in dates
             ],
         })
@@ -176,12 +196,105 @@ def route_duration_minutes(conn, org, dest):
     return row[0] if row else None
 
 
+def airport_zone(conn, airport):
+    return ZoneInfo(get_confirmed_timezone(conn, airport))
+
+
 def minutes_on_clock(instant, clock_zone, on_date):
     wall_time = instant.astimezone(clock_zone).replace(tzinfo=None)
     return int((wall_time - datetime.combine(on_date, time.min)).total_seconds() // 60)
 
 
-def leg_bars(conn, org, dest, day_of_week, clock_airport, on_date):
+def format_local_moment(moment, on_date):
+    next_day_marker = f' +{(moment.date() - on_date).days}' if moment.date() > on_date else ''
+    return f'{moment:%H:%M} {moment.tzname()}{next_day_marker}'
+
+
+def hex_to_rgb(color):
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def rgb_to_hex(rgb):
+    return '#' + ''.join(f'{round(channel):02x}' for channel in rgb)
+
+
+def ramp_rgb(position):
+    for (low_at, low_color), (high_at, high_color) in zip(RAMP_STOPS, RAMP_STOPS[1:]):
+        if position <= high_at:
+            fraction = (position - low_at) / (high_at - low_at)
+            low, high = hex_to_rgb(low_color), hex_to_rgb(high_color)
+            return tuple(low[i] + (high[i] - low[i]) * fraction for i in range(3))
+    return hex_to_rgb(RAMP_STOPS[-1][1])
+
+
+def blend_toward_white(rgb, amount):
+    return tuple(channel + (255 - channel) * amount for channel in rgb)
+
+
+def relative_luminance(rgb):
+    def linear(channel):
+        value = channel / 255
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+    red, green, blue = (linear(channel) for channel in rgb)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def readable_text_color(rgb):
+    luminance = relative_luminance(rgb)
+    contrast_with_white = 1.05 / (luminance + 0.05)
+    contrast_with_dark = (luminance + 0.05) / (relative_luminance(hex_to_rgb(DARK_TEXT)) + 0.05)
+    return LIGHT_TEXT if contrast_with_white >= contrast_with_dark else DARK_TEXT
+
+
+def classify_week(t1, thresholds):
+    if t1 is None:
+        return None
+    if t1 <= thresholds['fullThreshold']:
+        return 'full'
+    if t1 >= thresholds['openThreshold']:
+        return 'open'
+    return 'iffy'
+
+
+def service_appearance(weeks, thresholds):
+    classes = [classify_week(week['t1'], thresholds) for week in weeks if week['countsForColor']]
+    classes = [c for c in classes if c]
+    if not classes:
+        return {'fill': NO_HISTORY_FILL, 'textColor': DARK_TEXT, 'tally': None}
+    strike_rate = sum(STRIKE_WEIGHTS[c] for c in classes) / len(classes)
+    rgb = ramp_rgb(min(strike_rate / RED_END_STRIKE_RATE, 1.0))
+    if len(classes) < MIN_COUNTED_WEEKS_FOR_FULL_COLOR:
+        rgb = blend_toward_white(rgb, FEW_WEEKS_WHITE_BLEND)
+    return {
+        'fill': rgb_to_hex(rgb),
+        'textColor': readable_text_color(rgb),
+        'tally': {'weeks': len(classes), 'open': classes.count('open'),
+                  'iffy': classes.count('iffy'), 'full': classes.count('full')},
+    }
+
+
+def weekly_history(grid, service_label):
+    row = next((r for r in grid['rows'] if r['label'] == service_label), None)
+    if row is None:
+        return []
+    weeks = [
+        {'date': header, 't1': cell['t1'], 'display': cell['display'], 'countsForColor': cell['countsForColor']}
+        for header, cell in zip(grid['dateHeaders'], row['cells']) if cell
+    ]
+    return list(reversed(weeks))
+
+
+def bar_tooltip(route_name, day_of_week, departure_text, arrival_text, weeks, tally):
+    lines = [f'{route_name} \u00b7 {DAY_NAMES[day_of_week]}', f'Departs {departure_text}', f'Arrives {arrival_text}']
+    if tally:
+        lines.append(f"Counted {tally['weeks']} weeks: open {tally['open']} \u00b7 iffy {tally['iffy']} \u00b7 full {tally['full']}")
+    for week in weeks:
+        soft_note = '' if week['countsForColor'] else '  (no late reading, not counted)'
+        lines.append(f"{week['date']}  {week['display']}{soft_note}")
+    return '\n'.join(lines)
+
+
+def leg_bars(conn, org, dest, day_of_week, clock_airport, on_date, thresholds):
     route_name = f'{org.upper()}\u2192{dest.upper()}'
     duration = route_duration_minutes(conn, org, dest)
     if duration is None:
@@ -191,23 +304,56 @@ def leg_bars(conn, org, dest, day_of_week, clock_airport, on_date):
         return {'route': route_name, 'bars': [], 'problem': f'no {day_of_week} flights scheduled for {route_name}'}
 
     find_scheduled_service = scheduled_service_finder(conn, org, dest, day_of_week)
-    clock_zone = ZoneInfo(get_confirmed_timezone(conn, clock_airport))
+    grid = get_t1_grid(conn, org, dest, day_of_week)
+    clock_zone = airport_zone(conn, clock_airport)
+    origin_zone = airport_zone(conn, org)
+    dest_zone = airport_zone(conn, dest)
     bars = []
     for dep_time in dep_times:
         departure = et_equivalent_datetime(conn, dep_time, org, on_date)
         arrival = departure.astimezone(timezone.utc) + timedelta(minutes=duration)
-        end_minutes = minutes_on_clock(arrival, clock_zone, on_date)
         service_minutes = find_scheduled_service(dep_time)
         if service_minutes is None:
             service_minutes = service_representative([dep_time])
+        label = format_minutes(service_minutes)
+        weeks = weekly_history(grid, label)
+        appearance = service_appearance(weeks, thresholds)
         bars.append({
-            'label': format_minutes(service_minutes),
-            'depExact': format_minutes(dep_time),
-            'arrExact': format_minutes(end_minutes % 1440),
+            'label': label,
             'startMinutes': minutes_on_clock(departure, clock_zone, on_date),
-            'endMinutes': end_minutes,
+            'endMinutes': minutes_on_clock(arrival, clock_zone, on_date),
+            'weeks': [{'date': w['date'], 'display': w['display'], 'counted': w['countsForColor']} for w in weeks],
+            'fill': appearance['fill'],
+            'textColor': appearance['textColor'],
+            'tooltip': bar_tooltip(
+                route_name, day_of_week,
+                format_local_moment(departure.astimezone(origin_zone), on_date),
+                format_local_moment(arrival.astimezone(dest_zone), on_date),
+                weeks, appearance['tally'],
+            ),
         })
     return {'route': route_name, 'bars': bars, 'problem': None}
+
+
+def axis_description(conn, airport, clock_airport, on_date):
+    noon = datetime.combine(on_date, time(12))
+    airport_moment = noon.replace(tzinfo=airport_zone(conn, airport))
+    clock_moment = noon.replace(tzinfo=airport_zone(conn, clock_airport))
+    offset = airport_moment.utcoffset() - clock_moment.utcoffset()
+    return {
+        'airport': airport.upper(),
+        'zone': airport_moment.tzname(),
+        'offsetMinutes': int(offset.total_seconds() // 60),
+    }
+
+
+def legend_description():
+    return {
+        'stops': [{'offset': position, 'color': color} for position, color in RAMP_STOPS],
+        'openLabel': LEGEND_OPEN_LABEL,
+        'fullLabel': LEGEND_FULL_LABEL,
+        'fewWeeksBelow': MIN_COUNTED_WEEKS_FOR_FULL_COLOR,
+    }
 
 
 def get_connection_chart(conn, first_org, first_dest, second_org, second_dest, day_of_week):
@@ -217,11 +363,16 @@ def get_connection_chart(conn, first_org, first_dest, second_org, second_dest, d
                        f'but {second_org.upper()}\u2192{second_dest.upper()} leaves from {second_org.upper()}'
         }
     on_date = next_date_on(day_of_week)
+    thresholds = load_open_full_settings(conn)
     try:
         legs = [
-            leg_bars(conn, first_org, first_dest, day_of_week, first_dest, on_date),
-            leg_bars(conn, second_org, second_dest, day_of_week, first_dest, on_date),
+            leg_bars(conn, first_org, first_dest, day_of_week, first_dest, on_date, thresholds),
+            leg_bars(conn, second_org, second_dest, day_of_week, first_dest, on_date, thresholds),
         ]
+        axes = {
+            'left': axis_description(conn, first_org, first_dest, on_date),
+            'right': axis_description(conn, second_dest, first_dest, on_date),
+        }
     except UnconfirmedAirportError as error:
         return {'problem': str(error)}
-    return {'problem': None, 'clockLabel': f'{first_dest.upper()} local time', 'legs': legs}
+    return {'problem': None, 'axes': axes, 'legs': legs, 'legend': legend_description()}
