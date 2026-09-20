@@ -53,9 +53,33 @@ working around it.
 - **Delayed-flight departure time** — very low priority. Doesn't come up
   often enough in practice to be worth designing for. Leave alone until it
   actually becomes a problem.
-- **Flatten the observation type — not yet discussed, on his mind.**
-  Dislikes the current indirection but hasn't defined what "flatten"
-  means yet or what it'd change. Real conversation coming, not today.
+- **Seat-map observations — decided, not built.** The observations table
+  already has soloY/soloCPlus/soloFirstOrPS/soloD1, pairY/.../pairD1 and
+  blockedTotal (one total across cabins); nothing writes them yet. One row
+  per sitting, NULL = didn't observe, 0 = observed none.
+  - Entry: a per-flight "seat map" button in the logging dialog reveals the
+    optional inputs under that flight's row, so can-buy-only looks stay as
+    fast as today. They save with the can-buy values in the same entry. A
+    seat-map-only entry is valid (blank can-buy = not observed).
+  - Save gate: any non-blank data field logs the entry; only a fully blank
+    entry skips. The field list is defined once in Python and sent to the
+    page, not retyped in the HTML.
+  - Aircraft: stored in flightSchedule.aircraftConfig only (corrected in
+    place like everything else there), never on observation rows. The
+    aircraft picker becomes a real pick list with an "add new aircraft"
+    path (key, name, cabin sizes) in the same dialog. Choosing an aircraft
+    pre-fills 0 in the seat-map inputs for cabins it doesn't have (visible,
+    editable). Unknown cabin sizes must be NULL, not 0 - TBD and
+    a321neoxcon currently hold 0s meaning "unknown", and e175skyw's cabins
+    sum to 70 against a total of 76.
+  - After it lands, audit readers that assume every row carries can-buy
+    counts (recent_observations, today's readings in SeatLoggingDialog,
+    anything measuring "last checked") - a seat-map-only row has NULL
+    can-buy.
+  - Modeling on the selectable counts keys off time and doesn't require a
+    seat-map reading to share a can-buy reading's exact timestamp.
+  - His kid's numbers: no design yet; each becomes a column when it
+    actually shows up.
 
 ## Service identity (raw depTime vs. clustered service) — CLOSED 2026-09-16
 

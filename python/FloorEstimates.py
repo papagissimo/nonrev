@@ -52,7 +52,7 @@ CABIN_COLUMNS = {
 def refresh_floor_estimates(conn):
     """
     Recomputes floorEstimateCoefficients from scratch against every
-    'avail'-type observation row currently in the db - deletes and
+    observation row currently in the db - deletes and
     rebuilds the whole table rather than updating it incrementally (see
     module docstring). Returns {cabin: number of (floor, mean) rows
     written} for logging/display.
@@ -64,8 +64,7 @@ def refresh_floor_estimates(conn):
         rows = conn.execute(
             f"""SELECT {cheap_col}, AVG({actual_col}), COUNT(*)
                 FROM observations
-                WHERE readingType = 'avail'
-                  AND {cheap_col} IS NOT NULL
+                WHERE {cheap_col} IS NOT NULL
                   AND {actual_col} IS NOT NULL
                 GROUP BY {cheap_col}"""
         ).fetchall()

@@ -218,7 +218,7 @@ CABIN_COLUMNS = {
 
 
 def load_observations(conn):
-    """Reads avail-type observations directly - no flightSchedule join.
+    """Reads observations directly - no flightSchedule join.
     depTime lives on the observation row itself now. Returns (rows,
     dropped_count): rows with an unparsable flightDate or a null depTime
     (a handful of legacy rows predating the depTime column, or an
@@ -236,11 +236,10 @@ def load_observations(conn):
     cur.execute(
         f"""
         SELECT observationId, carrier, org, dest, flightDate,
-               checkTimestamp, hoursBeforeDep, depTime, readingType,
+               checkTimestamp, hoursBeforeDep, depTime,
                y, cPlus, firstOrPS, d1
         FROM observations
-        WHERE readingType = 'avail'
-          AND {excluded_date_where_clause()}
+        WHERE {excluded_date_where_clause()}
         """
     )
     obs_rows = cur.fetchall()
@@ -1492,7 +1491,7 @@ def main():
     service_info = result["service_info"]
     golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
 
-    print(f"Loaded {result['n_rows']} avail-type observations "
+    print(f"Loaded {result['n_rows']} observations "
           f"({result['dropped_count']} dropped - no depTime or unparsable flightDate).")
     print(f"Built {len(service_info)} day-of-week-specific services (C1 and slope both pooled at this "
           f"granularity now - no separate cross-day grouping).")

@@ -84,7 +84,7 @@ def observation_rows_for_day(conn, org, dest, day_of_week):
     rows = conn.execute(
         f"""SELECT flightDate, depTime, hoursBeforeDep, y, cPlus, firstOrPS, d1
             FROM observations
-            WHERE readingType = 'avail' AND org = ? AND dest = ?
+            WHERE org = ? AND dest = ?
               AND depTime IS NOT NULL AND hoursBeforeDep IS NOT NULL
               AND {excluded_date_where_clause()}""",
         (org, dest),

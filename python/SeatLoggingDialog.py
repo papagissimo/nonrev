@@ -232,7 +232,7 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
         rows = conn.execute(
             """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime
                FROM observations
-               WHERE readingType='avail' AND carrier=? AND org=? AND dest=? AND flightDate=?""",
+               WHERE carrier=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, org, dest, flight_date),
         ).fetchall()
 
@@ -257,7 +257,7 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
         readings_raw = conn.execute(
             """SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1
                FROM observations
-               WHERE readingType='avail' AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
+               WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
                ORDER BY hoursBeforeDep ASC""",
             (carrier, dep_time, org, dest, flight_date),
         ).fetchall()
@@ -346,7 +346,7 @@ def recent_observations(conn, limit=9):
     """
     rows = conn.execute(
         """SELECT org, dest, hoursBeforeDep, y, cPlus, firstOrPS, d1, depTime
-           FROM observations WHERE readingType='avail'
+           FROM observations
            ORDER BY checkTimestamp DESC LIMIT ?""",
         (limit,),
     ).fetchall()
@@ -687,10 +687,10 @@ def save_entry_dialog(conn, payload):
         conn.execute(
             """INSERT INTO observations
                (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, flightDate, checkTimestamp,
-                hoursBeforeDep, depTime, readingType, y, cPlus, firstOrPS, d1)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                hoursBeforeDep, depTime, y, cPlus, firstOrPS, d1)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (entry['car'], entry['flightNumber'], entry['org'], entry['dest'],
-             flight_date, check_timestamp, hours_before_dep, entry['dep'], 'avail',
+             flight_date, check_timestamp, hours_before_dep, entry['dep'],
              num('y'), num('cplus'), num('onePS'), num('d1')),
         )
 

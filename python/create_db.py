@@ -94,17 +94,21 @@ CREATE TABLE dayGroupings (
     PRIMARY KEY (org, dest, dayOfWeek)
 );
 
--- y/cPlus/firstOrPS/d1 are the actual/resolved cabin values (a real
--- binary-search result). cheapY/cheapCPlus/cheapFirstOrPS/cheapD1 are a
--- FROZEN HISTORICAL ARTIFACT as of 2026-09-14: the old glance-entry
--- workflow (a free ceiling/floor glance off Delta's all-flights page
--- before the binary search) is fully retired, "every whiff of it, gone"
--- (his call) - nothing anywhere in this codebase writes to these columns
--- anymore, and no live code path reads them either. They're kept, not
--- dropped, purely to preserve rows logged before this date - a genuine
--- confirmed zero from back then is still 0 in both the cheap and actual
--- column for that cabin, never left implicit; NULL meant no glance was
--- taken that reading.
+-- One row per sitting: every field observed in that sitting is its own
+-- column, NULL for anything not observed, 0 only for "observed, none".
+-- y/cPlus/firstOrPS/d1 are the can-buy counts (actual/resolved cabin values,
+-- a real binary-search result). solo*/pair* are the seat-map selectable
+-- counts (single seats / adjacent pairs); blockedTotal is the seat map's X
+-- seats across all cabins.
+-- cheapY/cheapCPlus/cheapFirstOrPS/cheapD1 are a FROZEN HISTORICAL ARTIFACT
+-- as of 2026-09-14: the old glance-entry workflow (a free ceiling/floor
+-- glance off Delta's all-flights page before the binary search) is fully
+-- retired, "every whiff of it, gone" (his call) - nothing anywhere in this
+-- codebase writes to these columns anymore, and no live code path reads them
+-- either. They're kept, not dropped, purely to preserve rows logged before
+-- this date - a genuine confirmed zero from back then is still 0 in both the
+-- cheap and actual column for that cabin, never left implicit; NULL meant no
+-- glance was taken that reading.
 CREATE TABLE observations (
     observationId   INTEGER PRIMARY KEY AUTOINCREMENT,
     carrier         TEXT NOT NULL,
@@ -115,11 +119,19 @@ CREATE TABLE observations (
     checkTimestamp  TEXT NOT NULL,
     hoursBeforeDep  REAL,
     depTime         INTEGER,
-    readingType     TEXT NOT NULL CHECK (readingType IN ('avail', 'soloSelect', 'pairSelect')),
     y               INTEGER,
     cPlus           INTEGER,
     firstOrPS       INTEGER,
     d1              INTEGER,
+    soloY           INTEGER,
+    soloCPlus       INTEGER,
+    soloFirstOrPS   INTEGER,
+    soloD1          INTEGER,
+    pairY           INTEGER,
+    pairCPlus       INTEGER,
+    pairFirstOrPS   INTEGER,
+    pairD1          INTEGER,
+    blockedTotal    INTEGER,
     cheapY          INTEGER,
     cheapCPlus      INTEGER,
     cheapFirstOrPS  INTEGER,

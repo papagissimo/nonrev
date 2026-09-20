@@ -20,7 +20,9 @@ from SeatLoggingDialog import eastern_now, minutes_to_12h
 
 REAL_COLUMNS = [
     'observationId', 'checkTimestamp', 'flightDate', 'carrier', 'flightNumber',
-    'org', 'dest', 'readingType', 'y', 'cPlus', 'firstOrPS', 'd1',
+    'org', 'dest', 'y', 'cPlus', 'firstOrPS', 'd1',
+    'soloY', 'soloCPlus', 'soloFirstOrPS', 'soloD1',
+    'pairY', 'pairCPlus', 'pairFirstOrPS', 'pairD1', 'blockedTotal',
     'hoursBeforeDep', 'nextDesiredLog', 'depTime',
 ]
 
