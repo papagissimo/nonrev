@@ -166,12 +166,15 @@ before - a NEW, specific symptom is the bar for reopening it.
   display-only, never persisted or used in any live prediction - so
   either drop it from the print or floor/cap its display, cosmetic only.
 
-## Graphing — low priority, not actively working this area right now
+## Graphing — deprecated, not being worked on
 
+- GraphObservations (python/GraphObservations.py, GraphObservations.html,
+  /graph) is deprecated: kept in the repo in case graphing comes back, not
+  used for decisions, not maintained. It does not match the rest of the app
+  and that is accepted - do not explore, fix, or compare it until he says
+  he is working on graphing again.
 - T1 weekday bar chart (Mon-Sun per service) — mockup approved, still not
-  built. GraphObservations.html currently has three other charts (heat
-  map, per-date curves, seats-vs-hours-to-departure) but not this one.
-  Approved spec:
+  built. Approved spec:
   - Gray banding between adjacent weekday groups; weeks aligned
     left-to-right consistently across every weekday's group (same week
     index = same calendar week no matter which day).
@@ -192,11 +195,17 @@ before - a NEW, specific symptom is the bar for reopening it.
 - Step-change sequence graph: sequence of detected step changes over time
   (seats up/down, when each occurred) - also a way to quantify how "jumpy"
   a service is, comparable across day-of-week/season/service.
-- **T1 chart side-by-side comparison — decided, not started.** Show
-  parallel (non-connecting) alternatives together, e.g. SLC-CMH beside
-  SLC-CVG, and several weekdays on one chart (Mon vs Tue), instead of
-  flipping browser tabs. The route-and-weekday set to draw comes from a
-  scenario (chart "this scenario's" pairs) rather than a second picker.
+
+## T1 comparison page
+
+- **T1Comparison.html (/t1-compare) — first version built, waiting on his
+  feedback.** Looks like the T1 Grid Report's tables (services down, dates
+  across) and reads the same /api/getT1Grid numbers, so it is the same
+  estimator. Pick a scenario, narrow by route and day with checkboxes;
+  routes run across, days run down, and date columns line up within a
+  day's row so routes compare cell for cell. Scenarios are read as they
+  are (no schema change). Any leg of any scenario, including a connecting
+  leg out of Scrunch!, can be compared day to day.
 
 ## Forward-looking schedule import (blocked on him, not stuck)
 
@@ -314,10 +323,7 @@ before - a NEW, specific symptom is the bar for reopening it.
   blank-skipped this session, cleared on reload) — no eligibility math at
   all. goldenTicketHours (a display flag, not a gate) is untouched.
 - GraphObservations' t1Old/t1New side-by-side (old two-point method vs.
-  floor-substituted variant) comparison feature — never actually used it;
-  GraphObservations now calls the same curve-slide estimator
-  (T1Estimator.compute_t1_replay_column) SeatLoggingDialog already uses,
-  one estimator only.
+  floor-substituted variant) comparison feature — never actually used it.
 - Feeding cheap-glance data through FloorEstimates' conditional-mean
   substitution to anchor the T1 estimator — real actual value or the raw
   cheap-glance value itself now, never a laundered decimal guess.

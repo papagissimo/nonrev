@@ -1,3 +1,7 @@
+# DEPRECATED - not used for decisions and not maintained. Kept in the repo in case graphing comes back.
+# It does not match the rest of the app (its own T1 estimate, its own filters) and that is accepted.
+# Do not explore, fix, or compare this against the rest of the app until he says he is working on graphing again.
+
 """
 GraphObservations backend: the fourth launcher tool. Three linked views
 over one route - a heat map, overlaid per-date T1-estimate curves, and a

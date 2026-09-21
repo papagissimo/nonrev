@@ -94,6 +94,11 @@ def t1_grid():
     return send_from_directory(STATIC_DIR, 'T1GridReport.html')
 
 
+@app.route('/t1-compare')
+def t1_compare():
+    return send_from_directory(STATIC_DIR, 'T1Comparison.html')
+
+
 @app.route('/scenarios')
 def scenarios():
     return send_from_directory(STATIC_DIR, 'Scenarios.html')

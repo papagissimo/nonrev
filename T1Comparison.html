@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>T1 Comparison</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    h1 { font-size: 18px; margin: 0 0 10px 0; }
+    a.back { color: #1a73e8; text-decoration: none; font-size: 12px; }
+    .topBar { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    .topBar label { color: #666; }
+    .filterRow { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; }
+    .filterRow .filterName { color: #666; min-width: 44px; }
+    .filterRow label { color: #222; }
+    #status { color: #666; font-size: 12px; }
+    #panelsWrap { overflow-x: auto; margin-top: 18px; }
+    #panels { display: grid; gap: 30px 56px; align-items: start; }
+    .panelTitle { color: #666; margin-bottom: 8px; }
+    table { border-collapse: collapse; }
+    th { font-size: 11px; color: #888; padding: 4px 12px; text-align: right; white-space: nowrap; }
+    th.serviceCol { text-align: left; }
+    td { padding: 4px 12px; font-size: 13px; text-align: right; border-bottom: 1px solid #eee; font-variant-numeric: tabular-nums; }
+    td.serviceCol { text-align: left; color: #444; }
+    .warnings { color: #b06000; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Launcher</a>
+  <h1>T1 Comparison</h1>
+
+  <div class="topBar">
+    <label>Scenario <select id="scenarioSelect" onchange="onScenarioChange()"></select></label>
+    <span id="status"></span>
+  </div>
+  <div class="filterRow"><span class="filterName">Routes</span><span id="routeBoxes"></span></div>
+  <div class="filterRow"><span class="filterName">Days</span><span id="dayBoxes"></span></div>
+
+  <div id="panelsWrap"><div id="panels"></div></div>
+
+  <script>
+    const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    let scenarios = [];
+    let loadSequence = 0;
+
+    function textElement(tag, text, className) {
+      const el = document.createElement(tag);
+      el.textContent = text;
+      if (className) el.className = className;
+      return el;
+    }
+
+    function setStatus(text) {
+      document.getElementById('status').textContent = text;
+    }
+
+    function routeKey(route) { return route.org + '|' + route.dest; }
+
+    function routeLabel(route) {
+      return route.org.toUpperCase() + '\u2192' + route.dest.toUpperCase();
+    }
+
+    function pairKey(org, dest, day) { return org + '|' + dest + '|' + day; }
+
+    function post(url, body) {
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(function (res) { return res.json(); });
+    }
+
+    function selectedScenario() {
+      const id = Number(document.getElementById('scenarioSelect').value);
+      return scenarios.find(function (s) { return s.id === id; }) || null;
+    }
+
+    function fillScenarioSelect() {
+      const select = document.getElementById('scenarioSelect');
+      scenarios.forEach(function (s) {
+        const option = document.createElement('option');
+        option.value = s.id;
+        option.textContent = s.name + (s.active ? '' : ' (off)');
+        select.appendChild(option);
+      });
+      select.value = (scenarios.find(function (s) { return s.active; }) || scenarios[0]).id;
+    }
+
+    function checkboxLabel(value, text) {
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = value;
+      box.checked = true;
+      box.addEventListener('change', load);
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(' ' + text));
+      return label;
+    }
+
+    function fillFilters() {
+      const scenario = selectedScenario();
+      const routeBoxes = document.getElementById('routeBoxes');
+      const dayBoxes = document.getElementById('dayBoxes');
+      routeBoxes.replaceChildren();
+      dayBoxes.replaceChildren();
+      scenario.cells.forEach(function (entry) {
+        routeBoxes.appendChild(checkboxLabel(routeKey(entry), routeLabel(entry)));
+        routeBoxes.appendChild(document.createTextNode(' '));
+      });
+      DAYS_OF_WEEK.filter(function (day) {
+        return scenario.cells.some(function (entry) { return entry.days.includes(day); });
+      }).forEach(function (day) {
+        dayBoxes.appendChild(checkboxLabel(day, day));
+        dayBoxes.appendChild(document.createTextNode(' '));
+      });
+    }
+
+    function checkedValues(containerId) {
+      return Array.from(document.querySelectorAll('#' + containerId + ' input:checked'))
+        .map(function (box) { return box.value; });
+    }
+
+    function currentSelection() {
+      const scenario = selectedScenario();
+      const routeKeys = checkedValues('routeBoxes');
+      const checkedDays = checkedValues('dayBoxes');
+      const routes = scenario.cells.filter(function (entry) { return routeKeys.includes(routeKey(entry)); });
+      const pairs = [];
+      routes.forEach(function (entry) {
+        entry.days.forEach(function (day) {
+          if (checkedDays.includes(day)) pairs.push({ org: entry.org, dest: entry.dest, day: day });
+        });
+      });
+      return {
+        routes: routes,
+        days: DAYS_OF_WEEK.filter(function (day) { return checkedDays.includes(day); }),
+        pairs: pairs,
+      };
+    }
+
+    function unionOfDates(grids) {
+      const headerByDate = {};
+      grids.forEach(function (grid) {
+        if (!grid) return;
+        grid.dates.forEach(function (date, i) { headerByDate[date] = grid.dateHeaders[i]; });
+      });
+      return Object.keys(headerByDate).sort().map(function (date) {
+        return { date: date, header: headerByDate[date] };
+      });
+    }
+
+    function panelElement(route, day, grid, rowDates) {
+      const panel = document.createElement('div');
+      if (!grid) return panel;
+      panel.appendChild(textElement('div', routeLabel(route) + ' \u00b7 ' + day, 'panelTitle'));
+      if (!grid.rows.length) {
+        panel.appendChild(textElement('div', 'No readings for this route and day.', 'warnings'));
+        return panel;
+      }
+
+      const indexByDate = {};
+      grid.dates.forEach(function (date, i) { indexByDate[date] = i; });
+
+      const table = document.createElement('table');
+      const headerRow = document.createElement('tr');
+      headerRow.appendChild(textElement('th', 'service', 'serviceCol'));
+      rowDates.forEach(function (entry) { headerRow.appendChild(textElement('th', entry.header)); });
+      const thead = document.createElement('thead');
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      grid.rows.forEach(function (row) {
+        const tr = document.createElement('tr');
+        tr.appendChild(textElement('td', row.label, 'serviceCol'));
+        rowDates.forEach(function (entry) {
+          const index = indexByDate[entry.date];
+          const gridCell = index === undefined ? null : row.cells[index];
+          tr.appendChild(textElement('td', gridCell ? gridCell.display : ''));
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      panel.appendChild(table);
+
+      if (grid.warnings.length) {
+        panel.appendChild(textElement('div', grid.warnings.join(' \u00b7 '), 'warnings'));
+      }
+      return panel;
+    }
+
+    function renderPanels(selection, gridByPair) {
+      const panels = document.getElementById('panels');
+      panels.style.gridTemplateColumns = 'repeat(' + selection.routes.length + ', max-content)';
+      selection.days.forEach(function (day) {
+        const rowGrids = selection.routes.map(function (route) {
+          return gridByPair[pairKey(route.org, route.dest, day)] || null;
+        });
+        const rowDates = unionOfDates(rowGrids);
+        selection.routes.forEach(function (route, i) {
+          panels.appendChild(panelElement(route, day, rowGrids[i], rowDates));
+        });
+      });
+    }
+
+    function load() {
+      const sequence = ++loadSequence;
+      const selection = currentSelection();
+      document.getElementById('panels').replaceChildren();
+      if (!selection.pairs.length) {
+        setStatus('Nothing selected.');
+        return;
+      }
+      setStatus('Loading\u2026');
+      Promise.all(selection.pairs.map(function (pair) {
+        return post('/api/getT1Grid', { org: pair.org, dest: pair.dest, dayOfWeek: pair.day });
+      }))
+        .then(function (grids) {
+          if (sequence !== loadSequence) return;
+          const failed = grids.find(function (g) { return g.error; });
+          if (failed) { setStatus('Error: ' + failed.error); return; }
+          const gridByPair = {};
+          selection.pairs.forEach(function (pair, i) {
+            gridByPair[pairKey(pair.org, pair.dest, pair.day)] = grids[i];
+          });
+          renderPanels(selection, gridByPair);
+          setStatus('');
+        })
+        .catch(function (err) { if (sequence === loadSequence) setStatus('Error: ' + err); });
+    }
+
+    function onScenarioChange() {
+      fillFilters();
+      load();
+    }
+
+    fetch('/api/getScenarioScreen')
+      .then(function (res) { return res.json(); })
+      .then(function (r) {
+        if (r.error) { setStatus('Error: ' + r.error); return; }
+        scenarios = r.scenarios;
+        if (!scenarios.length) { setStatus('No scenarios yet - make one on the Scenarios page.'); return; }
+        fillScenarioSelect();
+        onScenarioChange();
+      })
+      .catch(function (err) { setStatus('Error: ' + err); });
+  </script>
+</body>
+</html>
