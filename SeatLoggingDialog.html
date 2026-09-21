@@ -60,7 +60,10 @@
     #scheduleModalClose:hover { color: #c5221f; }
     #scheduleModalFrame { width: 100%; height: 100%; border: none; border-radius: 6px; }
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
-    .prev .row { white-space: nowrap; }
+    .prev .row { white-space: nowrap; min-height: 1.4em; }
+    #flightTable.mode-c1steps .grp-select, #flightTable.mode-select .grp-c1steps { display: none; }
+    td.col-soloY { border-left: 2px solid #ddd; padding-left: 12px; }
+    td.col-blocked { border-left: 1px solid #eee; padding-left: 8px; }
     .prevHrsInline { display: inline-block; width: 38px; color: #666; }
     .prevHrsInline.mostRecent { color: #c5221f; }
     .prevSeatVal { display: inline-block; width: 30px; text-align: left; }
@@ -129,7 +132,7 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span id="columnModeToggle" class="eyeToggle" title="Switch the history columns between C1/Steps and Solo select/X" onclick="toggleColumnMode()">&#8646;</span>
     </div>
     <div id="routeFlagRow">
       <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
@@ -157,6 +160,8 @@
   <script>
     var batch = null;
     var showDeparted = false;
+    var columnMode = 'c1steps';
+    var currentColumns = [];
     var CABIN_SIZE_KEYS = { Y: 'main', CPlus: 'comfortPlus', FirstOrPS: 'first', D1: 'd1' };
     var CABIN_LABELS = { Y: 'Y', CPlus: 'C+', FirstOrPS: '1/PS', D1: 'D1' };
     var PLACEHOLDER_AIRCRAFT = ['', 'tbd'];
@@ -315,10 +320,10 @@
       // one) - see SeatLoggingDialog.py's previous_readings_for
       // ('c1After' per reading) and DeclineCurveFit.slide_c1_through_
       // readings for the mechanism.
-      cols.push({ key: 'c1AfterY', label: 'Y', width: 40 });
-      cols.push({ key: 'c1AfterCplus', label: 'C+', width: 40 });
-      cols.push({ key: 'c1AfterOnePS', label: '1/PS', width: 40 });
-      if (anyD1) cols.push({ key: 'c1AfterD1', label: 'D1', width: 40 });
+      cols.push({ key: 'c1AfterY', label: 'Y', width: 40, group: 'c1steps' });
+      cols.push({ key: 'c1AfterCplus', label: 'C+', width: 40, group: 'c1steps' });
+      cols.push({ key: 'c1AfterOnePS', label: '1/PS', width: 40, group: 'c1steps' });
+      if (anyD1) cols.push({ key: 'c1AfterD1', label: 'D1', width: 40, group: 'c1steps' });
       // Step-change columns (his call, 2026-09-14; repositioned again
       // 2026-09-16 to sit after Hrs/Prev rather than right after Actual
       // - actual vs. what the pooled slope alone predicted from this
@@ -328,10 +333,15 @@
       // step changes at a glance and judge "is this cabin jumpy today"
       // - not a hint about right now, a history of how well the
       // estimator's rate has been tracking reality so far.
-      cols.push({ key: 'stepY', label: 'Y', width: 34 });
-      cols.push({ key: 'stepCplus', label: 'C+', width: 34 });
-      cols.push({ key: 'stepOnePS', label: '1/PS', width: 34 });
-      if (anyD1) cols.push({ key: 'stepD1', label: 'D1', width: 34 });
+      cols.push({ key: 'stepY', label: 'Y', width: 34, group: 'c1steps' });
+      cols.push({ key: 'stepCplus', label: 'C+', width: 34, group: 'c1steps' });
+      cols.push({ key: 'stepOnePS', label: '1/PS', width: 34, group: 'c1steps' });
+      if (anyD1) cols.push({ key: 'stepD1', label: 'D1', width: 34, group: 'c1steps' });
+      cols.push({ key: 'soloY', label: 'Y', width: 34, group: 'select' });
+      cols.push({ key: 'soloCplus', label: 'C+', width: 34, group: 'select' });
+      cols.push({ key: 'soloOnePS', label: '1/PS', width: 34, group: 'select' });
+      if (anyD1) cols.push({ key: 'soloD1', label: 'D1', width: 34, group: 'select' });
+      cols.push({ key: 'blocked', label: 'X', width: 34, group: 'select', title: 'Blocked seats, all cabins' });
       // Real column now, not text crammed inline onto the Prev column's
       // top line (which was blowing the whole table out sideways - a
       // fixed-width nowrap cell forced to hold far more text than it
@@ -433,6 +443,24 @@
       }).join('');
     }
 
+    function formatCount(v) {
+      return (v === null || v === undefined) ? '' : String(v);
+    }
+
+    function formatSoloColumn(readings, cabinKey) {
+      if (!readings || readings.length === 0) return '';
+      return readings.map(function (rd) {
+        return '<div class="row">' + formatCount(rd.solo ? rd.solo[cabinKey] : null) + '</div>';
+      }).join('');
+    }
+
+    function formatBlockedColumn(readings) {
+      if (!readings || readings.length === 0) return '';
+      return readings.map(function (rd) {
+        return '<div class="row">' + formatCount(rd.blocked) + '</div>';
+      }).join('');
+    }
+
     function copyDialogSnapshot() {
       // Plain-text dump of everything on screen right now, PLUS a few
       // things that aren't shown but matter for tracking down a real
@@ -500,12 +528,16 @@
         }
         readings.forEach(function (rd) {
           var steps = rd.steps || {};
+          var solo = rd.solo || {};
           lines.push('    hrs=' + rd.hrs.toFixed(2) +
             '  y=' + blankDash(rd.y) + ' cplus=' + blankDash(rd.cplus) +
             ' onePS=' + blankDash(rd.onePS) + ' d1=' + blankDash(rd.d1) +
             '  t1=' + blankDash(round2(rd.t1)) +
             '  steps: y=' + blankDash(steps.y) + ' cplus=' + blankDash(steps.cplus) +
-            ' onePS=' + blankDash(steps.onePS) + ' d1=' + blankDash(steps.d1));
+            ' onePS=' + blankDash(steps.onePS) + ' d1=' + blankDash(steps.d1) +
+            '  solo select: y=' + blankDash(solo.y) + ' cplus=' + blankDash(solo.cplus) +
+            ' onePS=' + blankDash(solo.onePS) + ' d1=' + blankDash(solo.d1) +
+            '  X=' + blankDash(rd.blocked));
         });
         lines.push('');
       });
@@ -851,6 +883,24 @@
       if (batch && batch.routeOrg) loadBatch(captureUnsavedSeatValues(), currentRouteKey());
     }
 
+    function visibleColumnCount(columns) {
+      return columns.filter(function (c) { return !c.group || c.group === columnMode; }).length;
+    }
+
+    function applyColumnMode() {
+      document.getElementById('flightTable').className = 'mode-' + columnMode;
+      document.getElementById('columnModeToggle').className = 'eyeToggle' + (columnMode === 'select' ? ' active' : '');
+      var span = visibleColumnCount(currentColumns);
+      Array.prototype.forEach.call(document.querySelectorAll('tr.seatMapRow > td'), function (td) {
+        td.setAttribute('colspan', span);
+      });
+    }
+
+    function toggleColumnMode() {
+      columnMode = (columnMode === 'c1steps') ? 'select' : 'c1steps';
+      applyColumnMode();
+    }
+
     function loadBatch(preserveMap, sameRoute) {
       var btn = document.getElementById('getNextBtn');
       btn.disabled = true;
@@ -969,15 +1019,17 @@
 
       var anyD1 = batch.rows.some(function (r) { return r.hasD1; });
       var columns = buildColumns(anyD1);
+      currentColumns = columns;
+      function groupClass(c) { return c.group ? 'grp-' + c.group : ''; }
 
       var colgroup = document.getElementById('colgroup');
       colgroup.innerHTML = columns.map(function (c) {
-        return '<col style="width:' + c.width + 'px;">';
+        return '<col class="' + groupClass(c) + '" style="width:' + c.width + 'px;">';
       }).join('');
 
       var headerRow = document.getElementById('headerRow');
       headerRow.innerHTML = columns.map(function (c) {
-        return '<th>' + c.label + '</th>';
+        return '<th class="' + groupClass(c) + '"' + (c.title ? ' title="' + c.title + '"' : '') + '>' + c.label + '</th>';
       }).join('');
 
       // Group-label row above the field labels - Actual, C1 (after
@@ -990,13 +1042,17 @@
       var midCount = 3; // hrs, gap, prev
       var c1AfterCount = anyD1 ? 4 : 3;
       var stepCount = anyD1 ? 4 : 3;
-      var restCount = columns.length - 1 - actualCount - midCount - c1AfterCount - stepCount;
+      var selectCount = anyD1 ? 4 : 3;
+      var blockedCount = 1;
+      var restCount = columns.length - 1 - actualCount - midCount - c1AfterCount - stepCount - selectCount - blockedCount;
       document.getElementById('groupHeaderRow').innerHTML =
         '<th></th>' +
         '<th class="groupHead" colspan="' + actualCount + '">Actual</th>' +
         '<th colspan="' + midCount + '"></th>' +
-        '<th class="groupHead" colspan="' + c1AfterCount + '">C1</th>' +
-        '<th class="groupHead" colspan="' + stepCount + '">Steps</th>' +
+        '<th class="groupHead grp-c1steps" colspan="' + c1AfterCount + '">C1</th>' +
+        '<th class="groupHead grp-c1steps" colspan="' + stepCount + '">Steps</th>' +
+        '<th class="groupHead grp-select" colspan="' + selectCount + '">Solo select</th>' +
+        '<th class="grp-select"></th>' +
         '<th colspan="' + restCount + '"></th>';
 
       var tbody = document.getElementById('rows');
@@ -1023,6 +1079,11 @@
           stepCplus: '<div class="prev">' + formatStepColumn(row.previousReadings, 'cplus') + '</div>',
           stepOnePS: '<div class="prev">' + formatStepColumn(row.previousReadings, 'onePS') + '</div>',
           stepD1: '<div class="prev">' + formatStepColumn(row.previousReadings, 'd1') + '</div>',
+          soloY: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'y') + '</div>',
+          soloCplus: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'cplus') + '</div>',
+          soloOnePS: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'onePS') + '</div>',
+          soloD1: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'd1') + '</div>',
+          blocked: '<div class="prev">' + formatBlockedColumn(row.previousReadings) + '</div>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           t1: '<div class="prev">' + formatT1Column(row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
@@ -1042,7 +1103,7 @@
         };
 
         tr.innerHTML = columns.map(function (c) {
-          return '<td class="col-' + c.key + '">' + (cellHtml[c.key] || '') + '</td>';
+          return '<td class="col-' + c.key + ' ' + groupClass(c) + '">' + (cellHtml[c.key] || '') + '</td>';
         }).join('');
         tbody.appendChild(tr);
 
@@ -1051,7 +1112,7 @@
           panelTr.className = ('seatMapRow ' + stripe).trim();
           panelTr.setAttribute('data-i', i);
           panelTr.style.display = 'none';
-          panelTr.innerHTML = '<td colspan="' + columns.length + '">' + buildSeatMapPanel(row, i) + '</td>';
+          panelTr.innerHTML = '<td colspan="' + visibleColumnCount(columns) + '">' + buildSeatMapPanel(row, i) + '</td>';
           tbody.appendChild(panelTr);
         }
 
@@ -1062,6 +1123,8 @@
           });
         }
       });
+
+      applyColumnMode();
 
       tbody.removeEventListener('keydown', handleArrowNav);
       tbody.addEventListener('keydown', handleArrowNav);

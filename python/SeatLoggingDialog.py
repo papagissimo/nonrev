@@ -197,6 +197,12 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     "every whiff of it, gone" - the old FloorEstimates-derived decimal
     substitute is fully removed, not just hidden).
 
+    A reading with only seat-map numbers (no can-buy counts) is included
+    as a row of its own: its can-buy cabins are None, its 't1' is None,
+    and it gets no 'steps'/'c1After' entries. Each row carries 'solo'
+    (cabin_key -> solo available-to-select count) and 'blocked' (the X
+    count), None wherever nothing was observed.
+
     Each row also carries 't1': the curve-slide T1 estimate as of that
     point in the day (see T1Estimator.compute_t1_replay_column) - this
     is now the ONE T1 value shown anywhere in the dialog (his call - he
@@ -245,9 +251,10 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
 
     if is_today:
         rows = conn.execute(
-            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime
+            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime,
+                      soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal
                FROM observations
-               WHERE {not_seat_map_only_where_clause()} AND carrier=? AND org=? AND dest=? AND flightDate=?""",
+               WHERE carrier=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, org, dest, flight_date),
         ).fetchall()
 
@@ -261,18 +268,19 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
             conn, dep_time, org, datetime.strptime(flight_date, '%Y-%m-%d').date()
         )
         readings_raw = []
-        for hbd, y, cplus, first_or_ps, d1, check_ts, own_dep in rows:
+        for hbd, y, cplus, first_or_ps, d1, check_ts, own_dep, *seat_map in rows:
             if own_dep not in this_flights_cluster:
                 continue
             check_dt = datetime.strptime(check_ts, '%Y-%m-%d %H:%M').replace(tzinfo=current_dep_dt.tzinfo)
             live_hbd = round((current_dep_dt - check_dt).total_seconds() / 3600, 2)
-            readings_raw.append((live_hbd, y, cplus, first_or_ps, d1))
+            readings_raw.append((live_hbd, y, cplus, first_or_ps, d1, *seat_map))
         readings_raw.sort(key=lambda r: r[0])  # most-recent-check first, same convention as below
     else:
         readings_raw = conn.execute(
-            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1
+            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1,
+                      soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal
                FROM observations
-               WHERE {not_seat_map_only_where_clause()} AND carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
+               WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
                ORDER BY hoursBeforeDep ASC""",
             (carrier, dep_time, org, dest, flight_date),
         ).fetchall()
@@ -284,12 +292,15 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
             'cplus': r[2],
             'onePS': r[3],
             'd1': r[4],
+            'solo': {'y': r[5], 'cplus': r[6], 'onePS': r[7], 'd1': r[8]},
+            'blocked': r[9],
         }
         for r in readings_raw
     ]
     t1_column = compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings)
     for reading, t1 in zip(readings, t1_column):
-        reading['t1'] = t1
+        has_can_buy = any(reading[cabin_key] is not None for cabin_key in CABIN_KEY_TO_COLUMN)
+        reading['t1'] = t1 if has_can_buy else None
 
     day_of_week = datetime.strptime(flight_date, "%Y-%m-%d").strftime("%a")
     decline_settings = load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
