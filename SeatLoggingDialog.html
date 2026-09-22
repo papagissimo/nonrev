@@ -609,7 +609,7 @@
       if (aircraft.first > 0) parts.push(aircraft.first + ' 1st');
       if (aircraft.comfortPlus > 0) parts.push(aircraft.comfortPlus + ' C+');
       parts.push(aircraft.main + ' Y');
-      return parts.join(' \u00b7 ') + ' = ' + aircraft.total;
+      return parts.join(' \u00b7 ') + ' = ' + aircraft.total + (aircraft.confirmed ? ' \u2713' : '');
     }
 
     function aircraftOptionsHtml(currentKey) {

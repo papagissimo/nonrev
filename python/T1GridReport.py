@@ -14,6 +14,11 @@ from timezones import UnconfirmedAirportError, et_equivalent_datetime, get_confi
 DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 NO_ESTIMATE_DISPLAY = '\u2014'
 
+# Same labels and cabin order SeatLoggingDialog.html already uses
+# (CABIN_LABELS there) - kept in sync rather than reusing directly since
+# that one's client-side JS and this is the Python backend.
+CABIN_DISPLAY = [('main', 'Y'), ('comfortPlus', 'C+'), ('first', '1/PS'), ('d1', 'D1')]
+
 STRIKE_WEIGHTS = {'open': 0.0, 'iffy': 0.25, 'full': 1.0}
 RED_END_STRIKE_RATE = 0.5
 MIN_COUNTED_WEEKS_FOR_FULL_COLOR = 3
@@ -66,7 +71,10 @@ def format_t1(value):
 
 
 def format_minutes(minutes):
-    return f'{minutes // 60:02d}:{minutes % 60:02d}'
+    hour24 = (minutes // 60) % 24
+    hour12 = hour24 % 12 or 12
+    period = 'AM' if hour24 < 12 else 'PM'
+    return f'{hour12}:{minutes % 60:02d} {period}'
 
 
 def format_date_header(flight_date):
@@ -209,6 +217,41 @@ def scheduled_dep_times(conn, org, dest, day_of_week):
     return [row[0] for row in rows]
 
 
+def scheduled_aircraft_by_dep_time(conn, org, dest, day_of_week):
+    """{depTime: aircraftConfig} for this route/day. If more than one row
+    somehow shares a depTime, the last one by rowid wins - same
+    pick-something-deterministic spirit as elsewhere in this file rather
+    than raising over a data oddity that isn't this report's job to police."""
+    rows = conn.execute(
+        """SELECT depTime, aircraftConfig FROM flightSchedule
+           WHERE org = ? AND dest = ? AND dayOfWeek = ? AND ignore = 0
+           ORDER BY rowid""",
+        (org, dest, day_of_week),
+    ).fetchall()
+    return {dep_time: aircraft_config for dep_time, aircraft_config in rows}
+
+
+def cabin_counts_for_aircraft(conn, config_key):
+    """[{'label', 'count'}, ...] for the cabins this aircraft actually has -
+    skips any cabin that's unknown (NULL) or genuinely absent (0), same as
+    SeatLoggingDialog.html's anyD1 convention: D1 (and any other empty
+    cabin) simply doesn't appear rather than showing a zero."""
+    if not config_key:
+        return []
+    row = conn.execute(
+        "SELECT d1, first, comfortPlus, main FROM aircraftConfigs WHERE configKey = ?",
+        (config_key,),
+    ).fetchone()
+    if row is None:
+        return []
+    sizes = {'d1': row[0], 'first': row[1], 'comfortPlus': row[2], 'main': row[3]}
+    return [
+        {'label': label, 'count': sizes[column]}
+        for column, label in CABIN_DISPLAY
+        if sizes[column]
+    ]
+
+
 def route_duration_minutes(conn, org, dest):
     row = conn.execute(
         "SELECT durationMinutes FROM routeSettings WHERE org = ? AND dest = ?", (org, dest)
@@ -227,7 +270,9 @@ def minutes_on_clock(instant, clock_zone, on_date):
 
 def format_local_moment(moment, on_date):
     next_day_marker = f' +{(moment.date() - on_date).days}' if moment.date() > on_date else ''
-    return f'{moment:%H:%M} {moment.tzname()}{next_day_marker}'
+    hour12 = moment.hour % 12 or 12
+    period = 'AM' if moment.hour < 12 else 'PM'
+    return f'{hour12}:{moment.minute:02d} {period} {moment.tzname()}{next_day_marker}'
 
 
 def hex_to_rgb(color):
@@ -348,6 +393,7 @@ def leg_bars(conn, org, dest, day_of_week, clock_airport, on_date, thresholds):
     clock_zone = airport_zone(conn, clock_airport)
     origin_zone = airport_zone(conn, org)
     dest_zone = airport_zone(conn, dest)
+    aircraft_by_dep_time = scheduled_aircraft_by_dep_time(conn, org, dest, day_of_week)
     bars = []
     for dep_time in dep_times:
         departure = et_equivalent_datetime(conn, dep_time, org, on_date)
@@ -364,6 +410,7 @@ def leg_bars(conn, org, dest, day_of_week, clock_airport, on_date, thresholds):
             'endMinutes': minutes_on_clock(arrival, clock_zone, on_date),
             'weeks': [{'date': w['date'], 'display': w['display'], 'counted': w['countsForColor']} for w in weeks],
             'fills': appearance['fills'],
+            'cabins': cabin_counts_for_aircraft(conn, aircraft_by_dep_time.get(dep_time)),
             'tooltip': bar_tooltip(
                 route_name, day_of_week,
                 format_local_moment(departure.astimezone(origin_zone), on_date),

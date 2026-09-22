@@ -43,6 +43,10 @@ CREATE TABLE flightSchedule (
 );
 
 -- Cabin sizes: NULL = unknown, 0 = the aircraft has no such cabin.
+-- confirmed is display-only, a note to self on the seat-map panel that
+-- these cabin sizes have actually been checked, not just defaulted or
+-- guessed - it feeds nothing else (see AircraftConfigs.save_aircraft).
+-- Set automatically whenever this aircraft is saved through that form.
 CREATE TABLE aircraftConfigs (
     configKey    TEXT PRIMARY KEY,
     aircraft     TEXT NOT NULL,
@@ -53,7 +57,8 @@ CREATE TABLE aircraftConfigs (
     total        INTEGER,
     status       TEXT,
     note         TEXT,
-    source       TEXT
+    source       TEXT,
+    confirmed    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE routeSettings (

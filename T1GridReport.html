@@ -67,6 +67,8 @@
     const BOTTOM_PAD = 12;
     const COLUMN_WIDTH = 46;
     const COLUMN_GAP = 10;
+    const CABIN_STRIP_WIDTH = 30;
+    const CABIN_ROW_PX = 12;
     const PANEL_GAP = 64;
     const LABEL_LEAD_MINUTES = 22;
     const BAND_COLOR = '#b8b8b8';
@@ -210,12 +212,23 @@
       const minutes = (((hubMinutes + offsetMinutes) % 1440) + 1440) % 1440;
       const hh = Math.floor(minutes / 60);
       const mm = minutes % 60;
-      return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+      const period = hh < 12 ? 'AM' : 'PM';
+      const hh12 = hh % 12 || 12;
+      return hh12 + ':' + (mm < 10 ? '0' : '') + mm + ' ' + period;
     }
 
     function panelWidth(bars) {
       if (!bars.length) return PLACEHOLDER_WIDTH;
-      return bars.length * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_GAP;
+      return bars.length * (COLUMN_WIDTH + CABIN_STRIP_WIDTH + COLUMN_GAP) + COLUMN_GAP;
+    }
+
+    function drawCabinCounts(group, bar, x, top) {
+      (bar.cabins || []).forEach(function (c, i) {
+        group.appendChild(svgEl('text', {
+          x: x + COLUMN_WIDTH + 4, y: top + NUMBER_TOP_PAD + (i + 1) * CABIN_ROW_PX - 2,
+          'text-anchor': 'start', 'font-size': 9, fill: '#777',
+        }, c.label + ' ' + c.count));
+      });
     }
 
     function wrapText(text, maxChars) {
@@ -389,7 +402,7 @@
       legs.forEach(function (leg, i) {
         const panelX = i === 0 ? firstX : secondX;
         leg.bars.forEach(function (b, j) {
-          const x = panelX + COLUMN_GAP + j * (COLUMN_WIDTH + COLUMN_GAP);
+          const x = panelX + COLUMN_GAP + j * (COLUMN_WIDTH + CABIN_STRIP_WIDTH + COLUMN_GAP);
           const top = y(b.startMinutes);
           const barHeight = y(b.endMinutes) - top;
           const group = svgEl('g', {});
@@ -400,6 +413,7 @@
           }));
           group.appendChild(svgEl('text', { x: x + COLUMN_WIDTH / 2, y: top - 5, 'text-anchor': 'middle', 'font-size': 11, fill: '#333' }, b.label));
           drawWeekNumbers(group, b, x, top, barHeight);
+          drawCabinCounts(group, b, x, top);
           if (i === 0) {
             group.appendChild(svgEl('rect', {
               x: x, y: y(b.endMinutes), width: COLUMN_WIDTH, height: bandMinutes / 60 * PX_PER_HOUR, fill: BAND_COLOR, rx: 2,

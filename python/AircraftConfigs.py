@@ -24,13 +24,13 @@ class AircraftError(Exception):
 
 def load_aircraft_list(conn):
     rows = conn.execute(
-        "SELECT configKey, aircraft, d1, first, comfortPlus, main, total "
+        "SELECT configKey, aircraft, d1, first, comfortPlus, main, total, confirmed "
         "FROM aircraftConfigs ORDER BY rowid"
     ).fetchall()
     return [
         {'key': key, 'name': name, 'd1': d1, 'first': first,
-         'comfortPlus': comfort_plus, 'main': main, 'total': total}
-        for key, name, d1, first, comfort_plus, main, total in rows
+         'comfortPlus': comfort_plus, 'main': main, 'total': total, 'confirmed': bool(confirmed)}
+        for key, name, d1, first, comfort_plus, main, total, confirmed in rows
     ]
 
 
@@ -92,15 +92,15 @@ def save_aircraft(conn, payload):
 
     if existing_key is None:
         conn.execute(
-            """INSERT INTO aircraftConfigs (configKey, aircraft, d1, first, comfortPlus, main, total, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'from seat map')""",
+            """INSERT INTO aircraftConfigs (configKey, aircraft, d1, first, comfortPlus, main, total, status, confirmed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'from seat map', 1)""",
             (key, name, sizes['d1'], sizes['first'], sizes['comfortPlus'], sizes['main'], total),
         )
         stored_key = key
     else:
         conn.execute(
             """UPDATE aircraftConfigs
-               SET aircraft = ?, d1 = ?, first = ?, comfortPlus = ?, main = ?, total = ?, status = 'from seat map'
+               SET aircraft = ?, d1 = ?, first = ?, comfortPlus = ?, main = ?, total = ?, status = 'from seat map', confirmed = 1
                WHERE configKey = ?""",
             (name, sizes['d1'], sizes['first'], sizes['comfortPlus'], sizes['main'], total, existing_key),
         )
