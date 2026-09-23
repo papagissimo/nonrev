@@ -53,7 +53,7 @@ from ServiceGrouping import get_open_full_counts, format_open_full, load_open_fu
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
-from Scenarios import studied_cells
+from Scenarios import studied_cells, FlightGrades
 from AircraftConfigs import load_aircraft_list
 from observation_filters import SEAT_MAP_COLUMNS, not_seat_map_only_where_clause
 
@@ -455,13 +455,13 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
 
         sched_rows = conn.execute(
             """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest,
-                      depTime, aircraftConfig, verdict, verdictType
+                      depTime, aircraftConfig
                FROM flightSchedule
                WHERE dayOfWeek = ? AND ignore = 0""",
             (dow,),
         ).fetchall()
 
-        for rowid, carrier, flight_number, org, dest, dep_time, aircraft_config, verdict, verdict_type in sched_rows:
+        for rowid, carrier, flight_number, org, dest, dep_time, aircraft_config in sched_rows:
             if (org, dest, dow) not in studied:
                 continue
             try:
@@ -487,17 +487,9 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                     'dep': dep_time, 'depEtDatetime': dep_dt,
                     'flightDate': flight_date_str, 'dow': dow,
                     'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
-                    'hoursUntilDep': hours_until_dep, 'verdict': verdict or '',
-                    'verdictType': verdict_type or 'info',
+                    'hoursUntilDep': hours_until_dep,
                 })
                 continue
-
-            # 'axed'/'starred' suppression is OFF (his call - too many
-            # routes had accumulated a full set of one or the other,
-            # silently making whole routes unreachable with no signal
-            # that they'd dropped out). verdict/verdictType are still
-            # computed, stored, and shown below - only ever a display
-            # flag, never something that removes a flight from the pool.
 
             candidates.append({
                 'scheduleRow': rowid, 'org': org, 'dest': dest, 'car': carrier,
@@ -505,7 +497,6 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'flightDate': flight_date_str, 'dow': dow,
                 'aircraftConfig': aircraft_config or 'TBD', 'flightNumber': flight_number or '',
                 'hoursUntilDep': hours_until_dep,
-                'verdict': verdict or '', 'verdictType': verdict_type or 'info',
             })
 
     if unconfirmed_codes:
@@ -576,6 +567,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         }
 
     d1_map = load_d1_map(conn)
+    grades = FlightGrades(conn)
     route_rows = []
     for c in candidates:
         # Same route AND same schedule date - two different calendar
@@ -604,7 +596,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             ),
             'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
-            'verdict': c['verdict'], 'verdictType': c['verdictType'],
+            'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
             'openFull': format_open_full(
                 get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['dep'])
             ),
@@ -631,7 +623,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 ),
                 'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
-                'verdict': c['verdict'], 'verdictType': c['verdictType'],
+                'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
                 'openFull': format_open_full(
                     get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['dep'])
                 ),

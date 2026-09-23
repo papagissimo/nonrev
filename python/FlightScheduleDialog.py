@@ -94,7 +94,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
     dow = normalize_dow(dow)
 
     rows = conn.execute(
-        """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, depTime, aircraftConfig, ignore, verdict, verdictType
+        """SELECT rowid, carrier, carriersFltNum_notStable_DO_NOT_USE, depTime, aircraftConfig, ignore
            FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek=?
            ORDER BY depTime""",
         (org, dest, dow),
@@ -111,12 +111,11 @@ def get_schedule_for_route_day(conn, org, dest, dow):
             'flightNumber': flight_number or '', 'dep': dep_time,
             'depDisplay': minutes_to_12h(dep_time), 'aircraftConfig': aircraft_config or '',
             'ignore': bool(ignore),
-            'verdict': verdict or '', 'verdictType': verdict_type or 'info',
             'openFull': format_open_full(
                 get_open_full_counts(conn, org, dest, dow, dep_time)
             ),
         }
-        for rowid, carrier, flight_number, dep_time, aircraft_config, ignore, verdict, verdict_type in rows
+        for rowid, carrier, flight_number, dep_time, aircraft_config, ignore in rows
     ]
 
     duration_minutes = get_route_duration(conn, org, dest)
@@ -175,12 +174,10 @@ def save_schedule_for_route_day(conn, payload):
 
         conn.execute(
             """UPDATE flightSchedule
-               SET carrier=?, carriersFltNum_notStable_DO_NOT_USE=?, depTime=?, aircraftConfig=?, ignore=?, verdict=?, verdictType=?
+               SET carrier=?, carriersFltNum_notStable_DO_NOT_USE=?, depTime=?, aircraftConfig=?, ignore=?
                WHERE rowid=?""",
             (entry.get('carrier') or 'dl', entry['flightNumber'], entry['dep'],
-             entry['aircraftConfig'], 1 if entry.get('ignore') else 0,
-             (entry.get('verdict') or '').strip() or None,
-             entry.get('verdictType') or 'info', entry['scheduleRow']),
+             entry['aircraftConfig'], 1 if entry.get('ignore') else 0, entry['scheduleRow']),
         )
 
     to_delete = [e['scheduleRow'] for e in payload['rows'] if e.get('scheduleRow') and e.get('deleted')]
@@ -191,12 +188,10 @@ def save_schedule_for_route_day(conn, payload):
     for entry in new_rows:
         conn.execute(
             """INSERT INTO flightSchedule
-               (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime, aircraftConfig, ignore)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (entry.get('carrier') or 'dl', entry['flightNumber'], org, dest, dow,
-             entry['dep'], entry['aircraftConfig'],
-             (entry.get('verdict') or '').strip() or None,
-             entry.get('verdictType') or 'info', 1 if entry.get('ignore') else 0),
+             entry['dep'], entry['aircraftConfig'], 1 if entry.get('ignore') else 0),
         )
 
     duration_minutes = payload.get('durationMinutes')
@@ -227,7 +222,7 @@ def copy_to_other_days(conn, org, dest, source_dow):
     source_dow = normalize_dow(source_dow)
 
     source_rows = conn.execute(
-        """SELECT carrier, carriersFltNum_notStable_DO_NOT_USE, depTime, aircraftConfig, ignore, verdict, verdictType
+        """SELECT carrier, carriersFltNum_notStable_DO_NOT_USE, depTime, aircraftConfig, ignore
            FROM flightSchedule WHERE org=? AND dest=? AND dayOfWeek=?""",
         (org, dest, source_dow),
     ).fetchall()
@@ -242,12 +237,12 @@ def copy_to_other_days(conn, org, dest, source_dow):
 
     copied_count = 0
     for day in target_days:
-        for carrier, flight_number, dep_time, aircraft_config, ignore, verdict, verdict_type in source_rows:
+        for carrier, flight_number, dep_time, aircraft_config, ignore in source_rows:
             conn.execute(
                 """INSERT INTO flightSchedule
-                   (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime, aircraftConfig, verdict, verdictType, ignore)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (carrier, flight_number, org, dest, day, dep_time, aircraft_config, verdict, verdict_type, ignore),
+                   (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, dayOfWeek, depTime, aircraftConfig, ignore)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (carrier, flight_number, org, dest, day, dep_time, aircraft_config, ignore),
             )
             copied_count += 1
 

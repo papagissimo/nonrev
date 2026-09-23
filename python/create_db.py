@@ -17,6 +17,19 @@ CREATE TABLE scenarioCells (
     dayOfWeek   TEXT NOT NULL,
     PRIMARY KEY (scenarioId, org, dest, dayOfWeek)
 );
+
+-- One grade per (scenario, route, day, service). serviceMinutes is the
+-- service's representative time from ServiceGrouping.get_route_services.
+-- No row means ungraded.
+CREATE TABLE scenarioServiceGrades (
+    scenarioId      INTEGER NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+    org             TEXT NOT NULL,
+    dest            TEXT NOT NULL,
+    dayOfWeek       TEXT NOT NULL,
+    serviceMinutes  INTEGER NOT NULL,
+    grade           TEXT NOT NULL CHECK (grade IN ('A', 'B', 'C', 'F')),
+    PRIMARY KEY (scenarioId, org, dest, dayOfWeek, serviceMinutes)
+);
 """
 
 SCHEMA = """
@@ -36,10 +49,8 @@ CREATE TABLE flightSchedule (
     dayOfWeek                           TEXT NOT NULL,
     depTime                             INTEGER NOT NULL,
     aircraftConfig                      TEXT NOT NULL,
-    verdict                             TEXT,
     ignore                              INTEGER NOT NULL DEFAULT 0,
-    humanReviewed                       INTEGER NOT NULL DEFAULT 0,
-    verdictType                         TEXT NOT NULL DEFAULT 'info'
+    humanReviewed                       INTEGER NOT NULL DEFAULT 0
 );
 
 -- Cabin sizes: NULL = unknown, 0 = the aircraft has no such cabin.
@@ -69,7 +80,7 @@ CREATE TABLE routeSettings (
 );
 
 -- Global, not per-route - a date range to leave out of every pooling
--- consumer (verdict/classification, decline-curve fitting, the weekday
+-- consumer (open/full classification, decline-curve fitting, the weekday
 -- chart, dayGroupings stats), not just one graphing tool. Ranges, not
 -- individual dates, since that's how the real cases show up (a
 -- three-day-weekend window, an early-August anomaly window) - a range
@@ -148,10 +159,8 @@ CREATE TABLE observations (
 CREATE INDEX idxObservationsFlightDay
     ON observations (carrier, org, dest, depTime, flightDate);
 
--- Both flag tables below are the free-text "hey, look here" mechanism -
--- deliberately NOT the same thing as flightSchedule.verdict (a
--- multi-week (org, dest, depTime, dayOfWeek) pattern judgment). These are
--- single mutable fields scoped to one specific flight-date instance:
+-- Both flag tables below are the free-text "hey, look here" mechanism.
+-- These are single mutable fields scoped to one specific flight-date instance:
 -- writing over one replaces whatever was there, no history kept.
 -- No fixed vocabulary - plain text, searchable later the same
 -- substring-filter way ObservationsBrowser already works.

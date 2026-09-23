@@ -358,10 +358,11 @@ before - a NEW, specific symptom is the bar for reopening it.
 - Automated full/open/iffy classification via fixed thresholds (sum of
   4 cabins, needs >=3 qualifying dates, unanimous <=2 full />=8 open,
   writing into a `classification` column keyed on flightNumber+dayOfWeek)
-  — superseded by the free-text `verdict` + `verdictType` glyph system
-  (info/warning/axed/starred) actually in the live schema. Confirmed no
-  `classification` column exists anymore. Classification is a human
-  judgment call now, not an automated write.
+  — no `classification` column exists. Classification is a human
+  judgment call, not an automated write.
+- flightSchedule's free-text `verdict` + `verdictType` glyph
+  (info/warning/axed/starred) — removed 2026-09-22, columns dropped.
+  Per-scenario service grades (Scenarios screen) do this job now.
 - 3-unanimous-readings verdict threshold — repeatedly blocked acting on
   visible patterns, killed outright.
 - Skip-a-route-to-avoid-rechecking-it-because-it's-full — obsolete, he

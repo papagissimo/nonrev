@@ -25,14 +25,27 @@
     #emptyMsg { color: #888; font-size: 12px; margin: 10px 0; }
     .nameRow label { display: block; font-size: 11px; color: #666; margin-bottom: 2px; }
     #scenarioName { width: 240px; font-size: 13px; padding: 4px; }
-    #gridScroll { max-height: 372px; overflow-y: auto; border-bottom: 1px solid #e5e5e5; margin-top: 12px; }
+    #gridScroll { max-height: 520px; overflow-y: auto; border-bottom: 1px solid #e5e5e5; margin-top: 12px; }
     #gridHeader { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; height: 26px; background: #fff; border-bottom: 1px solid #ccc; }
     .routeCol { width: 130px; flex-shrink: 0; padding-left: 4px; font-size: 11px; color: #666; }
     .days { flex-grow: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
     .dayHead { text-align: center; font-size: 11px; color: #666; }
     .gridRow { display: flex; align-items: center; height: 30px; border-bottom: 1px solid #eee; }
     .gridRow.inScenario { background: #eef4fe; }
-    .routeBtn { width: 130px; flex-shrink: 0; text-align: left; background: none; border: none; padding: 0 0 0 4px; font-size: 13px; font-family: inherit; color: #222; cursor: pointer; }
+    .expandBtn { width: 22px; flex-shrink: 0; height: 30px; background: none; border: none; padding: 0; font-size: 12px; color: #1a73e8; cursor: pointer; }
+    .expandSpacer { width: 22px; flex-shrink: 0; }
+    .routeBtn { width: 108px; flex-shrink: 0; text-align: left; background: none; border: none; padding: 0; font-size: 13px; font-family: inherit; color: #222; cursor: pointer; }
+    .gradePanel { padding: 6px 0 10px 26px; border-bottom: 1px solid #eee; background: #f7faff; }
+    .gradeTable { border-collapse: collapse; }
+    .gradeTable th { font-size: 11px; color: #666; font-weight: normal; text-align: center; padding: 2px 8px; }
+    .gradeTable th.serviceHead { text-align: left; padding-left: 0; }
+    .gradeTable td { text-align: center; padding: 3px 8px; vertical-align: top; }
+    .gradeTable td.serviceName { text-align: left; padding-left: 0; font-weight: bold; white-space: nowrap; }
+    .gradeTable select { font-size: 13px; }
+    .dayTimes { display: block; font-size: 11px; color: #666; margin-top: 2px; white-space: nowrap; }
+    .panelNote { font-size: 12px; color: #666; margin: 4px 0; }
+    .orphans { margin-top: 8px; font-size: 12px; color: #8a4b00; }
+    .orphans button { margin-left: 6px; font-size: 11px; background: none; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; color: #444; }
     .cell { display: flex; justify-content: center; align-items: center; height: 30px; }
     .cell input { margin: 0; width: 16px; height: 16px; cursor: pointer; }
     .noFlights { color: #767676; }
@@ -83,7 +96,8 @@
 
   <script>
     const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const state = { scenarios: [], routes: [], selectedKey: null, pinned: [], deletedIds: [], dirty: false, newCounter: 0 };
+    const GRADES = ['A', 'B', 'C', 'F'];
+    const state = { scenarios: [], routes: [], selectedKey: null, pinned: [], expanded: new Set(), deletedIds: [], dirty: false, newCounter: 0 };
 
     function el(tag, props) {
       const node = document.createElement(tag);
@@ -94,6 +108,14 @@
     function routeKey(org, dest) { return org + '|' + dest; }
 
     function routeLabel(route) { return route.org + ' \u2192 ' + route.dest; }
+
+    function gradeKey(org, dest, day, minutes) { return org + '|' + dest + '|' + day + '|' + minutes; }
+
+    function formatMinutes(minutes) {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h >= 12 ? ' pm' : ' am');
+    }
 
     function selected() {
       return state.scenarios.find(function (s) { return s.key === state.selectedKey; }) || null;
@@ -106,7 +128,9 @@
     function fromServer(scenario) {
       const cells = {};
       scenario.cells.forEach(function (cell) { cells[routeKey(cell.org, cell.dest)] = new Set(cell.days); });
-      return { key: 'id-' + scenario.id, id: scenario.id, name: scenario.name, active: scenario.active, cells: cells };
+      const grades = new Map();
+      scenario.grades.forEach(function (g) { grades.set(gradeKey(g.org, g.dest, g.day, g.serviceMinutes), g.grade); });
+      return { key: 'id-' + scenario.id, id: scenario.id, name: scenario.name, active: scenario.active, cells: cells, grades: grades };
     }
 
     function toPayload(scenario) {
@@ -114,7 +138,14 @@
         const parts = key.split('|');
         return { org: parts[0], dest: parts[1], days: DAYS.filter(function (d) { return scenario.cells[key].has(d); }) };
       });
-      return { id: scenario.id, name: scenario.name, active: scenario.active, cells: cells };
+      const grades = [];
+      scenario.grades.forEach(function (grade, key) {
+        const parts = key.split('|');
+        const days = scenario.cells[routeKey(parts[0], parts[1])];
+        if (!days || !days.has(parts[2])) return;
+        grades.push({ org: parts[0], dest: parts[1], day: parts[2], serviceMinutes: Number(parts[3]), grade: grade });
+      });
+      return { id: scenario.id, name: scenario.name, active: scenario.active, cells: cells, grades: grades };
     }
 
     function metaText(scenario) {
@@ -180,13 +211,31 @@
 
     function buildRow(route, scenario) {
       const key = routeKey(route.org, route.dest);
-      const row = el('div', { className: 'gridRow' + (scenario.cells[key] ? ' inScenario' : '') });
+      const inScenario = !!scenario.cells[key];
+      const wrapper = el('div');
+      const row = el('div', { className: 'gridRow' + (inScenario ? ' inScenario' : '') });
+
+      if (inScenario) {
+        const open = state.expanded.has(key);
+        const expandBtn = el('button', {
+          type: 'button', className: 'expandBtn', textContent: open ? '\u25be' : '\u25b8',
+          title: open ? 'Hide service grades' : 'Grade this route\'s services',
+        });
+        expandBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        expandBtn.addEventListener('click', function () {
+          if (state.expanded.has(key)) state.expanded.delete(key); else state.expanded.add(key);
+          wrapper.replaceWith(buildRow(route, scenario));
+        });
+        row.appendChild(expandBtn);
+      } else {
+        row.appendChild(el('span', { className: 'expandSpacer' }));
+      }
 
       const routeBtn = el('button', {
         type: 'button', className: 'routeBtn', textContent: routeLabel(route),
         title: 'Tick or clear every day for this route',
       });
-      routeBtn.addEventListener('click', function () { toggleRow(route, row); });
+      routeBtn.addEventListener('click', function () { toggleRow(route, wrapper); });
 
       const days = el('div', { className: 'days' });
       DAYS.forEach(function (day) {
@@ -196,7 +245,7 @@
         if (hasFlights || checked) {
           const box = el('input', { type: 'checkbox', checked: checked });
           box.setAttribute('aria-label', routeLabel(route) + ' ' + day);
-          box.addEventListener('change', function () { setCell(route, day, box.checked, row); });
+          box.addEventListener('change', function () { setCell(route, day, box.checked, wrapper); });
           cell.appendChild(box);
         } else {
           cell.appendChild(el('span', { className: 'noFlights', title: 'no scheduled flights', textContent: '\u2013' }));
@@ -205,7 +254,83 @@
       });
 
       row.append(routeBtn, days);
-      return row;
+      wrapper.appendChild(row);
+      if (inScenario && state.expanded.has(key)) wrapper.appendChild(buildGradePanel(route, scenario));
+      return wrapper;
+    }
+
+    function buildGradePanel(route, scenario) {
+      const key = routeKey(route.org, route.dest);
+      const days = DAYS.filter(function (d) { return scenario.cells[key].has(d); });
+      const panel = el('div', { className: 'gradePanel' });
+
+      const services = route.services.filter(function (svc) {
+        return days.some(function (d) { return svc.days[d]; });
+      });
+
+      if (!services.length) {
+        panel.appendChild(el('div', { className: 'panelNote', textContent: 'No scheduled flights on these days.' }));
+      } else {
+        const table = el('table', { className: 'gradeTable' });
+        const head = el('tr');
+        head.appendChild(el('th', { className: 'serviceHead', textContent: 'service' }));
+        days.forEach(function (d) { head.appendChild(el('th', { textContent: d })); });
+        table.appendChild(head);
+
+        services.forEach(function (svc) {
+          const tr = el('tr');
+          tr.appendChild(el('td', { className: 'serviceName', textContent: formatMinutes(svc.serviceMinutes) }));
+          days.forEach(function (day) {
+            const td = el('td');
+            const times = svc.days[day];
+            if (!times) {
+              td.appendChild(el('span', { className: 'noFlights', title: 'no flight in this service on ' + day, textContent: '\u2013' }));
+            } else {
+              const gKey = gradeKey(route.org, route.dest, day, svc.serviceMinutes);
+              const select = el('select');
+              select.setAttribute('aria-label', routeLabel(route) + ' ' + formatMinutes(svc.serviceMinutes) + ' ' + day + ' grade');
+              select.appendChild(el('option', { value: '', textContent: '\u2014' }));
+              GRADES.forEach(function (g) { select.appendChild(el('option', { value: g, textContent: g })); });
+              select.value = scenario.grades.get(gKey) || '';
+              select.addEventListener('change', function () {
+                if (select.value) scenario.grades.set(gKey, select.value); else scenario.grades.delete(gKey);
+                markDirty();
+              });
+              td.appendChild(select);
+              td.appendChild(el('span', { className: 'dayTimes', textContent: times.map(formatMinutes).join(', ') }));
+            }
+            tr.appendChild(td);
+          });
+          table.appendChild(tr);
+        });
+        panel.appendChild(table);
+      }
+
+      const orphans = [];
+      scenario.grades.forEach(function (grade, gKey) {
+        const parts = gKey.split('|');
+        if (parts[0] !== route.org || parts[1] !== route.dest || days.indexOf(parts[2]) === -1) return;
+        const minutes = Number(parts[3]);
+        const matched = route.services.some(function (svc) { return svc.serviceMinutes === minutes && svc.days[parts[2]]; });
+        if (!matched) orphans.push({ key: gKey, day: parts[2], minutes: minutes, grade: grade });
+      });
+      if (orphans.length) {
+        const box = el('div', { className: 'orphans' });
+        box.appendChild(el('div', { textContent: 'Grades that no longer match a scheduled service:' }));
+        orphans.forEach(function (o) {
+          const line = el('div', { textContent: o.day + ' ' + formatMinutes(o.minutes) + ': ' + o.grade });
+          const removeBtn = el('button', { type: 'button', textContent: 'Remove' });
+          removeBtn.addEventListener('click', function () {
+            scenario.grades.delete(o.key);
+            markDirty();
+            panel.replaceWith(buildGradePanel(route, scenario));
+          });
+          line.appendChild(removeBtn);
+          box.appendChild(line);
+        });
+        panel.appendChild(box);
+      }
+      return panel;
     }
 
     function renderGrid() {
@@ -232,6 +357,7 @@
       state.selectedKey = key;
       const scenario = selected();
       state.pinned = scenario ? Object.keys(scenario.cells) : [];
+      state.expanded = new Set();
       renderList();
       renderEditor();
     }
@@ -242,7 +368,7 @@
       const days = scenario.cells[key] || new Set();
       if (checked) days.add(day); else days.delete(day);
       if (days.size) scenario.cells[key] = days; else delete scenario.cells[key];
-      rowEl.classList.toggle('inScenario', !!scenario.cells[key]);
+      rowEl.replaceWith(buildRow(route, scenario));
       markDirty();
     }
 
@@ -263,7 +389,7 @@
       let n = 2;
       while (taken.has(name.toLowerCase())) { name = 'New scenario ' + n; n += 1; }
       state.newCounter += 1;
-      const scenario = { key: 'new-' + state.newCounter, id: null, name: name, active: false, cells: {} };
+      const scenario = { key: 'new-' + state.newCounter, id: null, name: name, active: false, cells: {}, grades: new Map() };
       state.scenarios.push(scenario);
       markDirty();
       select(scenario.key);
