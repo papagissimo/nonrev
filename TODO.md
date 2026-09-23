@@ -207,6 +207,46 @@ before - a NEW, specific symptom is the bar for reopening it.
   are (no schema change). Any leg of any scenario, including a connecting
   leg out of Scrunch!, can be compared day to day.
 
+## T1 grid report
+
+- **Weekly T1 numbers inside each bar run newest-first — flip to
+  oldest-first.** Bars run down the page in departure order (time moves
+  forward going down), but the week list inside each bar runs backward
+  (`weekly_history` in T1GridReport.py reverses it), and so does the
+  bar's tooltip. Both should read oldest at top, newest at bottom. When a
+  bar is too short to show every week, it currently keeps the newest and
+  puts "+N" at the bottom; after the flip it should still keep the newest,
+  with the "+N" for the dropped older weeks at the top.
+
+## Scenario grades — splitting into possibility and comfort (idea, not decided)
+
+- **Idea**: replace the single A–F letter with two axes.
+  - *Possibility* — can you actually make it: connection time (a 7-minute
+    connection is near-impossible, not strictly impossible) and how often
+    the leg is full. Belongs to the whole path, not one leg, and compounds
+    across legs (two 50/50 legs make roughly a 1-in-4 trip).
+  - *Comfort* — how bad it is if it works: departure hour (6 a.m. and
+    earlier), which airport you drive to (CVG a deliberate one letter
+    worse than CMH), layover length. Adds up across legs.
+- **Why**: one letter carrying both judgments makes the two sides of a
+  connection disagree (DTW→PDX 8:45 graded F while its only feeders got
+  D for being early). Possibility shared across a path fixes that.
+- **Known interaction**: the axes trade places. A full leg often means
+  waiting for the next flight, which turns a possibility problem into a
+  comfort problem; a long layover hurts comfort but adds fallback flights.
+- **Proposed first step (not approved)**: for one scenario (Scrunch!),
+  list every workable origin → hub → PDX path per day with layover and
+  both legs' openness history side by side, before choosing any scoring.
+  All inputs already exist (schedule + T1 grid). Comfort judgments stay
+  his; the program does the combinations.
+- **Candidate first measure for possibility: fallback depth** — how many
+  more same-day tries remain after being bumped, at the origin (a later
+  feeder) or at the hub (a later PDX flight). Comes from the schedule
+  alone, so it's solid even while openness data is thin. A hand-run of it
+  on Scrunch! already ranked the hubs (MSP > SLC > DTW); see findings.md.
+- **Open questions**: possibility as a number or a few coarse levels; how
+  to score thin openness data (currently 1–4 counted weeks per leg).
+
 ## Forward-looking schedule import (blocked on him, not stuck)
 
 - **Goal**: replace manual FlightSchedule/AircraftConfigs entry (clicking
