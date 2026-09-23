@@ -41,7 +41,8 @@
     .gradeTable th.serviceHead { text-align: left; padding-left: 0; }
     .gradeTable td { text-align: center; padding: 3px 8px; vertical-align: top; }
     .gradeTable td.serviceName { text-align: left; padding-left: 0; font-weight: bold; white-space: nowrap; }
-    .gradeTable select { font-size: 13px; }
+    .gradeInput { width: 26px; font-size: 13px; text-align: center; text-transform: uppercase; padding: 2px 0; }
+    .gradeInput.invalid { border: 1px solid #c5221f; background: #fdecea; }
     .dayTimes { display: block; font-size: 11px; color: #666; margin-top: 2px; white-space: nowrap; }
     .panelNote { font-size: 12px; color: #666; margin: 4px 0; }
     .orphans { margin-top: 8px; font-size: 12px; color: #8a4b00; }
@@ -96,7 +97,7 @@
 
   <script>
     const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const GRADES = ['A', 'B', 'C', 'F'];
+    const GRADES = ['A', 'B', 'C', 'D', 'F'];
     const state = { scenarios: [], routes: [], selectedKey: null, pinned: [], expanded: new Set(), deletedIds: [], dirty: false, newCounter: 0 };
 
     function el(tag, props) {
@@ -130,7 +131,7 @@
       scenario.cells.forEach(function (cell) { cells[routeKey(cell.org, cell.dest)] = new Set(cell.days); });
       const grades = new Map();
       scenario.grades.forEach(function (g) { grades.set(gradeKey(g.org, g.dest, g.day, g.serviceMinutes), g.grade); });
-      return { key: 'id-' + scenario.id, id: scenario.id, name: scenario.name, active: scenario.active, cells: cells, grades: grades };
+      return { key: 'id-' + scenario.id, id: scenario.id, name: scenario.name, active: scenario.active, cells: cells, grades: grades, badGrades: new Map() };
     }
 
     function toPayload(scenario) {
@@ -287,16 +288,26 @@
               td.appendChild(el('span', { className: 'noFlights', title: 'no flight in this service on ' + day, textContent: '\u2013' }));
             } else {
               const gKey = gradeKey(route.org, route.dest, day, svc.serviceMinutes);
-              const select = el('select');
-              select.setAttribute('aria-label', routeLabel(route) + ' ' + formatMinutes(svc.serviceMinutes) + ' ' + day + ' grade');
-              select.appendChild(el('option', { value: '', textContent: '\u2014' }));
-              GRADES.forEach(function (g) { select.appendChild(el('option', { value: g, textContent: g })); });
-              select.value = scenario.grades.get(gKey) || '';
-              select.addEventListener('change', function () {
-                if (select.value) scenario.grades.set(gKey, select.value); else scenario.grades.delete(gKey);
+              const input = el('input', { type: 'text', className: 'gradeInput', maxLength: 1, autocomplete: 'off' });
+              input.setAttribute('aria-label', routeLabel(route) + ' ' + formatMinutes(svc.serviceMinutes) + ' ' + day + ' grade');
+              input.title = 'A, B, C, D or F - blank for ungraded';
+              input.value = scenario.badGrades.has(gKey) ? scenario.badGrades.get(gKey) : (scenario.grades.get(gKey) || '');
+              input.classList.toggle('invalid', scenario.badGrades.has(gKey));
+              input.addEventListener('focus', function () { input.select(); });
+              input.addEventListener('input', function () {
+                const typed = input.value.trim().toUpperCase();
+                const valid = typed === '' || GRADES.indexOf(typed) !== -1;
+                input.classList.toggle('invalid', !valid);
+                if (!valid) {
+                  scenario.badGrades.set(gKey, input.value);
+                  scenario.grades.delete(gKey);
+                } else {
+                  scenario.badGrades.delete(gKey);
+                  if (typed) scenario.grades.set(gKey, typed); else scenario.grades.delete(gKey);
+                }
                 markDirty();
               });
-              td.appendChild(select);
+              td.appendChild(input);
               td.appendChild(el('span', { className: 'dayTimes', textContent: times.map(formatMinutes).join(', ') }));
             }
             tr.appendChild(td);
@@ -389,7 +400,7 @@
       let n = 2;
       while (taken.has(name.toLowerCase())) { name = 'New scenario ' + n; n += 1; }
       state.newCounter += 1;
-      const scenario = { key: 'new-' + state.newCounter, id: null, name: name, active: false, cells: {}, grades: new Map() };
+      const scenario = { key: 'new-' + state.newCounter, id: null, name: name, active: false, cells: {}, grades: new Map(), badGrades: new Map() };
       state.scenarios.push(scenario);
       markDirty();
       select(scenario.key);
@@ -419,7 +430,22 @@
       refreshSummary();
     }
 
+    function badGradeMessage() {
+      for (const scenario of state.scenarios) {
+        for (const [gKey, typed] of scenario.badGrades) {
+          const parts = gKey.split('|');
+          const days = scenario.cells[routeKey(parts[0], parts[1])];
+          if (!days || !days.has(parts[2])) continue;
+          return '"' + typed + '" isn\'t a grade (' + scenario.name + ', ' + parts[0] + ' \u2192 ' + parts[1] + ', ' +
+            parts[2] + ' ' + formatMinutes(Number(parts[3])) + '). Use A, B, C, D or F, or leave it blank.';
+        }
+      }
+      return null;
+    }
+
     function save() {
+      const problem = badGradeMessage();
+      if (problem) { setStatus(problem); return; }
       const saveBtn = document.getElementById('saveBtn');
       const current = selected();
       const preferredName = current ? current.name : null;

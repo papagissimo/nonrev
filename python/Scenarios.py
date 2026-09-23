@@ -16,7 +16,7 @@ import sqlite3
 from ServiceGrouping import get_route_services, find_service_for_row
 
 DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-GRADES = ['A', 'B', 'C', 'F']
+GRADES = ['A', 'B', 'C', 'D', 'F']
 
 
 def studied_cells(conn):

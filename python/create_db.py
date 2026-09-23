@@ -27,7 +27,7 @@ CREATE TABLE scenarioServiceGrades (
     dest            TEXT NOT NULL,
     dayOfWeek       TEXT NOT NULL,
     serviceMinutes  INTEGER NOT NULL,
-    grade           TEXT NOT NULL CHECK (grade IN ('A', 'B', 'C', 'F')),
+    grade           TEXT NOT NULL CHECK (grade IN ('A', 'B', 'C', 'D', 'F')),
     PRIMARY KEY (scenarioId, org, dest, dayOfWeek, serviceMinutes)
 );
 """
