@@ -336,14 +336,21 @@ def classify_week(t1, thresholds):
     return 'iffy'
 
 
-def service_appearance(weeks, thresholds):
+def counted_week_classes(weeks, thresholds):
     classes = [classify_week(week['t1'], thresholds) for week in weeks if week['countsForColor']]
-    classes = [c for c in classes if c]
+    return [c for c in classes if c]
+
+
+def strike_rate(classes):
+    return sum(STRIKE_WEIGHTS[c] for c in classes) / len(classes)
+
+
+def service_appearance(weeks, thresholds):
+    classes = counted_week_classes(weeks, thresholds)
     if not classes:
         no_history = {'fill': NO_HISTORY_FILL, 'textColor': DARK_TEXT}
         return {'fills': {ramp['id']: no_history for ramp in COLOR_RAMPS}, 'tally': None}
-    strike_rate = sum(STRIKE_WEIGHTS[c] for c in classes) / len(classes)
-    position = min(strike_rate / RED_END_STRIKE_RATE, 1.0)
+    position = min(strike_rate(classes) / RED_END_STRIKE_RATE, 1.0)
     fills = {}
     for ramp in COLOR_RAMPS:
         rgb = ramp_rgb(ramp, position)

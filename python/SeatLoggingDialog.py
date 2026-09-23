@@ -53,7 +53,8 @@ from ServiceGrouping import get_open_full_counts, format_open_full, load_open_fu
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
-from Scenarios import studied_cells, FlightGrades
+from Scenarios import studied_cells
+from Grading import FlightGrades
 from AircraftConfigs import load_aircraft_list
 from observation_filters import SEAT_MAP_COLUMNS, not_seat_map_only_where_clause
 

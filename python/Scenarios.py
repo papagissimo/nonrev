@@ -3,17 +3,14 @@ Scenarios: named sets of route-and-weekday pairs, each switched on or off.
 What is being studied is every pair covered by at least one switched-on
 scenario. studied_cells is the one lookup the rest of the app asks.
 
-A scenario can also grade its services, one grade per service per day.
-A service is ServiceGrouping.get_route_services' service, named by its
-representative time; a grade is stored under that name and only means
-something while the schedule still has a flight in that service on that
-day. The logging dialog shows the best grade any switched-on scenario
-gave a flight, as a label only - a grade never hides or reorders a flight.
+A scenario can also hold hand grades for its services, one per service per
+day, stored under the service's representative time. Nothing reads them
+any more: the logging dialog's label is computed by Grading.py.
 """
 
 import sqlite3
 
-from ServiceGrouping import get_route_services, find_service_for_row
+from ServiceGrouping import get_route_services
 
 DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 GRADES = ['A', 'B', 'C', 'D', 'F']
@@ -82,46 +79,6 @@ def scenario_grades(conn, scenario_id):
         {'org': org, 'dest': dest, 'day': day, 'serviceMinutes': minutes, 'grade': grade}
         for org, dest, day, minutes, grade in rows
     ]
-
-
-def best_grade_text(entries):
-    """entries: [(grade, scenarioName), ...] from switched-on scenarios.
-    One scenario: just its grade. More than one: the best grade, followed by
-    the scenario(s) that gave it."""
-    if not entries:
-        return ''
-    best = min((grade for grade, _ in entries), key=GRADES.index)
-    if len(entries) == 1:
-        return best
-    names = sorted({name for grade, name in entries if grade == best}, key=str.lower)
-    return best + ' \u00b7 ' + ', '.join(names)
-
-
-class FlightGrades:
-    """Grades from switched-on scenarios, looked up per scheduled flight.
-    Built once per logging batch; services are fetched once per route."""
-
-    def __init__(self, conn):
-        self.conn = conn
-        self.services_by_route = {}
-        self.entries = {}
-        for org, dest, day, minutes, grade, name in conn.execute(
-            """SELECT g.org, g.dest, g.dayOfWeek, g.serviceMinutes, g.grade, s.name
-               FROM scenarioServiceGrades g
-               JOIN scenarios s ON s.id = g.scenarioId
-               WHERE s.active = 1"""
-        ):
-            self.entries.setdefault((org, dest, day, minutes), []).append((grade, name))
-
-    def text_for(self, org, dest, day, dep_time):
-        if not self.entries:
-            return ''
-        if (org, dest) not in self.services_by_route:
-            self.services_by_route[(org, dest)] = get_route_services(self.conn, org, dest)
-        service = find_service_for_row(self.services_by_route[(org, dest)], day, dep_time)
-        if service is None:
-            return ''
-        return best_grade_text(self.entries.get((org, dest, day, service['repMinutes']), []))
 
 
 def route_options(conn):
