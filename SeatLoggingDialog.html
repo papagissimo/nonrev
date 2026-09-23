@@ -85,7 +85,7 @@
     #recentPanel { font-size: 18px; color: #888; margin-top: 10px; }
     .recentRow { line-height: 1.3; white-space: pre; font-family: 'Courier New', monospace; font-weight: bold; }
     .recentRow.cur { color: #333; }
-    .seatMapLink { display: block; font-size: 11px; color: #1a73e8; cursor: pointer; margin-top: 2px; }
+    .seatMapLink { display: block; text-align: right; line-height: 1.1; font-size: 11px; color: #1a73e8; cursor: pointer; margin-top: 2px; }
     .seatMapLink.hasData { font-weight: bold; }
     tr.seatMapRow td { padding: 0 5px 8px 24px; }
     .smPanel { border-left: 3px solid #1a73e8; padding: 4px 12px; font-size: 13px; color: #444; }
@@ -1063,7 +1063,7 @@
         var cellHtml = {
           dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>' +
             (row.grade ? '<div class="gradeLine">' + escapeHtml(row.grade) + '</div>' : '') +
-            (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat map</a>'),
+            (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>'),
           y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.y) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.y) + '</div>',
           cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatCurveEstimate(row.curveEstimate && row.curveEstimate.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',

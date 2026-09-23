@@ -17,19 +17,6 @@ CREATE TABLE scenarioCells (
     dayOfWeek   TEXT NOT NULL,
     PRIMARY KEY (scenarioId, org, dest, dayOfWeek)
 );
-
--- One grade per (scenario, route, day, service). serviceMinutes is the
--- service's representative time from ServiceGrouping.get_route_services.
--- No row means ungraded.
-CREATE TABLE scenarioServiceGrades (
-    scenarioId      INTEGER NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
-    org             TEXT NOT NULL,
-    dest            TEXT NOT NULL,
-    dayOfWeek       TEXT NOT NULL,
-    serviceMinutes  INTEGER NOT NULL,
-    grade           TEXT NOT NULL CHECK (grade IN ('A', 'B', 'C', 'D', 'F')),
-    PRIMARY KEY (scenarioId, org, dest, dayOfWeek, serviceMinutes)
-);
 """
 
 SCHEMA = """
