@@ -92,6 +92,14 @@ before - a NEW, specific symptom is the bar for reopening it.
 
 ## Decline curve / predictor
 
+- **Logging hint is the history range, not the curve (since 2026-09-24).**
+  Under each cabin input: lowest–highest of what prior flights of the
+  service read at this hour, with the count
+  (ServiceGrouping.history_ranges_for_row). The curve hint's code is kept,
+  unused, in case it comes back: SeatLoggingDialog.py's
+  curve_estimates_for_row / resolved_coefficients_for_row and the page's
+  formatCurveEstimate / formatCoefficientsHint.
+
 - **"No net decline in window" instances (~80 of 363 Friday-service
   instances behind unresolved slopes, 2026-09-18) - not a bug, not fixable
   by iteration count (confirmed: 0/80 resolve even at max_iterations=500),
@@ -244,6 +252,15 @@ before - a NEW, specific symptom is the bar for reopening it.
 - **Status note (2026-09-11)**: he's deliberately pausing manual aircraft
   data entry in the meantime, expecting this script to eventually take
   over that part.
+
+## Repo privacy
+
+- **Make the repo less public — decided, not started.** The routes and
+  cities being checked reveal personal details on their own. Open
+  question: Claude reads the repo and live data by cloning the public
+  GitHub URL, so going private needs a replacement way for Claude to get
+  read access before the switch, or Claude loses its only view of
+  nonrev.db.
 
 ## Someday / not started, low priority
 

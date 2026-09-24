@@ -24,7 +24,7 @@ from scipy.interpolate import PchipInterpolator
 
 from ServiceGrouping import load_open_full_settings
 from T1GridReport import (
-    MIN_COUNTED_WEEKS_FOR_FULL_COLOR, airport_zone, counted_week_classes, format_minutes,
+    airport_zone, counted_week_classes, format_minutes,
     get_t1_grid, next_date_on, route_duration_minutes, scheduled_dep_times,
     scheduled_service_finder, strike_rate, weekly_history,
 )
@@ -209,7 +209,7 @@ class RouteDay:
                 classes = counted_week_classes(weekly_history(grid, format_minutes(service_minutes)), thresholds)
                 if classes:
                     flight.likelihood = 1.0 - strike_rate(classes)
-                    flight.thin = len(classes) < MIN_COUNTED_WEEKS_FOR_FULL_COLOR
+                    flight.thin = False
             self.flights.append(flight)
 
 

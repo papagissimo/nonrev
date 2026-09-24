@@ -49,7 +49,7 @@ from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from clustering import cluster_services
 from deptime_convergence import converge_flight_date
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
-from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings
+from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings, history_ranges_for_row
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
@@ -592,11 +592,9 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
             'previousReadings': prev_readings,
-            'curveEstimate': curve_estimates_for_row(
-                conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
-                night_start_hour, night_end_hour, today_c1,
+            'historyRange': history_ranges_for_row(
+                conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
             ),
-            'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
             'openFull': format_open_full(
@@ -619,11 +617,9 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'isNext': False,
                 'departed': True,
                 'previousReadings': prev_readings,
-                'curveEstimate': curve_estimates_for_row(
-                    conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['depEtDatetime'],
-                    night_start_hour, night_end_hour, today_c1,
+                'historyRange': history_ranges_for_row(
+                    conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
                 ),
-                'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
                 'openFull': format_open_full(

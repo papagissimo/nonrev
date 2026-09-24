@@ -25,10 +25,17 @@ this once already).
 """
 
 from collections import defaultdict
+from datetime import date
 
 from GraphObservations import get_flight_points
+from PoolingSettingsDialog import excluded_date_where_clause
+from observation_filters import not_seat_map_only_where_clause
 from clustering import cluster_services, service_representative
 from settings import load_settings, save_settings
+
+WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+HISTORY_CABIN_COLUMNS = {'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': 'd1'}
+HISTORY_EDGE_TOLERANCE_HOURS = 1.0
 
 OPEN_FULL_SETTINGS_KEY = 'openFullSettings'
 DEFAULT_OPEN_FULL_SETTINGS = {
@@ -208,3 +215,57 @@ def format_open_full(counts):
         'openDisplay': f"{counts['open']}/{m}" if m else "—",
         'fullDisplay': f"{counts['full']}/{m}" if m else "—",
     }
+
+
+def value_at_hours(points, hours):
+    """points: [(hoursBeforeDep, value)] sorted by hours. Linear between the
+    two readings bracketing hours; outside the flight's readings, the
+    nearest one only if it is within HISTORY_EDGE_TOLERANCE_HOURS."""
+    for (h_near, v_near), (h_far, v_far) in zip(points, points[1:]):
+        if h_near <= hours <= h_far:
+            if h_far == h_near:
+                return v_near
+            return v_near + (v_far - v_near) * (hours - h_near) / (h_far - h_near)
+    nearest_hours, nearest_value = min(points, key=lambda p: abs(p[0] - hours))
+    if abs(nearest_hours - hours) <= HISTORY_EDGE_TOLERANCE_HOURS:
+        return nearest_value
+    return None
+
+
+def history_ranges_for_row(conn, org, dest, day_of_week, dep_time, hours_until_dep, flight_date):
+    """What prior flights of this service read at hours_until_dep, per
+    cabin: {'low', 'high', 'count'}, or None where no prior flight has
+    readings around that hour. Same service matching, grouped days, date
+    range and excluded ranges as get_open_full_counts."""
+    settings = load_open_full_settings(conn)
+    grouped_days = get_grouped_days(conn, org, dest, day_of_week)
+    rows = conn.execute(
+        f"""SELECT flightDate, depTime, hoursBeforeDep, y, cPlus, firstOrPS, d1
+            FROM observations
+            WHERE org = ? AND dest = ? AND flightDate >= ? AND flightDate < ?
+              AND depTime IS NOT NULL AND hoursBeforeDep IS NOT NULL
+              AND {excluded_date_where_clause()} AND {not_seat_map_only_where_clause()}""",
+        (org, dest, settings['dateFrom'], flight_date),
+    ).fetchall()
+    rows = [r for r in rows if WEEKDAY_NAMES[date.fromisoformat(r[0]).weekday()] in grouped_days]
+    service_times = logged_service_containing(dep_time, (r[1] for r in rows))
+
+    readings_by_date = defaultdict(list)
+    for flight_date_seen, logged_dep, hours, y, c_plus, first_or_ps, d1 in rows:
+        if logged_dep in service_times:
+            readings_by_date[flight_date_seen].append(
+                {'hours': hours, 'y': y, 'cPlus': c_plus, 'firstOrPS': first_or_ps, 'd1': d1})
+
+    ranges = {}
+    for cabin_key, column in HISTORY_CABIN_COLUMNS.items():
+        values = []
+        for readings in readings_by_date.values():
+            points = sorted((r['hours'], r[column]) for r in readings if r[column] is not None)
+            value = value_at_hours(points, hours_until_dep) if points else None
+            if value is not None:
+                values.append(value)
+        ranges[cabin_key] = (
+            {'low': round(min(values)), 'high': round(max(values)), 'count': len(values)}
+            if values else None
+        )
+    return ranges
