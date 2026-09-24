@@ -54,7 +54,7 @@ from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_t
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
 from Scenarios import studied_cells
-from Grading import FlightGrades
+from Grading import FlightGrades, load_grading_settings, settings_form
 from AircraftConfigs import load_aircraft_list
 from observation_filters import SEAT_MAP_COLUMNS, not_seat_map_only_where_clause
 
@@ -563,6 +563,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'waitMinutes': None, 'waitMessage': wait_message, 'rows': [],
             'aircraftList': load_aircraft_list(conn), 'settings': settings,
             'openFullSettings': load_open_full_settings(conn),
+            'gradingSettings': settings_form(load_grading_settings(conn)),
             'recentObservations': recent_observations(conn),
             **entry_field_config(),
         }
@@ -655,6 +656,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
         'aircraftList': load_aircraft_list(conn), 'settings': settings,
         'openFullSettings': load_open_full_settings(conn),
+        'gradingSettings': settings_form(load_grading_settings(conn)),
         'recentObservations': recent_observations(conn),
         **entry_field_config(),
     }

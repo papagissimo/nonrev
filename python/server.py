@@ -26,6 +26,7 @@ import PoolingSettingsDialog
 import DeclineCurveDialog
 import T1GridReport
 import Scenarios
+import Grading
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -206,6 +207,21 @@ def api_save_open_full_settings():
     try:
         ServiceGrouping.save_open_full_settings(conn, new_settings)
         return jsonify({'saved': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/saveGradingSettings', methods=['POST'])
+def api_save_grading_settings():
+    form = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        Grading.save_grading_form(conn, form)
+        return jsonify({'saved': True})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

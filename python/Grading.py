@@ -28,28 +28,125 @@ from T1GridReport import (
     get_t1_grid, next_date_on, route_duration_minutes, scheduled_dep_times,
     scheduled_service_finder, strike_rate, weekly_history,
 )
+from settings import load_settings, save_settings
 from timezones import UnconfirmedAirportError, et_equivalent_datetime
 
-# His stated preferences (2026-09-23). Minutes; values are 0-1.
-LAYOVER_MAKEABLE = [(0, 0.0), (20, 0.10), (40, 0.70), (60, 1.0)]
-DEPARTURE_COMFORT = [(6 * 60, 0.0), (6 * 60 + 40, 0.10), (7 * 60, 0.30), (9 * 60 + 30, 1.0)]
-# Arrival is local time at the destination, counted from midnight of the departure day.
-ARRIVAL_COMFORT = [(19 * 60, 1.0), (23 * 60, 0.30), (24 * 60 + 30, 0.10), (25 * 60 + 30, 0.0)]
-# CVG is about 30 minutes further to drive than CMH, and they'd rather not drive it at all.
-EXTRA_DRIVE_MINUTES = {'cvg': 30}
-DISLIKED_DRIVE_FACTOR = {'cvg': 0.85}
+GRADING_SETTINGS_KEY = 'gradingSettings'
+# Starting values are his stated preferences (2026-09-23), tuned from the
+# logging dialog's Settings panel. Curves are [minutes, percent] points;
+# arrival minutes count from midnight of the departure day, so past 24:00
+# means after midnight.
+DEFAULT_GRADING_SETTINGS = {
+    'layoverMakeable': [[0, 0], [20, 10], [40, 70], [60, 100]],
+    'departureComfort': [[6 * 60, 0], [6 * 60 + 40, 10], [7 * 60, 30], [9 * 60 + 30, 100]],
+    'arrivalComfort': [[19 * 60, 100], [23 * 60, 30], [24 * 60 + 30, 10], [25 * 60 + 30, 0]],
+    # CVG is about 30 minutes further to drive than CMH, and they'd rather not drive it at all.
+    'homeAirports': {
+        'cmh': {'extraDriveMinutes': 0, 'comfortPercent': 100},
+        'cvg': {'extraDriveMinutes': 30, 'comfortPercent': 85},
+    },
+    'letterFloors': {'A': 85, 'B': 65, 'C': 45, 'D': 25},
+}
+CURVE_LABELS = {'layoverMakeable': 'Layover makeable', 'departureComfort': 'Departure comfort',
+                'arrivalComfort': 'Arrival comfort'}
+CURVE_NAMES = list(CURVE_LABELS)
+LETTERS = ['A', 'B', 'C', 'D']
 
-COMFORT_LETTERS = [(0.85, 'A'), (0.65, 'B'), (0.45, 'C'), (0.25, 'D'), (0.0, 'F')]
 IMPOSSIBLE_MARK = '\u2717'
 THIN_MARK = '?'
 
 
+def load_grading_settings(conn):
+    return load_settings(conn, key=GRADING_SETTINGS_KEY, defaults=DEFAULT_GRADING_SETTINGS)
+
+
+def format_point_minutes(minutes, as_clock):
+    return f'{minutes // 60}:{minutes % 60:02d}' if as_clock else f'{minutes}m'
+
+
+def curve_text(points, as_clock):
+    return ', '.join(f'{format_point_minutes(m, as_clock)} {v:g}%' for m, v in points)
+
+
+def settings_form(settings):
+    """The settings as the panel shows them: each curve as editable text."""
+    form = dict(settings)
+    for name in CURVE_NAMES:
+        form[name] = curve_text(settings[name], as_clock=name != 'layoverMakeable')
+    return form
+
+
+def parse_point_minutes(token, curve_label):
+    try:
+        if ':' in token:
+            hours, minutes = token.split(':')
+            if len(minutes) != 2 or not 0 <= int(minutes) < 60:
+                raise ValueError
+            return int(hours) * 60 + int(minutes)
+        return int(token.rstrip('m'))
+    except ValueError:
+        raise ValueError(f'{curve_label}: "{token}" is not a time like 7:30 or minutes like 40m')
+
+
+def parse_percent(token, curve_label):
+    try:
+        value = float(token.rstrip('%'))
+    except ValueError:
+        raise ValueError(f'{curve_label}: "{token}" is not a percent')
+    if not 0 <= value <= 100:
+        raise ValueError(f'{curve_label}: {token} is outside 0-100%')
+    return value
+
+
+def parse_curve_text(text, curve_label):
+    points = []
+    for pair in str(text).split(','):
+        tokens = pair.split()
+        if len(tokens) != 2:
+            raise ValueError(f'{curve_label}: "{pair.strip()}" should be a time and a percent, e.g. 7:00 30%')
+        points.append([parse_point_minutes(tokens[0], curve_label), parse_percent(tokens[1], curve_label)])
+    if len(points) < 2:
+        raise ValueError(f'{curve_label}: needs at least two points')
+    if any(later[0] <= earlier[0] for earlier, later in zip(points, points[1:])):
+        raise ValueError(f'{curve_label}: times must go strictly later, left to right')
+    return points
+
+
+def number_in_range(value, label, low, high):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+        raise ValueError(f'{label} must be a number from {low} to {high}')
+    return value
+
+
+def parse_grading_form(form):
+    """The panel's form back into stored settings, or ValueError naming what's wrong."""
+    settings = {name: parse_curve_text(form.get(name, ''), CURVE_LABELS[name]) for name in CURVE_NAMES}
+    settings['homeAirports'] = {
+        airport.lower(): {
+            'extraDriveMinutes': number_in_range(values.get('extraDriveMinutes'), f'{airport.upper()} extra drive', -180, 180),
+            'comfortPercent': number_in_range(values.get('comfortPercent'), f'{airport.upper()} comfort', 0, 100),
+        }
+        for airport, values in (form.get('homeAirports') or {}).items()
+    }
+    floors = {letter: number_in_range((form.get('letterFloors') or {}).get(letter), f'{letter} floor', 0, 100)
+              for letter in LETTERS}
+    if any(floors[later] >= floors[earlier] for earlier, later in zip(LETTERS, LETTERS[1:])):
+        raise ValueError('Letter floors must go down from A to D')
+    settings['letterFloors'] = floors
+    return settings
+
+
+def save_grading_form(conn, form):
+    save_settings(conn, parse_grading_form(form), key=GRADING_SETTINGS_KEY)
+
+
 def smooth_curve(points):
-    """Smooth, monotone-between-points curve through the given points, flat
-    beyond the first and last. The flat shoulders added here give PCHIP a
-    zero slope at both ends, so clamping outside the range adds no kink."""
+    """Smooth curve through the given [minutes, percent] points, never
+    overshooting between them, flat beyond the first and last. The flat
+    shoulders added here give PCHIP a zero slope at both ends, so clamping
+    outside the range adds no kink. Returns a 0-1 fraction."""
     minutes = [m for m, _ in points]
-    values = [v for _, v in points]
+    values = [v / 100 for _, v in points]
     minutes = [minutes[0] - 60] + minutes + [minutes[-1] + 60]
     values = [values[0]] + values + [values[-1]]
     curve = PchipInterpolator(minutes, values)
@@ -57,18 +154,25 @@ def smooth_curve(points):
     return lambda m: float(curve(min(max(m, low), high)))
 
 
-layover_makeable = smooth_curve(LAYOVER_MAKEABLE)
-departure_comfort_at_home = smooth_curve(DEPARTURE_COMFORT)
-arrival_comfort = smooth_curve(ARRIVAL_COMFORT)
+class GradingModel:
+    def __init__(self, settings):
+        self.layover_makeable = smooth_curve(settings['layoverMakeable'])
+        self.departure_comfort_at_home = smooth_curve(settings['departureComfort'])
+        self.arrival_comfort = smooth_curve(settings['arrivalComfort'])
+        self.home_airports = settings['homeAirports']
+        floors = settings['letterFloors']
+        self.letter_floors = [(floors[letter] / 100, letter) for letter in LETTERS] + [(0.0, 'F')]
 
+    def departure_comfort(self, org, local_minutes):
+        home = self.home_airports.get(org, {'extraDriveMinutes': 0, 'comfortPercent': 100})
+        shifted = local_minutes - home['extraDriveMinutes']
+        return self.departure_comfort_at_home(shifted) * home['comfortPercent'] / 100
 
-def departure_comfort(org, local_minutes):
-    shifted = local_minutes - EXTRA_DRIVE_MINUTES.get(org, 0)
-    return departure_comfort_at_home(shifted) * DISLIKED_DRIVE_FACTOR.get(org, 1.0)
+    def trip_comfort(self, first, last):
+        return self.departure_comfort(first.org, first.dep_time) * self.arrival_comfort(last.arrival_minutes)
 
-
-def comfort_letter(comfort):
-    return next(letter for floor, letter in COMFORT_LETTERS if comfort >= floor)
+    def letter(self, comfort):
+        return next(letter for floor, letter in self.letter_floors if comfort >= floor)
 
 
 class Flight:
@@ -115,28 +219,19 @@ class Result:
         self.thin, self.impossible, self.problem = thin, impossible, problem
 
 
-def trip_comfort(first, last):
-    return departure_comfort(first.org, first.dep_time) * arrival_comfort(last.arrival_minutes)
+def layover_minutes(first, second):
+    return (second.departs - first.arrives).total_seconds() / 60
 
 
-def connection_options(first, onward_flights):
-    options = []
-    for second in onward_flights:
-        layover = (second.departs - first.arrives).total_seconds() / 60
-        if layover <= 0:
-            continue
-        options.append((second, layover_makeable(layover)))
-    return options
-
-
-def first_leg_result(first, onward_flights):
-    options = connection_options(first, onward_flights)
+def first_leg_result(model, first, onward_flights):
+    options = [(second, model.layover_makeable(layover_minutes(first, second)))
+               for second in onward_flights if layover_minutes(first, second) > 0]
     if not options:
         return Result(impossible=True)
     known = [(second, makeable) for second, makeable in options if second.likelihood is not None]
     thin = first.thin or len(known) < len(options) or any(second.thin for second, _ in known)
-    best_second = max(options, key=lambda o: trip_comfort(first, o[0]) * o[1] * (o[0].likelihood or 0))[0]
-    comfort = trip_comfort(first, best_second)
+    best_second = max(options, key=lambda o: model.trip_comfort(first, o[0]) * o[1] * (o[0].likelihood or 0))[0]
+    comfort = model.trip_comfort(first, best_second)
     if first.likelihood is None:
         return Result(comfort=comfort, thin=True)
     all_onward_fail = 1.0
@@ -145,15 +240,12 @@ def first_leg_result(first, onward_flights):
     return Result(comfort=comfort, likelihood=first.likelihood * (1.0 - all_onward_fail), thin=thin)
 
 
-def second_leg_result(second, inbound_flights):
-    options = []
-    for first in inbound_flights:
-        layover = (second.departs - first.arrives).total_seconds() / 60
-        if layover > 0:
-            options.append((first, layover_makeable(layover)))
+def second_leg_result(model, second, inbound_flights):
+    options = [(first, model.layover_makeable(layover_minutes(first, second)))
+               for first in inbound_flights if layover_minutes(first, second) > 0]
     if not options:
         return Result(impossible=True)
-    comfort_of = lambda first: trip_comfort(first, second)
+    comfort_of = lambda first: model.trip_comfort(first, second)
     chance_of = lambda first, makeable: (first.likelihood or 0) * makeable * (second.likelihood or 0)
     best_first, makeable = max(options, key=lambda o: comfort_of(o[0]) * chance_of(*o))
     comfort = comfort_of(best_first)
@@ -163,15 +255,15 @@ def second_leg_result(second, inbound_flights):
                   thin=second.thin or best_first.thin)
 
 
-def nonstop_result(flight):
-    comfort = trip_comfort(flight, flight)
+def nonstop_result(model, flight):
+    comfort = model.trip_comfort(flight, flight)
     return Result(comfort=comfort, likelihood=flight.likelihood, thin=flight.thin or flight.likelihood is None)
 
 
-def result_text(result):
+def result_text(model, result):
     if result.problem:
         return result.problem
-    letter = comfort_letter(result.comfort) if result.comfort is not None else '\u2014'
+    letter = model.letter(result.comfort) if result.comfort is not None else '\u2014'
     if result.impossible:
         return f'{letter} {IMPOSSIBLE_MARK}'
     if result.likelihood is None:
@@ -204,6 +296,7 @@ class FlightGrades:
     def __init__(self, conn):
         self.conn = conn
         self.thresholds = load_open_full_settings(conn)
+        self.model = GradingModel(load_grading_settings(conn))
         self.route_days = {}
         self.cells_by_day = {}
         for name, org, dest, day in conn.execute(
@@ -243,11 +336,11 @@ class FlightGrades:
                     if linked_problem:
                         result = Result(problem=linked_problem)
                     elif onward:
-                        result = first_leg_result(flight, linked_flights)
+                        result = first_leg_result(self.model, flight, linked_flights)
                     elif inbound:
-                        result = second_leg_result(flight, linked_flights)
+                        result = second_leg_result(self.model, flight, linked_flights)
                     else:
-                        result = nonstop_result(flight)
+                        result = nonstop_result(self.model, flight)
                     results[(org, dest, flight.dep_time)] = result
             except UnconfirmedAirportError as error:
                 for dep_time in scheduled_dep_times(self.conn, org, dest, day):
@@ -267,7 +360,7 @@ class FlightGrades:
         entries = self.results_for_day(day).get((org, dest, dep_time), [])
         if not entries:
             return ''
-        text = result_text(best_result([result for _, result in entries]))
+        text = result_text(self.model, best_result([result for _, result in entries]))
         if len(entries) == 1:
             return text
         return text + ' \u00b7 ' + ', '.join(sorted({name for name, _ in entries}, key=str.lower))
