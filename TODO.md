@@ -174,6 +174,10 @@ before - a NEW, specific symptom is the bar for reopening it.
   display-only, never persisted or used in any live prediction - so
   either drop it from the print or floor/cap its display, cosmetic only.
 
+- **Tell truly full from dip-and-recover — wanted, not designed.** A
+  flight that declines and stays low versus one that dips early and
+  recovers by departure.
+
 ## Graphing — deprecated, not being worked on
 
 - GraphObservations (python/GraphObservations.py, GraphObservations.html,

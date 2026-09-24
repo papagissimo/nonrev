@@ -118,8 +118,3 @@ TODO.md; dated analysis results belong in findings.md.
 - Documents read as current settled truth. No narrative of wrong turns or
   how a decision was reached.
 
-## Decline curve decisions not recorded elsewhere
-
-- Slope is seats/hour everywhere, never minutes/seat.
-- C1 accuracy matters little; slope accuracy matters most.
-- The curve is not currently driving the logging hint (see TODO.md).

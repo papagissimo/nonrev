@@ -141,6 +141,26 @@ that would've shown the trajectory wasn't a clean decline — losing that
 "slope" was correct, not a regression). Net-correctness win, not a
 net-coverage win, on this snapshot.
 
+## Standing decisions
+
+- The fit lives in its own file (DeclineCurveFit.py): pooling across many
+  instances is a different kind of operation from the per-instance code
+  elsewhere.
+- Coefficients resolve through four tiers: global default, optional route
+  override, optional service override (beats route), and the fit's own
+  per-service coefficients, which beat the overrides once the service's
+  instance count meets a configurable threshold (default 1; set it high to
+  switch derived values off). Derived coefficients keep being computed
+  either way.
+- Day/night decline difference is a fixed night slope ratio through the
+  same four tiers - a real step, deliberately not smoothed into a curve.
+- Slope is seats/hour everywhere, never minutes/seat.
+- Slope accuracy matters most. C1 matters little: it only counts before a
+  flight has any real reading.
+- Floor estimation from cheap-glance readings (FloorEstimates.py, its
+  Beta refinement, the per-floor coefficients table) is retired for good.
+  Glance columns stay as history; nothing live reads them.
+
 ## Open questions / backlog
 
 Tracked in `TODO.md`'s "Decline curve / predictor" section, not duplicated
