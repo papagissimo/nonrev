@@ -28,6 +28,7 @@
       font-style: italic; margin-top: 4px; white-space: nowrap;
     }
     .coefHint { font-size: 11px; color: #666; line-height: 1.2; white-space: nowrap; }
+    .coefBlock { margin-top: 6px; }
     .stepCell {
       font-style: italic; color: #555; font-family: 'Courier New', monospace;
     }
@@ -397,9 +398,9 @@
       var c1 = formatHoursValue(hint.c1);
       var gap = formatHoursValue(hint.gap);
       var ratio = hint.nightRatio == null ? '\u2014' : hint.nightRatio.toFixed(2);
-      return '<div class="coefHint">C1=' + c1 + '</div>' +
+      return '<div class="coefBlock"><div class="coefHint">C1=' + c1 + '</div>' +
         '<div class="coefHint">gap=' + gap + '</div>' +
-        '<div class="coefHint">r=' + ratio + '</div>';
+        '<div class="coefHint">r=' + ratio + '</div></div>';
     }
 
     function formatT1Value(est) {
@@ -1130,10 +1131,10 @@
           dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>' +
             (row.grade ? '<div class="gradeLine">' + escapeHtml(row.grade) + '</div>' : '') +
             (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>'),
-          y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.y) + '</div></div>',
-          cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.cplus) + '</div></div>',
-          onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.onePS) + '</div></div>',
-          d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.d1) + '</div></div>',
+          y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.y) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.y) + '</div>',
+          cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
+          onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',
+          d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.d1) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.d1) + '</div>',
           c1AfterY: '<div class="prev">' + formatC1AfterColumn(row.previousReadings, 'y') + '</div>',
           c1AfterCplus: '<div class="prev">' + formatC1AfterColumn(row.previousReadings, 'cplus') + '</div>',
           c1AfterOnePS: '<div class="prev">' + formatC1AfterColumn(row.previousReadings, 'onePS') + '</div>',

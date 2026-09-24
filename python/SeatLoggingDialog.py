@@ -595,6 +595,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'historyRange': history_ranges_for_row(
                 conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
             ),
+            'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
             'openFull': format_open_full(
@@ -620,6 +621,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'historyRange': history_ranges_for_row(
                     conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
                 ),
+                'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
                 'openFull': format_open_full(

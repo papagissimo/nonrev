@@ -95,10 +95,10 @@ before - a NEW, specific symptom is the bar for reopening it.
 - **Logging hint is the history range, not the curve (since 2026-09-24).**
   Under each cabin input: lowest–highest of what prior flights of the
   service read at this hour, with the count
-  (ServiceGrouping.history_ranges_for_row). The curve hint's code is kept,
-  unused, in case it comes back: SeatLoggingDialog.py's
-  curve_estimates_for_row / resolved_coefficients_for_row and the page's
-  formatCurveEstimate / formatCoefficientsHint.
+  (ServiceGrouping.history_ranges_for_row). The decline fit's coefficients
+  (C1, gap, r) still show beneath it. The curve's own predicted-value
+  code is kept, unused, in case it comes back: SeatLoggingDialog.py's
+  curve_estimates_for_row and the page's formatCurveEstimate.
 
 - **"No net decline in window" instances (~80 of 363 Friday-service
   instances behind unresolved slopes, 2026-09-18) - not a bug, not fixable
