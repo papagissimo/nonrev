@@ -257,6 +257,15 @@ before - a NEW, specific symptom is the bar for reopening it.
   data entry in the meantime, expecting this script to eventually take
   over that part.
 
+## Grading
+
+- **Onward flights treated as failing independently — open question.**
+  Grading.first_leg_result multiplies each onward flight's chance of
+  failing, which assumes one PDX flight being full says nothing about the
+  next. On 2026-09-24 three MSP→PDX flights were full together (see
+  findings.md), so fallback depth can be overstated on exactly the days
+  it matters. Not decided whether to handle it, or how.
+
 ## Repo privacy
 
 - **Make the repo less public — decided, not started.** The routes and

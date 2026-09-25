@@ -6,6 +6,38 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-09-24 — Scrunch!: MSP went full on a Thursday
+
+**What happened**: every MSP→PDX flight but the last one, and every
+CMH→MSP feeder, read Y=0 by departure - flights whose prior weeks were
+open at the same hours out. This is the first counted week MSP→PDX was
+full, and it undercuts the 2026-09-23 hub finding below.
+
+| Service | Y at last reading | Prior weeks more open than that, same hours out |
+|---|---|---|
+| CMH→MSP 10:50 | 0 at 2.1h | 10 of 10 |
+| CMH→MSP 13:44 | 0 at 5.0h | 5 of 5 |
+| CMH→MSP 19:17 | 0 at 1.5h | 6 of 6 at 10.5h |
+| MSP→PDX 11:00 | 0 at 2.9h | 5 of 5 |
+| MSP→PDX 15:55 | 0 at 1.3h | 7 of 8 at 7.8h |
+| MSP→PDX 18:36 | 0 at 1.3h | 8 of 8 at 10.5h (all prior weeks 7 or more) |
+| MSP→PDX 21:35 | 9 at 1.9h | - (stayed wide open all day) |
+
+- **The MSP→PDX flights failed together**: 11:00, 15:55 and 18:36 were
+  all 0 at once. Fallback depth at MSP was worth little that day.
+- **Warning signs**: CMH→MSP 10:50 read 1 at 8.8h (01:59), against prior
+  weeks of 6-9 - the only clear early signal. Earlier CMH→MSP readings
+  (7 at 28h, 3 at 37h for 19:17) were soft but had no history that far
+  out to compare against. MSP→PDX read 9 everywhere at 27-36h and wasn't
+  read again until 8-10h out, by which point it was 0.
+- **Normal the same day**: SLC→PDX (all 9), CVG→MSP 10:49, and the DTW
+  routes within their usual spread. CVG→MSP 19:47 was flagged as
+  dropping fast late in the day.
+- **Cause unknown**: no news found explaining an MSP disruption.
+- **Friday 9/25**, as of Thursday midday: all MSP→PDX and CMH→MSP read 9
+  at 20-35h out. Thursday's feeders were already slipping at that range;
+  Friday's weren't.
+
 ## 2026-09-23 — Scrunch!: which hub to go through to PDX
 
 **Question**: for Scrunch! (Thu/Fri, CMH or CVG → DTW/MSP/SLC → PDX),
