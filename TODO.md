@@ -9,29 +9,26 @@ working around it.
 
 ## Core dialogs / SQLite rewrite
 
-- **hoursBeforeDep computed-live for TODAY only (not stored, or blindly
-  always-live either) — refined 2026-09-16, still fully open.** The
-  recovered handoff doc's original design said "stop storing
-  hoursBeforeDep, always compute live from checkTimestamp + current
-  depTime" - discussed further and that's WRONG as stated: a service's
-  schedule genuinely wobbles week to week (a ~9:30am departure might be a
-  few minutes different next week), and he's explicit he has no interest
-  in reconstructing Delta's schedule history - so recomputing an OLD
-  reading's hoursBeforeDep against TODAY's schedule would silently
-  falsify history, not heal it. The actual rule, confirmed with him:
-  - flightDate == today: compute live, from checkTimestamp + CURRENT
-    depTime (same-day schedule corrections are real and should be
-    reflected in same-day Prev-column lookups). Match today's own
-    already-logged readings to the current schedule row by clustering
-    (clustering.cluster_services), not exact depTime equality - exact
-    match silently drops readings the moment a same-day correction lands
-    (his real routes run up to 7 flights/day on one route/day, ~90+ min
-    apart, so the 60-min cluster gap is safe).
-  - flightDate in the past: NEVER recompute against TODAY's live
-    flightSchedule - that's a different route's/week's truth, not a
-    correction of that date's. Not started (the today-only live path
-    itself - see below for a separate, already-done historical
-    cleanup this does NOT supersede).
+- **Retire observations.hoursBeforeDep — not started.** checkTimestamp is
+  a reading's time of record; hoursBeforeDep is a stored copy derived from
+  it. Every row already carries what it takes to derive it (checkTimestamp,
+  flightDate, org, and its own depTime, kept converged by
+  deptime_convergence.py), so dropping the column loses nothing.
+  - Derive from the row's OWN depTime, never today's flightSchedule. A
+    service's time wobbles week to week (domainKnowledge.md, "Schedule
+    volatility"), so measuring a past reading against today's schedule
+    falsifies it.
+  - Today's readings: CURRENT depTime, matched to the schedule row by
+    clustering (clustering.cluster_services), not exact equality, so a
+    same-day schedule correction doesn't drop them. Already built in
+    SeatLoggingDialog.py's previous-readings lookup; the past-date branch
+    right beside it still reads the stored column.
+  - Still reading the stored column: DeclineCurveFit.py, SeatLoggingDialog.py,
+    deptime_convergence.py, ServiceGrouping.py, T1Estimator.py,
+    T1GridReport.py, ObservationsBrowser.py/.html, FlightScheduleDialog.py,
+    backfill_deptime_convergence.py, GraphObservations.py (deprecated -
+    decide whether to update it or let it break), create_db.py.
+  - insiderReadings already stores checkTimestamp only.
 - **Historical hoursBeforeDep/depTime backfill — DONE 2026-09-18.**
   Different from the above: no live schedule involved at all. Empirically
   (674 flight-day groups checked), a flight's own depTime converges
@@ -256,15 +253,6 @@ before - a NEW, specific symptom is the bar for reopening it.
 - **Status note (2026-09-11)**: he's deliberately pausing manual aircraft
   data entry in the meantime, expecting this script to eventually take
   over that part.
-
-## Grading
-
-- **Onward flights treated as failing independently — open question.**
-  Grading.first_leg_result multiplies each onward flight's chance of
-  failing, which assumes one PDX flight being full says nothing about the
-  next. On 2026-09-24 three MSP→PDX flights were full together (see
-  findings.md), so fallback depth can be overstated on exactly the days
-  it matters. Not decided whether to handle it, or how.
 
 ## Repo privacy
 

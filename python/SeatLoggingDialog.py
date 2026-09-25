@@ -57,6 +57,7 @@ from Scenarios import studied_cells
 from Grading import FlightGrades, load_grading_settings, settings_form
 from AircraftConfigs import load_aircraft_list
 from observation_filters import SEAT_MAP_COLUMNS, not_seat_map_only_where_clause
+import InsiderReadings
 
 DEP_CUTOFF_MINUTES = 45
 ET_ZONE = ZoneInfo('America/New_York')
@@ -89,6 +90,8 @@ def entry_field_config():
     return {
         'canBuyFields': list(CAN_BUY_ENTRY_COLUMNS),
         'seatMapFields': list(SEAT_MAP_ENTRY_COLUMNS),
+        'insiderFields': InsiderReadings.NUMBER_FIELDS,
+        'insiderVerdicts': InsiderReadings.VERDICTS,
     }
 
 
@@ -668,7 +671,8 @@ def save_entry_dialog(conn, payload):
                                    # handling above, not always ET-today
       entries: [{ scheduleRow, org, dest, car, dep, aircraftConfig,
                   flightNumber,
-                  every key in ENTRY_COLUMNS (each '' or a value as typed) }]
+                  every key in ENTRY_COLUMNS (each '' or a value as typed),
+                  insider: {InsiderReadings.NUMBER_FIELDS..., verdict, checkTime} }]
     }
     An entry is logged when any ENTRY_COLUMNS field is non-blank - a
     seat-map-only entry is valid, blank can-buy just means not observed.
@@ -680,6 +684,9 @@ def save_entry_dialog(conn, payload):
     flight_date = payload['flightDate']
     flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()
 
+    now = eastern_now()
+    InsiderReadings.save_from_logging(conn, flight_date, payload['entries'], now)
+
     to_write = [
         e for e in payload['entries']
         if any(e.get(f, '') not in ('', None) for f in ENTRY_COLUMNS)
@@ -688,7 +695,6 @@ def save_entry_dialog(conn, payload):
         conn.commit()
         return {'logged': 0}
 
-    now = eastern_now()
     check_timestamp = now.strftime('%Y-%m-%d %H:%M')
 
     for entry in to_write:

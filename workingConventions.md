@@ -54,6 +54,10 @@ TODO.md; dated analysis results belong in findings.md.
   sqlite can never silently create an empty one.
 - The project runs in a virtual environment on his Chromebook. pip
   installs never use --break-system-packages.
+- Schema changes to his existing nonrev.db ship as a one-off
+  python/migrate_<what>.py. He commits, runs it once, then deletes it;
+  it is never git-added. No one-time migration code stays in the app.
+  create_db.py gets the same change for a from-scratch setup.
 
 ## Git
 

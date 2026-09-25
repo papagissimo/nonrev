@@ -27,6 +27,7 @@ import DeclineCurveDialog
 import T1GridReport
 import Scenarios
 import Grading
+import InsiderReadings
 import settings as settings_module
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
@@ -103,6 +104,35 @@ def t1_compare():
 @app.route('/scenarios')
 def scenarios():
     return send_from_directory(STATIC_DIR, 'Scenarios.html')
+
+
+@app.route('/insider')
+def insider():
+    return send_from_directory(STATIC_DIR, 'InsiderReadings.html')
+
+
+@app.route('/api/getInsiderReadings', methods=['POST'])
+def api_get_insider_readings():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(InsiderReadings.get_readings(conn, body.get('flightDate')))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/deleteInsiderReading', methods=['POST'])
+def api_delete_insider_reading():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(InsiderReadings.delete_reading(conn, body['readingId'], body['flightDate']))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
 
 
 @app.route('/api/getScenarioScreen', methods=['GET'])
@@ -579,5 +609,7 @@ def api_get_connection_chart():
 
 
 if __name__ == '__main__':
+    if not os.path.exists(DB_PATH):
+        raise SystemExit(f"{DB_PATH} not found - refusing to start rather than create an empty database.")
     print(f"SeatLoggingDialog running at http://localhost:{PORT}")
     app.run(host='localhost', port=PORT, debug=True)

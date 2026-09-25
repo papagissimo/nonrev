@@ -1,6 +1,8 @@
 import os
 import sqlite3
 
+from InsiderReadings import TABLE_SQL as INSIDER_TABLE
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nonrev.db')
 
 SCENARIO_TABLES = """
@@ -319,6 +321,7 @@ def create_db():
         )
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA + SCENARIO_TABLES)
+    conn.execute(INSIDER_TABLE)
     conn.commit()
     conn.close()
     print(f"Created {DB_PATH}")

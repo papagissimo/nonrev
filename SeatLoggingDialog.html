@@ -90,6 +90,13 @@
     .recentRow.cur { color: #333; }
     .seatMapLink { display: block; text-align: right; line-height: 1.1; font-size: 11px; color: #1a73e8; cursor: pointer; margin-top: 2px; }
     .seatMapLink.hasData { font-weight: bold; }
+    .panelLinks { display: flex; justify-content: flex-end; align-items: flex-start; gap: 6px; }
+    .insiderLink { line-height: 1.1; font-size: 11px; color: #188038; cursor: pointer; margin-top: 2px; }
+    .insiderLink.hasData { font-weight: bold; }
+    tr.insiderRow td { padding: 0 5px 8px 24px; }
+    .smPanel.insPanel { border-left-color: #188038; }
+    .smGrid.insGrid { grid-template-columns: 40px repeat(5, 48px); }
+    input.insn { width: 44px; font-size: 15px; text-align: center; box-sizing: border-box; }
     tr.seatMapRow td { padding: 0 5px 8px 24px; }
     .smPanel { border-left: 3px solid #1a73e8; padding: 4px 12px; font-size: 13px; color: #444; }
     .smLine { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
@@ -183,6 +190,16 @@
     function canBuyFields() { return (batch && batch.canBuyFields) || []; }
     function seatMapFields() { return (batch && batch.seatMapFields) || []; }
     function dataFields() { return canBuyFields().concat(seatMapFields()); }
+    function insiderFields() { return (batch && batch.insiderFields) || []; }
+    function insiderKeys() { return insiderFields().concat(['verdict', 'checkTime']); }
+    function insiderEl(key, i) {
+      return document.querySelector('[data-ins="' + key + '"][data-i="' + i + '"]');
+    }
+    function insiderValue(key, i) {
+      var el = insiderEl(key, i);
+      return el ? el.value.trim() : '';
+    }
+    function insiderPanelFor(i) { return document.querySelector('tr.insiderRow[data-i="' + i + '"]'); }
 
     function escapeHtml(s) {
       return String(s === null || s === undefined ? '' : s)
@@ -228,10 +245,15 @@
         return fieldValue(f, i) !== '' && !isAutoFilled(f, i);
       });
       seatMapFields().forEach(function (f) { entry[f] = typedSeatMapValue ? fieldValue(f, i) : ''; });
+      entry.insider = {};
+      insiderKeys().forEach(function (k) { entry.insider[k] = insiderValue(k, i); });
       return entry;
     }
+    function insiderHasData(insider) {
+      return insiderFields().concat(['verdict']).some(function (k) { return insider[k] !== ''; });
+    }
     function entryHasData(entry) {
-      return dataFields().some(function (f) { return entry[f] !== ''; });
+      return dataFields().some(function (f) { return entry[f] !== ''; }) || insiderHasData(entry.insider);
     }
     function entryHasCanBuy(entry) {
       return canBuyFields().some(function (f) { return entry[f] !== ''; });
@@ -749,6 +771,43 @@
       }
     }
 
+    function buildInsiderPanel(i) {
+      var labels = ['Y', 'C+', '1/PS', 'D1', 'Total'];
+      var standby = insiderFields().slice(0, 5);
+      var input = function (key) {
+        return '<input class="insn" data-i="' + i + '" data-ins="' + key + '" placeholder="-" maxlength="4">';
+      };
+      var grid = '<span></span>' + labels.map(function (l) { return '<span class="smHead">' + l + '</span>'; }).join('') +
+        '<span>Avail</span>' + standby.map(input).join('');
+      var verdicts = ((batch && batch.insiderVerdicts) || []).map(function (v) {
+        return '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>';
+      }).join('');
+      return '<div class="smPanel insPanel">' +
+        '<div class="smGrid insGrid">' + grid + '</div>' +
+        '<div class="smLine">Listed ' + input('numListed') + ' Position ' + input('ourPosition') +
+        ' Verdict <select data-i="' + i + '" data-ins="verdict"><option value=""></option>' + verdicts + '</select>' +
+        ' Checked <input type="time" data-i="' + i + '" data-ins="checkTime"> ET, blank = now</div>' +
+        '</div>';
+    }
+
+    function refreshInsiderLink(i) {
+      var link = document.querySelector('a.insiderLink[data-i="' + i + '"]');
+      if (!link) return;
+      link.classList.toggle('hasData', insiderKeys().some(function (k) { return insiderValue(k, i) !== ''; }));
+    }
+
+    function toggleInsider(i) {
+      var panelRow = insiderPanelFor(i);
+      if (!panelRow) return;
+      if (panelRow.style.display === 'none') {
+        panelRow.style.display = '';
+        var first = insiderEl(insiderFields()[0], i);
+        if (first) first.focus();
+      } else {
+        panelRow.style.display = 'none';
+      }
+    }
+
     function onAircraftChange(i, selectEl) {
       var row = batch.rows[i];
       if (selectEl.value === '__new__') {
@@ -822,6 +881,7 @@
       if (!el.classList) return;
       var i = parseInt(el.getAttribute('data-i'), 10);
       if (el.classList.contains('seatMapLink')) toggleSeatMap(i);
+      else if (el.classList.contains('insiderLink')) toggleInsider(i);
       else if (el.classList.contains('smEdit')) openAircraftForm(i, 'edit');
       else if (el.classList.contains('afCancel')) closeAircraftForm(i);
       else if (el.classList.contains('afSave')) saveAircraftForm(i);
@@ -831,11 +891,13 @@
       var el = e.target;
       if (el.classList && el.classList.contains('smAircraft')) {
         onAircraftChange(parseInt(el.getAttribute('data-i'), 10), el);
+      } else if (el.getAttribute && el.getAttribute('data-ins')) {
+        refreshInsiderLink(parseInt(el.getAttribute('data-i'), 10));
       }
     }
 
     function selectSeatMapInputOnFocus(e) {
-      if (e.target.classList && e.target.classList.contains('seatn')) e.target.select();
+      if (e.target.classList && (e.target.classList.contains('seatn') || e.target.classList.contains('insn'))) e.target.select();
     }
 
     function toggleSettings() {
@@ -953,7 +1015,7 @@
       document.getElementById('flightTable').className = 'mode-' + columnMode;
       document.getElementById('columnModeToggle').className = 'eyeToggle' + (columnMode === 'select' ? ' active' : '');
       var span = visibleColumnCount(currentColumns);
-      Array.prototype.forEach.call(document.querySelectorAll('tr.seatMapRow > td'), function (td) {
+      Array.prototype.forEach.call(document.querySelectorAll('tr.seatMapRow > td, tr.insiderRow > td'), function (td) {
         td.setAttribute('colspan', span);
       });
     }
@@ -1018,7 +1080,17 @@
         var hasTyped = dataFields().some(function (f) {
           return vals[f] !== '' && autoFields.indexOf(f) === -1;
         });
-        if (hasTyped || panelOpen) map[row.scheduleRow] = { vals: vals, autoFields: autoFields, panelOpen: panelOpen };
+        var insiderRow = insiderPanelFor(i);
+        var insiderOpen = !!insiderRow && insiderRow.style.display !== 'none';
+        var insiderVals = {};
+        insiderKeys().forEach(function (k) { insiderVals[k] = insiderValue(k, i); });
+        var insiderTyped = insiderKeys().some(function (k) { return insiderVals[k] !== ''; });
+        if (hasTyped || panelOpen || insiderTyped || insiderOpen) {
+          map[row.scheduleRow] = {
+            vals: vals, autoFields: autoFields, panelOpen: panelOpen,
+            insiderVals: insiderVals, insiderOpen: insiderOpen
+          };
+        }
       });
       return map;
     }
@@ -1035,6 +1107,12 @@
           if (saved.autoFields.indexOf(f) !== -1) markAuto(el); else clearAuto(el);
         });
         refreshSeatMapLink(i);
+        if (saved.insiderOpen) insiderPanelFor(i).style.display = '';
+        insiderKeys().forEach(function (k) {
+          var el = insiderEl(k, i);
+          if (el && saved.insiderVals[k]) el.value = saved.insiderVals[k];
+        });
+        refreshInsiderLink(i);
       });
     }
 
@@ -1130,7 +1208,8 @@
         var cellHtml = {
           dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>' +
             (row.grade ? '<div class="gradeLine">' + escapeHtml(row.grade) + '</div>' : '') +
-            (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>'),
+            '<div class="panelLinks"><a class="insiderLink" data-i="' + i + '">insider</a>' +
+            (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>') + '</div>',
           y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.y) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.y) + '</div>',
           cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',
@@ -1165,6 +1244,13 @@
           return '<td class="col-' + c.key + ' ' + groupClass(c) + '">' + (cellHtml[c.key] || '') + '</td>';
         }).join('');
         tbody.appendChild(tr);
+
+        var insiderTr = document.createElement('tr');
+        insiderTr.className = ('insiderRow ' + stripe).trim();
+        insiderTr.setAttribute('data-i', i);
+        insiderTr.style.display = 'none';
+        insiderTr.innerHTML = '<td colspan="' + visibleColumnCount(columns) + '">' + buildInsiderPanel(i) + '</td>';
+        tbody.appendChild(insiderTr);
 
         if (!row.departed) {
           var panelTr = document.createElement('tr');
@@ -1204,6 +1290,13 @@
       // matter how it got typed or pasted in.
       var el = e.target;
       if (!el.classList) return;
+      if (el.classList.contains('insn')) {
+        var allowsNegative = el.getAttribute('data-ins').indexOf('standby') === 0;
+        var kept = el.value.replace(allowsNegative ? /[^0-9-]/g : /[^0-9]/g, '').replace(/(?!^)-/g, '').slice(0, 4);
+        if (kept !== el.value) el.value = kept;
+        refreshInsiderLink(parseInt(el.getAttribute('data-i'), 10));
+        return;
+      }
       var isCanBuy = el.classList.contains('seat');
       var isSeatMap = el.classList.contains('seatn');
       if (!isCanBuy && !isSeatMap) return;

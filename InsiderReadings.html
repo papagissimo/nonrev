@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>Insider Readings</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 10px; }
+    h1 { font-size: 18px; margin: 0 0 12px 0; }
+    a.back { color: #1a73e8; text-decoration: none; font-size: 12px; }
+    .topBar { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+    .topBar label { color: #666; }
+    #status { color: #666; font-size: 12px; }
+    #status.error { color: #c5221f; }
+    table { border-collapse: collapse; }
+    th { text-align: left; font-size: 11px; color: #888; padding: 3px 8px; white-space: nowrap; }
+    td { padding: 3px 8px; font-size: 12px; border-bottom: 1px solid #eee; white-space: nowrap; }
+    td.n { text-align: right; }
+    button.del { background: none; border: none; color: #c5221f; cursor: pointer; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Launcher</a>
+  <h1>Insider Readings</h1>
+
+  <div class="topBar">
+    <label>Flight date <input type="date" id="flightDate" onchange="load()"></label>
+    <span id="status"></span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Checked</th><th>Flight</th><th>Hrs out</th>
+        <th>Y</th><th>C+</th><th>1/PS</th><th>D1</th><th>Total</th>
+        <th>Listed</th><th>Position</th><th>Verdict</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <script>
+    const NUMBER_FIELDS = ['standbyY', 'standbyCPlus', 'standbyFirstOrPS', 'standbyD1',
+                           'standbyTotal', 'numListed', 'ourPosition'];
+
+    async function post(url, body) {
+      const res = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      return data;
+    }
+
+    function setStatus(text, isError) {
+      const el = document.getElementById('status');
+      el.textContent = text;
+      el.className = isError ? 'error' : '';
+    }
+
+    function depDisplay(minutes) {
+      const h = Math.floor(minutes / 60), m = minutes % 60;
+      return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'pm' : 'am'}`;
+    }
+
+    function show(v) { return v === null || v === undefined ? '' : v; }
+
+    function render(data) {
+      document.getElementById('flightDate').value = data.flightDate;
+      document.getElementById('rows').innerHTML = data.readings.map(r => `
+        <tr>
+          <td>${r.checkTimestamp}</td>
+          <td>${r.org.toUpperCase()}→${r.dest.toUpperCase()} ${depDisplay(r.depTime)}</td>
+          <td class="n">${r.hoursOut === null ? '' : r.hoursOut.toFixed(1)}</td>
+          ${NUMBER_FIELDS.map(f => `<td class="n">${show(r[f])}</td>`).join('')}
+          <td>${show(r.verdict)}</td>
+          <td><button class="del" onclick="removeReading(${r.readingId})">Delete</button></td>
+        </tr>`).join('') || '<tr><td colspan="12" style="color:#888">None on this date.</td></tr>';
+    }
+
+    async function load() {
+      try {
+        render(await post('/api/getInsiderReadings',
+          { flightDate: document.getElementById('flightDate').value || null }));
+        setStatus('');
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    }
+
+    async function removeReading(readingId) {
+      if (!confirm('Delete this reading?')) return;
+      try {
+        render(await post('/api/deleteInsiderReading',
+          { readingId, flightDate: document.getElementById('flightDate').value }));
+        setStatus('Deleted.');
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
