@@ -372,7 +372,7 @@ def weekly_history(grid, service_label):
         {'date': header, 't1': cell['t1'], 'display': cell['display'], 'countsForColor': cell['countsForColor']}
         for header, cell in zip(grid['dateHeaders'], row['cells']) if cell
     ]
-    return list(reversed(weeks))
+    return weeks
 
 
 def bar_tooltip(route_name, day_of_week, departure_text, arrival_text, weeks, tally):

@@ -268,21 +268,21 @@
     function drawWeekNumbers(group, bar, x, top, height) {
       const rowsFit = Math.floor((height - NUMBER_TOP_PAD) / NUMBER_ROW_PX);
       if (!bar.weeks.length || rowsFit < 1) return;
-      const shown = bar.weeks.length <= rowsFit ? bar.weeks.length : rowsFit - 1;
+      const hidden = bar.weeks.length <= rowsFit ? 0 : bar.weeks.length - (rowsFit - 1);
       const rowY = function (i) { return top + NUMBER_TOP_PAD + (i + 1) * NUMBER_ROW_PX - 3; };
-      for (let i = 0; i < shown; i++) {
+      let row = 0;
+      if (hidden > 0) {
         group.appendChild(svgEl('text', {
-          x: x + COLUMN_WIDTH / 2, y: rowY(i), 'text-anchor': 'middle', 'font-size': 11,
-          fill: fillOf(bar).textColor, opacity: bar.weeks[i].counted ? 1 : UNCOUNTED_NUMBER_OPACITY,
-        }, bar.weeks[i].display));
-      }
-      const extra = bar.weeks.length - shown;
-      if (extra > 0) {
-        group.appendChild(svgEl('text', {
-          x: x + COLUMN_WIDTH / 2, y: rowY(shown), 'text-anchor': 'middle', 'font-size': 10,
+          x: x + COLUMN_WIDTH / 2, y: rowY(row++), 'text-anchor': 'middle', 'font-size': 10,
           fill: fillOf(bar).textColor, opacity: 0.8,
-        }, '+' + extra));
+        }, '+' + hidden));
       }
+      bar.weeks.slice(hidden).forEach(function (week) {
+        group.appendChild(svgEl('text', {
+          x: x + COLUMN_WIDTH / 2, y: rowY(row++), 'text-anchor': 'middle', 'font-size': 11,
+          fill: fillOf(bar).textColor, opacity: week.counted ? 1 : UNCOUNTED_NUMBER_OPACITY,
+        }, week.display));
+      });
     }
 
     function drawLegend(legend) {
