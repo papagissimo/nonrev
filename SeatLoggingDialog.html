@@ -1312,35 +1312,63 @@
       var key = e.key;
       if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft' && key !== 'ArrowRight') return;
       var el = e.target;
-      if (!el.classList || !el.classList.contains('seat')) return;
+      if (!el.classList) return;
 
-      var i = parseInt(el.getAttribute('data-i'), 10);
-      var field = el.getAttribute('data-field');
-      var canBuy = canBuyFields();
-      var fieldIdx = canBuy.indexOf(field);
       var target = null;
-
-      if (key === 'ArrowLeft' || key === 'ArrowRight') {
-        var dir = key === 'ArrowLeft' ? -1 : 1;
-        var idx = fieldIdx + dir;
-        while (idx >= 0 && idx < canBuy.length) {
-          var candidate = document.querySelector('input[data-field="' + canBuy[idx] + '"][data-i="' + i + '"]');
-          if (candidate) { target = candidate; break; }
-          idx += dir;
-        }
-      } else {
-        var rowDir = key === 'ArrowUp' ? -1 : 1;
-        var targetRow = i + rowDir;
-        if (targetRow >= 0 && targetRow < batch.rows.length) {
-          target = document.querySelector('input[data-field="' + field + '"][data-i="' + targetRow + '"]');
-        }
-      }
+      if (el.classList.contains('seat')) target = canBuyArrowTarget(el, key);
+      else if (el.classList.contains('seatn')) target = seatMapArrowTarget(el, key);
 
       if (target) {
         e.preventDefault();
         target.focus();
         target.select();
       }
+    }
+
+    function canBuyArrowTarget(el, key) {
+      var i = parseInt(el.getAttribute('data-i'), 10);
+      var field = el.getAttribute('data-field');
+      var canBuy = canBuyFields();
+
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        var dir = key === 'ArrowLeft' ? -1 : 1;
+        for (var idx = canBuy.indexOf(field) + dir; idx >= 0 && idx < canBuy.length; idx += dir) {
+          var candidate = inputFor(canBuy[idx], i);
+          if (candidate) return candidate;
+        }
+        return null;
+      }
+      var targetRow = i + (key === 'ArrowUp' ? -1 : 1);
+      if (targetRow < 0 || targetRow >= batch.rows.length) return null;
+      return inputFor(field, targetRow);
+    }
+
+    function seatMapGridRows() {
+      var suffixes = Object.keys(CABIN_SIZE_KEYS);
+      return [
+        suffixes.map(function (s) { return 'solo' + s; }),
+        suffixes.map(function (s) { return 'pair' + s; }),
+        ['blockedTotal']
+      ];
+    }
+
+    function seatMapArrowTarget(el, key) {
+      var i = parseInt(el.getAttribute('data-i'), 10);
+      var field = el.getAttribute('data-field');
+      var rows = seatMapGridRows();
+
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        var readingOrder = [].concat.apply([], rows);
+        var next = readingOrder[readingOrder.indexOf(field) + (key === 'ArrowLeft' ? -1 : 1)];
+        return next ? inputFor(next, i) : null;
+      }
+      var rowIdx = -1, colIdx = -1;
+      rows.forEach(function (row, r) {
+        var c = row.indexOf(field);
+        if (c !== -1) { rowIdx = r; colIdx = c; }
+      });
+      var targetRow = rows[rowIdx + (key === 'ArrowUp' ? -1 : 1)];
+      return targetRow ? inputFor(targetRow[Math.min(colIdx, targetRow.length - 1)], i) : null;
     }
 
     function openScheduleModal() {

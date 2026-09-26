@@ -1285,27 +1285,55 @@ def pool_c1(fits_by_instance):
     return {sid: (float(np.median(c1s)), len(c1s)) for sid, c1s in by_service.items()}
 
 
+def instance_departure_dt(conn, inst, org, flight_date):
+    if inst["depTime"] is None:
+        return None
+    try:
+        # depTime is minutes-since-midnight ORIGIN-local (see
+        # timezones.et_equivalent_datetime) - NOT HHMM digits. ET, not
+        # origin-local, because that's the zone checkTimestamp is
+        # actually logged in (eastern_now(), see SeatLoggingDialog.py) -
+        # what the night-ratio default was calibrated against.
+        flight_date_obj = datetime.strptime(flight_date, "%Y-%m-%d").date()
+        return et_equivalent_datetime(conn, inst["depTime"], org, flight_date_obj).replace(tzinfo=None)
+    except (ValueError, TypeError, UnconfirmedAirportError):
+        return None
+
+
+def fit_all_instances(instances, departure_dts, night_ratio_seed_by_service,
+                      rmse_threshold, max_iterations, night_start_hour, night_end_hour):
+    fits_by_instance = {}
+    for key, inst in instances.items():
+        sid, _flight_date = key
+        fit = fit_instance(
+            inst["readings"], rmse_threshold, max_iterations,
+            night_ratio=night_ratio_seed_by_service.get(sid, 1.0), departure_dt=departure_dts[key],
+            night_start_hour=night_start_hour, night_end_hour=night_end_hour,
+        )
+        if fit is not None:
+            fit["departureDt"] = departure_dts[key]
+        fits_by_instance[key] = fit
+    return fits_by_instance
+
+
 def compute_all_fits(conn, rmse_threshold, max_iterations,
                       night_start_hour=22, night_end_hour=7):
-    """Shared fitting work for all four cabins - the expensive part
-    (curve_fit per instance), factored out so both the console report
-    (main()) and the persistence step (refresh_decline_curve_coefficients)
-    run it exactly once rather than twice.
+    """Shared fitting work for all four cabins, run once and used by both
+    the console report (main()) and the persistence step
+    (refresh_decline_curve_coefficients).
 
-    Each (day-of-week-specific) SERVICE's night_ratio is resolved once,
-    via the real coefficients hierarchy (DeclineCurveHierarchy.
-    resolve_coefficients) - at the SAME granularity slope/C1 are pooled
-    at (per service, using its representative depTime), not per raw
-    depTime, matching how pool_slope/pool_c1 already treat a service as
-    one unit despite declineCurveCoefficients persisting one row per raw
-    depTime afterward. Currently this always resolves to the global
-    default (tier 4 derivation for night_ratio isn't built yet - see
-    module docstring), but it's wired through the real hierarchy now so
-    a hand-set route/service override already works the moment one
-    exists. Each instance's own departure_dt is reconstructed from its
-    gathered depTime + flightDate and stashed on its fit dict, so
-    downstream consumers (pool_slope's objective) don't need to
-    reconstruct it themselves.
+    Every instance is fit twice through the same path, differing only in
+    the night-ratio seed an instance falls back on when its own readings
+    can't identify a night ratio. Pass 1 seeds each service from the
+    hand-set override or global default tiers only - never the derived
+    tier, which is this function's own previous output and would make
+    each run depend on the last. Pass 2 seeds each service with the
+    night ratio pooled from pass 1's instances that did measure one,
+    keeping the pass-1 seed where the service has none. Exactly two
+    passes, not a loop to convergence: the seed can shift which step
+    changes an instance corrects, and with it whether that instance
+    measures its own night ratio, so a rare service flips between two
+    pooled ratios forever when passes are repeated.
 
     Returns a dict: dep_time_to_service, service_info, and by_cabin:
     {cabin: {instances, fits_by_instance, service_slopes,
@@ -1316,42 +1344,30 @@ def compute_all_fits(conn, rmse_threshold, max_iterations,
 
     by_cabin = {}
     for cabin in ["y", "cPlus", "firstOrPS", "d1"]:
-        night_ratio_by_service = {}
+        default_seed_by_service = {}
         for sid, (org, dest, dow, rep_time, _cluster_size) in service_info.items():
-            resolved = resolve_coefficients(conn, org, dest, dow, rep_time, cabin)
-            night_ratio_by_service[sid] = resolved.get("nightRatio") or 1.0
+            resolved = resolve_coefficients(conn, org, dest, dow, rep_time, cabin, include_derived=False)
+            default_seed_by_service[sid] = resolved.get("nightRatio") or 1.0
 
         instances = gather_instances(matched_rows, dep_time_to_service, cabin)
-        fits_by_instance = {}
-        for key, inst in instances.items():
-            sid, flight_date = key
-            night_ratio = night_ratio_by_service.get(sid, 1.0)
-            departure_dt = None
-            if inst["depTime"] is not None:
-                try:
-                    # depTime is minutes-since-midnight ORIGIN-local (see
-                    # timezones.et_equivalent_datetime) - NOT HHMM digits,
-                    # a bug that lived here from 2026-09-14 to 2026-09-15
-                    # and corrupted every night/day classification the
-                    # actual curve fitting made in that window (this is
-                    # THE fitting call site - the one place this bug
-                    # mattered most). ET, not origin-local, because
-                    # that's the zone checkTimestamp is actually logged
-                    # in (eastern_now(), see SeatLoggingDialog.py) - what
-                    # the night-ratio default was calibrated against.
-                    flight_date_obj = datetime.strptime(flight_date, "%Y-%m-%d").date()
-                    org = service_info[sid][0]
-                    departure_dt = et_equivalent_datetime(conn, inst["depTime"], org, flight_date_obj).replace(tzinfo=None)
-                except (ValueError, TypeError, UnconfirmedAirportError):
-                    departure_dt = None
-            fit = fit_instance(
-                inst["readings"], rmse_threshold, max_iterations,
-                night_ratio=night_ratio, departure_dt=departure_dt,
-                night_start_hour=night_start_hour, night_end_hour=night_end_hour,
-            )
-            if fit is not None:
-                fit["departureDt"] = departure_dt
-            fits_by_instance[key] = fit
+        departure_dts = {
+            (sid, flight_date): instance_departure_dt(conn, inst, service_info[sid][0], flight_date)
+            for (sid, flight_date), inst in instances.items()
+        }
+
+        first_pass_fits = fit_all_instances(
+            instances, departure_dts, default_seed_by_service,
+            rmse_threshold, max_iterations, night_start_hour, night_end_hour,
+        )
+        first_pass_pooled = pool_night_ratio(first_pass_fits, night_start_hour, night_end_hour)
+        pooled_seed_by_service = {
+            sid: first_pass_pooled[sid][0] if sid in first_pass_pooled else seed
+            for sid, seed in default_seed_by_service.items()
+        }
+        fits_by_instance = fit_all_instances(
+            instances, departure_dts, pooled_seed_by_service,
+            rmse_threshold, max_iterations, night_start_hour, night_end_hour,
+        )
 
         slope_diagnostics = {}
         night_ratio_diagnostics = {}
@@ -1485,10 +1501,71 @@ def refresh_decline_curve_coefficients(conn):
             "byCabin": summary_by_cabin, "raw": result}
 
 
+BIG_CHANGE_FRACTION = 0.20
+COEFFICIENT_COLUMNS = [
+    ("c1Hours", "C1", "h", 1.0),
+    ("slopeSeatsPerHour", "slope", " seats/h", 0.05),
+    ("nightSlopeRatio", "nightRatio", "", 0.10),
+]
+CABIN_REPORT_ORDER = ["y", "cPlus", "firstOrPS", "d1"]
+
+
+def snapshot_coefficients(conn):
+    columns = ", ".join(column for column, _, _, _ in COEFFICIENT_COLUMNS)
+    rows = conn.execute(
+        f"SELECT org, dest, dayOfWeek, depTime, cabin, {columns} FROM declineCurveCoefficients"
+    ).fetchall()
+    return {tuple(row[:5]): tuple(row[5:]) for row in rows}
+
+
+def is_big_change(old, new, min_absolute_change):
+    if old is None or new is None:
+        return (old is None) != (new is None)
+    if abs(new - old) < min_absolute_change:
+        return False
+    return old == 0 or abs(new - old) / abs(old) >= BIG_CHANGE_FRACTION
+
+
+def big_coefficient_changes(before, after, dep_time_to_service, service_info):
+    no_values = (None,) * len(COEFFICIENT_COLUMNS)
+    changes = set()
+    for key in before.keys() | after.keys():
+        org, dest, dow, dep_time, cabin = key
+        sid = dep_time_to_service.get((org, dest, dow, dep_time))
+        shown_time = service_info[sid][3] if sid is not None else dep_time
+        hh, mm = divmod(shown_time, 60)
+        label = f"{org}-{dest} {dow} {'~' if sid is not None else ''}{hh:02d}{mm:02d}"
+        old_values = before.get(key, no_values)
+        new_values = after.get(key, no_values)
+        for (_, name, unit, min_absolute_change), old, new in zip(COEFFICIENT_COLUMNS, old_values, new_values):
+            if is_big_change(old, new, min_absolute_change):
+                changes.add((cabin, label, name, unit, old, new))
+    quantity_order = [name for _, name, _, _ in COEFFICIENT_COLUMNS]
+    return sorted(changes, key=lambda c: (CABIN_REPORT_ORDER.index(c[0]), c[1], quantity_order.index(c[2])))
+
+
+def format_coefficient(value, unit):
+    return "default" if value is None else f"{value:.2f}{unit}"
+
+
+def print_big_changes(changes):
+    print(f"=== Big changes since last fit (default <-> fitted, or moved {BIG_CHANGE_FRACTION:.0%}+) ===")
+    if not changes:
+        print("  none")
+    for cabin, label, name, unit, old, new in changes:
+        shows_percent = old is not None and new is not None and round(old, 2) != 0
+        percent = f" ({(new - old) / abs(old):+.0%})" if shows_percent else ""
+        print(f"  {cabin:<9} {label}  {name}: {format_coefficient(old, unit)} -> "
+              f"{format_coefficient(new, unit)}{percent}")
+    print()
+
+
 def main():
     conn = sqlite3.connect(DB_PATH)
 
+    coefficients_before = snapshot_coefficients(conn)
     refreshed = refresh_decline_curve_coefficients(conn)
+    coefficients_after = snapshot_coefficients(conn)
     result = refreshed["raw"]
     service_info = result["service_info"]
     golden_ticket_hours = load_settings(conn).get('goldenTicketHours', 1.5)
@@ -1554,6 +1631,11 @@ def main():
             if shown >= 10:
                 break
         print()
+
+    print_big_changes(big_coefficient_changes(
+        coefficients_before, coefficients_after,
+        result["dep_time_to_service"], service_info,
+    ))
 
 
 if __name__ == "__main__":

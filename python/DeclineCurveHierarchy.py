@@ -170,7 +170,7 @@ def _load_route_override(conn, org, dest, cabin):
     return {"c1": row[0], "slope": row[1], "nightRatio": row[2]} if row else None
 
 
-def resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin):
+def resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin, include_derived=True):
     """Returns {'c1': float, 'slope': float, 'nightRatio': float,
     'c1Tier': str, 'slopeTier': str, 'nightRatioTier': str} - each tier
     string is one of 'derived', 'serviceOverride', 'routeOverride',
@@ -196,7 +196,7 @@ def resolve_coefficients(conn, org, dest, day_of_week, dep_time, cabin):
 
     def resolve_one(quantity):
         global_key = QUANTITY_COLUMNS[quantity][0]
-        if derived and derived[quantity] is not None and derived[derived_n_key[quantity]] >= min_n[quantity]:
+        if include_derived and derived and derived[quantity] is not None and derived[derived_n_key[quantity]] >= min_n[quantity]:
             return derived[quantity], "derived"
         if service_ov and service_ov[quantity] is not None:
             return service_ov[quantity], "serviceOverride"
