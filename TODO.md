@@ -171,6 +171,17 @@ before - a NEW, specific symptom is the bar for reopening it.
   display-only, never persisted or used in any live prediction - so
   either drop it from the print or floor/cap its display, cosmetic only.
 
+- **Night from both ends' clocks — planned, live fit unchanged.** Night
+  is currently the nightStartHour-nightEndHour window on the Eastern
+  clock for every route. Planned replacement: the same window on each
+  end's local clock, one shared night ratio, each hour weighted 1 when
+  both ends are in night, 1/2 when only one is, 0 when neither. No new
+  coefficient. Works unchanged for a long-haul whose two nights don't
+  overlap. python/NightZoneBacktest.py compares it against the current
+  definition, origin-only, both-ends (AND) and either-end (OR). As of
+  2026-09-27 no definition beat the current one; rerun with more
+  cross-zone data before changing the live fit.
+
 - **Tell truly full from dip-and-recover — wanted, not designed.** A
   flight that declines and stays low versus one that dips early and
   recovers by departure.
@@ -270,20 +281,15 @@ before - a NEW, specific symptom is the bar for reopening it.
   breakdowns tied to actual aircraft config, since a ceiling of 9 means
   something very different on a small commuter Comfort+ cabin vs. a
   wide-body one.
-- Two-directional night ratio (a separate overnight-at-origin vs.
-  overnight-at-destination rate, instead of one shared night ratio) —
-  his own idea, his own assessment: collapses to the same thing on
-  north-south domestic routes, would only actually diverge on true
-  east-west long-haul (LA-Australia was his example). Not worth building
-  now - not enough data, and he doubts it moves the needle much even with
-  more. Worth a backtest comparison someday to check whether it's real
-  before doing anything else with it.
-
 - Launcher daily tally (flights left / departed / golden tickets) was
   removed 2026-09-20: it never worked right and went unused. If it comes
   back it belongs on the logging dialog and counts only studied flights.
 
 ## Dead ideas — do not re-propose
+
+- Two-directional night ratio (separate overnight-at-origin and
+  overnight-at-destination rates) — replaced 2026-09-27 by one shared
+  ratio with night counted from both ends' clocks (see Decline curve).
 
 - Orphan detection by comparing past observations to the current
   flightSchedule — killed 2026-09-19. That table is this week's snapshot

@@ -52,6 +52,18 @@ displayed value means "9 or more," not literally 9. The real count could
 be 9, 20, or 30. Never treat a displayed 9 as an exact value, and never
 assume an upper bound above it.
 
+## Seat map vs. can-buy
+
+The seat map's selectable seats and the can-buy count measure different
+things, and neither bounds the other. A seat can show as selectable yet
+already be sold, so a map with 12 selectable seats may allow buying only
+one or two. The likely cause, unconfirmed, is passengers (mostly basic
+economy) who hold a ticket but get no seat until check-in. The reverse
+happens too: can-buy can exceed the number of selectable seats. Both
+directions occur at interior can-buy readings (1-8), not just at the 9
+ceiling. The seat map is loose, independent evidence, never a truer
+count than can-buy.
+
 ## Whose clock
 
 The person logging and the flight departing are usually in different
