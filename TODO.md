@@ -135,13 +135,6 @@ before - a NEW, specific symptom is the bar for reopening it.
   Precision/exact-threshold quibbling between "full" and "really quite
   thoroughly full" is explicitly NOT worth resolving - a rough distinction
   is all that's wanted here.
-- **Backtest should report the SUMMED-across-cabins number, not just
-  per-cabin.** The per-cabin leave-one-out T4→T1 backtest (T4T1Backtest.py,
-  built 2026-09-15) is structured correctly, but the real number he'll
-  actually use on game day is the sum across cabins (Y + C+ + 1/PS, +D1
-  where relevant) - that's the actual quantity a go/no-go decision is made
-  on. Needs a summed-residual version alongside (or instead of) the
-  per-cabin breakdown.
 - **New feature idea, not yet designed**: some services are "usually open"
   but not always - if the T-4 backtest can distinguish the specific
   anomalous closed instance from the normal-open ones (rather than just

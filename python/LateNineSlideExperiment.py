@@ -6,7 +6,7 @@ Offline experiment, not part of the live estimator: what if a "late 9"
 declining, by more than stepChangeRmseThreshold seats) no longer slid C1
 to the reading's own time?
 
-Today T1Estimator slides C1 to that reading - the decline is assumed to
+T1Estimator.curve_t1_replay_column slides C1 to that reading - the decline is assumed to
 start right then. In the data a late 9 usually holds far longer than
 that. The rule here instead treats the hours from a late 9 until the
 decline actually starts as exponentially distributed with one hazard
@@ -25,7 +25,7 @@ decline is not credited. The constant hazard is an assumption, not a
 finding.
 
 Every other reading - interior values, expected 9s, zeros - still goes
-through the live estimator unchanged, via the corrected
+through the curve estimator unchanged, via the corrected
 T4T1Backtest. Coefficients are leave-one-out as there, and the hazard
 for a held-out instance excludes that instance's own event. One second-
 order leak remains: whether OTHER instances count as late is judged with
@@ -122,7 +122,7 @@ def experimental_prediction(conn, org, dest, flight_date, dep_time, readings, ca
         row = dict.fromkeys(T1Estimator.CABIN_KEY_TO_COLUMN, None)
         row["hrs"], row[cabin_key] = reading
         with backtest.coefficients_supplied_to_live_estimator({cabin: coefficients}):
-            return T1Estimator.compute_t1_replay_column(conn, org, dest, flight_date, dep_time, [row])[0], False
+            return T1Estimator.curve_t1_replay_column(conn, org, dest, flight_date, dep_time, [row])[0], False
 
     if bracket[0] == "single":
         return predict(bracket[1])

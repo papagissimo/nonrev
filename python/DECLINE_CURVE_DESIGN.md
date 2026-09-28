@@ -1,5 +1,14 @@
 # Decline Curve Fitting — What It Does
 
+## Status
+
+The curve does not drive the live T-1 estimate. The live estimate holds each
+cabin's latest reading (T1Estimator.compute_t1_replay_column): holding calls
+the T-1 full/between/open box right more often than the curve from T-4 out
+to T-24 (findings.md, 2026-09-28). The fits below still run, their
+coefficients still show under the logging hint, and
+T1Estimator.curve_t1_replay_column keeps the curve estimator for backtests.
+
 Two genuinely different fits happen here, not one. Keep them separate when
 thinking about this.
 
@@ -32,13 +41,11 @@ One (service, cabin, flight-day) at a time.
   artifact to suppress.
 - **The model is not trying to reproduce the true shape of the decline.**
   It's *meant* to predict T-1 from T-4 (or whatever the anchor point is)
-  with something repeatable and algorithmic — that it actually does so
-  well is a separate, unproven question, not something this design
-  establishes on its own. A single (c1, slope) line is a deliberately
-  simple proxy aimed at that goal, not an attempt to trace what actually
-  happened seat-by-seat; the fit should ultimately be judged by
-  predictive usefulness, not by resemblance to the real curve, but that
-  judgment itself is still outstanding.
+  with something repeatable and algorithmic. A single (c1, slope) line is
+  a deliberately simple proxy aimed at that goal, not an attempt to trace
+  what actually happened seat-by-seat; the fit is judged by predictive
+  usefulness, not by resemblance to the real curve. Judged that way, it
+  loses to holding the latest reading (see Status).
 - **A bounce-back-and-redecline is two real segments, not one real
   segment with a second one forced onto it.** A cancellation reopening
   seats back toward 9 mid-decline interrupts one continuous erosion into
@@ -77,7 +84,7 @@ Combines many instances of the SAME service into one number per service.
 - Slope and night ratio are optimized, not averaged: a candidate value is
   scored by how well it would have predicted each instance's own last real
   reading, and the best-scoring candidate wins.
-- C1 is just a median across instances — it barely matters, since the live
+- C1 is just a median across instances — it barely matters, since the curve
   estimator overrides it the instant a real reading comes in.
 - This is a different operation from #1, not a bigger version of it:
   per-instance is a curve fit against one flight-day's raw wobbly data;

@@ -6,6 +6,54 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-09-28 — Holding the latest reading beats the decline curve
+
+**Method**: leave-one-out, raw logged readings for both the anchor and the
+truth. Truth is the reading nearest T-1 (within 1.55h of departure). The
+anchor is the single reading nearest the horizon, within 1h at T-4 (a
+quarter of the horizon further out); no bracket interpolation, since a
+bracket's far side is often the T-1 reading itself. Hold predicts T-1 equals
+the anchor reading. The curve is the live estimator with leave-one-out
+coefficients.
+
+**Game-day boxes** (python/HorizonDecisionBacktest.py): all three cabins
+summed per service-day, full ≤ 2, open ≥ 8.
+
+| From | Days | Only hold right | Only curve right | Both wrong | Hold: called open, was full | Curve: called open, was full | Curve: called full, was open |
+|---|---|---|---|---|---|---|---|
+| T-4 | 525 | 164 | 39 | 49 | 7 | 2 | 36 |
+| T-6 | 482 | 158 | 48 | 55 | 14 | 5 | 36 |
+| T-8 | 417 | 149 | 51 | 68 | 17 | 6 | 47 |
+| T-12 | 390 | 146 | 37 | 58 | 17 | 5 | 52 |
+| T-24 | 178 | 66 | 21 | 31 | 15 | 3 | 21 |
+
+- Hold calls the right box more often at every horizon tested.
+- Hold's misses are the costly kind (called open, was full), and they
+  roughly double from T-4 to T-6 and beyond. The curve's misses are almost
+  all the other kind: it calls open flights full, often from a 20+ seat
+  reading down to near zero.
+- The script lists every called-open-was-full day by service and date, and
+  breaks the T-4 calls down per service. Most services have 1-4 scored days.
+
+**Seats, per cabin from T-4** (python/BottomBacktest.py): RMSE, then share
+within 1 seat.
+
+| Cabin | Days | Hold T-4 | Live curve | Curve with fitted bottom time |
+|---|---|---|---|---|
+| Coach | 210 | 2.09, 76% | 2.70, 44% | 2.15, 70% |
+| Comfort+ | 157 | 1.59, 87% | 2.00, 72% | 1.64, 83% |
+| First | 245 | 1.14, 91% | 1.30, 81% | 1.18, 88% |
+
+- Bottom time: hours before departure at which seats stop dropping. Rules
+  that hold by default and use the curve with a fitted bottom only when it
+  beat hold by ½ or 1 seat on the service's other days, or on its day
+  group's (Mon+Fri, Sat+Sun, Tue-Thu), chose the curve on at most 21 coach
+  days and never beat hold.
+- The live curve predicts more decline than happens in every cabin (mean
+  error +0.45 to +1.27 seats).
+- T4T1Backtest.py's T-4 bracket interpolates toward the T-1 reading on 504
+  of 1118 summed days with a solid T-1; its numbers are flattered by that.
+
 ## 2026-09-25 — Scrunch!: Thursday vs Friday, last day-of T1 estimate
 
 **Method**: each Scrunch! flight's last T1 estimate (T1Estimator via

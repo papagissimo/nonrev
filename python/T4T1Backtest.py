@@ -2,15 +2,17 @@
 T4T1Backtest.py
 
 Answers one question: given only what's knowable at T-4h, how well does
-the live T-1 estimator (T1Estimator.compute_t1_replay_column) predict what
-T-1h will actually turn out to be? A one-off analysis script, not part of
-the live estimator or the settings hierarchy - run it, read the report,
-decide whether T-4 is worth building anything further around.
+the decline-curve T-1 estimator (T1Estimator.curve_t1_replay_column)
+predict what T-1h will actually turn out to be? A one-off analysis script,
+not part of the live estimator or the settings hierarchy.
 
-THE PREDICTOR UNDER TEST IS THE LIVE ONE. Each prediction is a call to
-T1Estimator.compute_t1_replay_column itself, so the expected-vs-unexpected
-rail check and the slide-C1-only-when-surprised rule are the ones the
-logging dialog actually runs. Until 2026-09-21 this script used
+KNOWN FLAW: the T-4 bracket often uses the T-1 reading itself as its far
+side, leaking the answer into the prediction; BottomBacktest.py and
+HorizonDecisionBacktest.py score without it.
+
+Each prediction is a call to T1Estimator.curve_t1_replay_column, so the
+expected-vs-unexpected rail check and the slide-C1-only-when-surprised rule
+are the curve estimator's own. Until 2026-09-21 this script used
 DeclineCurveFit.predict_t1_via_slide instead, which always slid C1 to the
 reading and never consulted the pooled C1 - a different predictor for any
 9 or 0 reading. pool_slope's own training objective still uses
@@ -135,9 +137,9 @@ def coefficients_supplied_to_live_estimator(coefficients):
 
 
 def live_t1_prediction(conn, org, dest, flight_date, dep_time, readings, cabin, coefficients):
-    """The live estimator's T-1 prediction for one cabin as of T-4:
+    """The curve estimator's T-1 prediction for one cabin as of T-4:
     each reading bracketing T-4 is replayed through
-    T1Estimator.compute_t1_replay_column on its own, then the two
+    T1Estimator.curve_t1_replay_column on its own, then the two
     predictions are interpolated by the bracket's weight. None if there
     is no bracket or the estimator has nothing to say."""
     bracket = bracket_with_weight(readings, T4_TARGET_HOURS_FOR_POOLING)
@@ -149,7 +151,7 @@ def live_t1_prediction(conn, org, dest, flight_date, dep_time, readings, cabin, 
         row = dict.fromkeys(T1Estimator.CABIN_KEY_TO_COLUMN, None)
         row["hrs"], row[cabin_key] = reading
         with coefficients_supplied_to_live_estimator(coefficients):
-            return T1Estimator.compute_t1_replay_column(conn, org, dest, flight_date, dep_time, [row])[0]
+            return T1Estimator.curve_t1_replay_column(conn, org, dest, flight_date, dep_time, [row])[0]
 
     if bracket[0] == "single":
         return replay(bracket[1])
@@ -229,7 +231,7 @@ def main():
     )
     service_info = result["service_info"]
 
-    print(f"Leave-one-out T-4 -> T-1 backtest of the live estimator (ground truth requires a real "
+    print(f"Leave-one-out T-4 -> T-1 backtest of the curve estimator (ground truth requires a real "
           f"reading within {GOOD_OBSERVATION_CUTOFF_HOURS}h of departure).")
     print()
 

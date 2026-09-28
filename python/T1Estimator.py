@@ -1,60 +1,27 @@
 """
-The live, curve-slide T1 estimator - replaces the two-point extrapolation
-as the one T1 value shown anywhere in the app (his call: he never wants
-to see two different T1 numbers side by side; the two-point method
-survives only as GraphObservations' own t1Old, kept for the graph's
-side-by-side comparison, not shown in the live dialog).
+The live T1 estimator: the one T1 value shown anywhere in the app (his call:
+he never wants to see two different T1 numbers side by side).
 
-Per cabin, independently: take the pooled (c1, slope) for this exact
-(org, dest, dayOfWeek, depTime, cabin) from declineCurveCoefficients
-(see DeclineCurveFit.py). Find the most recent KNOWN reading for that
-specific cabin - not necessarily the most recent reading overall, since
-a "9, blank, blank" partial entry deliberately leaves other cabins
-unlogged rather than implying zero (his call, carried through
-consistently here rather than zero-filling the way the old two-point
-method does).
+compute_t1_replay_column holds the latest reading. Per cabin, independently,
+the T1 estimate is that cabin's most recent KNOWN reading, unchanged - not
+necessarily the most recent reading overall, since a "9, blank, blank"
+partial entry deliberately leaves other cabins unlogged rather than implying
+zero. A cabin never logged contributes nothing to the total, not zero; a row
+where no cabin has been logged yet has no estimate at all (None). Holding the
+latest reading calls the T-1 full/between/open box right more often than the
+decline curve from T-4 out to T-24 (findings.md, 2026-09-28).
 
-If that reading is interior (1-8): well-determined, no ambiguity -
-re-anchor (horizontal slide) the frozen curve through it exactly and
-predict forward to T1_TARGET_HOURS.
-
-If it's still at a rail (9 or 0): "still 9" only means the corner hasn't
-happened YET, not where it actually is - it's genuinely ambiguous
-whether this is unremarkable (matches what the pooled curve already
-expected at this point) or a real surprise (the pooled curve expected
-this cabin to already be moving/already empty by now, and it isn't/is).
-His call: compare the reading against what the pooled curve ALONE
-(no live data) would already predict at this same hoursBeforeDep. If
-they're close, there's nothing new here - use the pooled curve as-is,
-no slide (this is what fixes the original bug: an early "still 9"
-reading that the pooled curve also expects to still be 9 shouldn't
-trigger a slide that then wildly overshoots on a long extrapolation).
-If they disagree by more than the configured threshold, it's a genuine
-surprise ("unexpectedly early zero" or "unexpectedly late nine", his
-terms, treated symmetrically) - slide anyway, using the same naive
-anchor-at-reading-time assumption the interior case effectively uses
-(c1 solves out to exactly the reading's own hoursBeforeDep for a
-surprising 9, or hoursBeforeDep + 9/slope - i.e. the OTHER corner, c2,
-lands right at the reading - for a surprising 0): his phrasing, "take
-it out too as if it'll start declining just after that reading" /
-"slides that c2 corner out to that first zero observation."
-
-The "how much disagreement counts as a surprise" threshold reuses
-declineCurveSettings' stepChangeRmseThreshold (same settings panel,
-/pooling) rather than introducing a second tunable - same rough
-statistical job (how many seats is a meaningful deviation), though a
-different exact use (a single-point comparison here, an RMSE over many
-points there). Worth revisiting if that turns out not to be the right
-number for this particular purpose.
-
-A cabin with no resolvable slope yet (brand-new service, or a schedule
-change since the last refresh), never logged in the pool at all, or
-stuck at a rail with no resolvable pooled C1 either (nothing to compare
-against, so nothing to judge "expected" against - defaults to sliding,
-since that's the only usable information left) contributes NOTHING to
-the total, not zero, if truly nothing is resolvable. A row where every
-cabin is unresolvable has no estimate at all (None), rather than a
-misleading 0.
+curve_t1_replay_column is the decline-curve estimator the live one replaced,
+kept for the backtests that measure it. Per cabin: take the pooled (c1,
+slope, nightRatio) for this exact (org, dest, dayOfWeek, depTime, cabin),
+resolved through DeclineCurveHierarchy. If the cabin's most recent known
+reading is interior (1-8), slide the curve through it exactly and predict
+forward to T1_TARGET_HOURS. If it's at a rail (9 or 0), compare it against
+what the pooled curve alone predicts at the same hoursBeforeDep: within
+declineCurveSettings' stepChangeRmseThreshold, use the pooled curve as-is;
+beyond it, or with no pooled C1 to compare against, slide through the
+reading. A cabin with no resolvable slope, or never logged, contributes
+nothing; a row where every cabin is unresolvable is None.
 """
 
 from datetime import datetime
@@ -88,44 +55,43 @@ def load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep
     return result
 
 
+def latest_known_readings(readings, idx):
+    """cabin_key -> (hrs, value) of each cabin's most recent known reading as
+    of row idx (readings[idx:], since the list counts down in hrs)."""
+    latest = {}
+    for row in readings[idx:]:
+        for cabin_key in CABIN_KEY_TO_COLUMN:
+            if cabin_key not in latest and row.get(cabin_key) is not None:
+                latest[cabin_key] = (row['hrs'], row[cabin_key])
+    return latest
+
+
 def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
     """readings: as returned by SeatLoggingDialog.previous_readings_for -
     most-recent-first (ascending hrs), each {'hrs':, 'y':, 'cplus':,
-    'onePS':, 'd1':}, values already resolved (real actual only - the
-    old glance-derived decimal fallback was retired 2026-09-14) or None
-    if that cabin wasn't touched on that particular check.
+    'onePS':, 'd1':}, None where that cabin wasn't logged on that check.
 
-    Returns a list the same length as readings - one curve-slide T1
-    estimate per row, replay-style: computed using only that row and
-    everything CHRONOLOGICALLY EARLIER (readings[idx:], since the list
-    counts down in hrs) - matches the existing two-point T1 column's own
-    replay semantics (see SeatLoggingDialog.html's now-removed
-    formatT1Column/computeT1EstimateForPool, which this supersedes as
-    the one T1 shown in the dialog).
+    Returns a list the same length as readings - one T1 estimate per row,
+    replay-style: the sum over cabins of each cabin's most recent known
+    reading as of that row, or None where no cabin has been logged yet."""
+    results = []
+    for idx in range(len(readings)):
+        latest = latest_known_readings(readings, idx)
+        results.append(sum(value for _, value in latest.values()) if latest else None)
+    return results
 
-    See module docstring for the per-cabin carry-forward, the rail
-    expected-vs-unexpected slide decision, and the missing-means-omit-
-    not-zero rule.
 
-    Day/night decline-rate split: each cabin's resolved nightSlopeRatio
-    (see load_decline_curve_coefficients_for_flight) and this flight's
-    real departure timestamp get threaded into every piecewise_model/
-    solve_c1_from_reading call below, so both the "does this rail
-    reading match what the pooled curve already expects" check and the
-    actual slide-and-project-to-T1 step know that overnight hours
-    decline slower - see DeclineCurveFit.py's module docstring for why
-    this is a flat rate change, not a smooth curve. departure_dt is
-    built via et_equivalent_datetime (dep_time is minutes-since-
-    midnight ORIGIN-local, same convention as everywhere else that
-    isn't this file's own night/day math - not HHMM digits, a bug that
-    lived here from 2026-09-14 until caught 2026-09-15 via a hint that
-    was visibly wrong), converted to its ET equivalent and then treated
-    as naive from there - ET because that's the zone his own
-    checkTimestamp values are actually logged in (eastern_now()), which
-    is what the night-ratio default was originally calibrated against;
-    using a different zone here than the data it was calibrated on
-    would silently reintroduce the same class of bug this comment is
-    about."""
+def curve_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
+    """Same readings and return shape as compute_t1_replay_column, but each
+    row's estimate is the decline-curve prediction described in the module
+    docstring.
+
+    Each cabin's resolved nightSlopeRatio and this flight's departure
+    timestamp are threaded into every piecewise_model/solve_c1_from_reading
+    call, so overnight hours decline slower. departure_dt comes from
+    et_equivalent_datetime (dep_time is minutes-since-midnight ORIGIN-local,
+    not HHMM digits), then treated as naive ET - the zone checkTimestamp is
+    logged in, and the zone the night-ratio default was calibrated against."""
     day_of_week = datetime.strptime(flight_date, "%Y-%m-%d").strftime("%a")
     coeffs = load_decline_curve_coefficients_for_flight(conn, org, dest, day_of_week, dep_time)
     if not coeffs:

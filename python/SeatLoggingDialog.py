@@ -207,9 +207,9 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     (cabin_key -> solo available-to-select count) and 'blocked' (the X
     count), None wherever nothing was observed.
 
-    Each row also carries 't1': the curve-slide T1 estimate as of that
-    point in the day (see T1Estimator.compute_t1_replay_column) - this
-    is now the ONE T1 value shown anywhere in the dialog (his call - he
+    Each row also carries 't1': the live T1 estimate as of that point in
+    the day (see T1Estimator.compute_t1_replay_column) - the ONE T1 value
+    shown anywhere in the dialog (his call - he
     never wants two different T1 numbers displayed side by side), computed
     server-side rather than in the browser (his call - no good reason for
     real calculation to live client-side). None where no estimate is

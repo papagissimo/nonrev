@@ -1,8 +1,8 @@
 """
 NightZoneBacktest.py
 
-One-off analysis: which definition of "night" makes the live T1 estimator
-predict best? Report only - nothing is written to the database, and the
+One-off analysis: which definition of "night" makes the decline-curve T1
+estimator (T1Estimator.curve_t1_replay_column) predict best? Report only - nothing is written to the database, and the
 live fit is untouched once the script exits.
 
 Definitions compared, each using the nightStartHour/nightEndHour setting
@@ -141,7 +141,7 @@ def t1_prediction_from(conn, org, dest, flight_date, dep_time, raw_readings, cab
         row = dict.fromkeys(T1Estimator.CABIN_KEY_TO_COLUMN, None)
         row["hrs"], row[cabin_key] = reading
         with coefficients_supplied_to_live_estimator(coefficients):
-            return T1Estimator.compute_t1_replay_column(conn, org, dest, flight_date, dep_time, [row])[0]
+            return T1Estimator.curve_t1_replay_column(conn, org, dest, flight_date, dep_time, [row])[0]
 
     if bracket[0] == "single":
         return replay(bracket[1])
