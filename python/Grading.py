@@ -13,9 +13,9 @@ last leg, multiplied together.
 
 Itineraries are inferred per scenario and weekday: a cell whose origin is
 another cell's destination is that cell's onward leg. A flight in several
-switched-on scenarios shows the best letter and best percent found for it,
-even when they come from different itineraries - the label says how
-important a flight is to log.
+switched-on scenarios shows one grade per scenario, one per line, each
+named, since the same flight can be a nonstop in one scenario and a
+connecting leg in another.
 """
 
 from datetime import timedelta
@@ -272,22 +272,6 @@ def result_text(model, result):
     return f'{letter} {percent}{THIN_MARK if result.thin else ""}'
 
 
-def best_result(results):
-    real = [r for r in results if not r.problem]
-    if not real:
-        return results[0]
-    possible = [r for r in real if not r.impossible]
-    if not possible:
-        return max(real, key=lambda r: r.comfort if r.comfort is not None else -1)
-    comforts = [r.comfort for r in possible if r.comfort is not None]
-    with_likelihood = [r for r in possible if r.likelihood is not None]
-    if not with_likelihood:
-        return Result(comfort=max(comforts) if comforts else None, thin=True)
-    most_likely = max(with_likelihood, key=lambda r: r.likelihood)
-    return Result(comfort=max(comforts) if comforts else None,
-                  likelihood=most_likely.likelihood, thin=most_likely.thin)
-
-
 class FlightGrades:
     """Computed grades from switched-on scenarios, looked up per scheduled
     flight. Built once per logging batch; each scenario-day is worked out
@@ -358,9 +342,7 @@ class FlightGrades:
 
     def text_for(self, org, dest, day, dep_time):
         entries = self.results_for_day(day).get((org, dest, dep_time), [])
-        if not entries:
-            return ''
-        text = result_text(self.model, best_result([result for _, result in entries]))
         if len(entries) == 1:
-            return text
-        return text + ' \u00b7 ' + ', '.join(sorted({name for name, _ in entries}, key=str.lower))
+            return result_text(self.model, entries[0][1])
+        return '\n'.join(f'{result_text(self.model, result)} \u00b7 {name}'
+                         for name, result in sorted(entries, key=lambda e: e[0].lower()))
