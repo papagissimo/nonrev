@@ -6,6 +6,36 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-09-28 — Bedtime reading on Ohio morning departures
+
+**Question**: for Ohio departures before 8:00 local, where T-1 falls while
+he's usually asleep, how well does the last reading the night before
+predict T-1?
+
+**Method**: all three cabins summed per service-day, full ≤ 2, open ≥ 8.
+Truth is the reading nearest T-1 (within 1.55h of departure). Morning
+anchor is the last reading checked 20:00-23:59 the evening before the
+flight date, typically about T-8. Comparison anchors are the reading
+nearest T-8 (within 1.5h) and nearest T-3 (within 1h) on every flight not
+in the morning group. Raw readings, no estimator.
+
+| Anchor | Days | Open at anchor | Open → full | Open → between |
+|---|---|---|---|---|
+| Ohio pre-8am, bedtime reading | 23 | 17 | 0 | 2 |
+| All other flights, nearest T-8 | 495 | 329 | 26 (7.9%) | 54 |
+| All other flights, nearest T-3 | 647 | 420 | 9 (2.1%) | 31 |
+
+- An open bedtime reading on a morning departure has not yet ended full.
+  At the daytime T-8 rate, 0 of 17 would still happen about 1 time in 4,
+  so this leans toward the overnight hours adding little decline but does
+  not establish it.
+- Y alone agrees: 22 open at bedtime, 0 ended full, 3 ended between.
+- The morning T-1 truths come from nights he woke early, which are
+  unrelated to loads, so the sample is fair but grows slowly.
+- Late collapses from ~T-3 to T-1 (Y alone, open to full) concentrate at
+  LAX departures: 3 of 89 LAX days against 2 of 254 elsewhere. LAX→CVG
+  also fell from Y=9 to Y=3 between 3.4h and 2.7h on 2026-08-06.
+
 ## 2026-09-28 — Holding the latest reading beats the decline curve
 
 **Method**: leave-one-out, raw logged readings for both the anchor and the

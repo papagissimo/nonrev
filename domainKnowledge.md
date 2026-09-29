@@ -71,3 +71,13 @@ time zones. A flight's departure, and what day it counts as, has to be
 evaluated against its own origin airport's local clock, not wherever the
 observer happens to be. Anything that buckets or filters by date has to
 ask "today, according to which airport" explicitly.
+
+## Seating standbys together
+
+Conjecture, not confirmed: when gate agents seat standbys, they try to
+keep couples together if they have the time and room to, and their room
+to do it grows with the total open seats across all cabins. So the summed
+open-seat count bears on sitting together as well as on clearing at all.
+The seat map's selectable solo and pair counts are not evidence of the
+chance of sitting together; what the seat map shows isn't understood well
+enough to read that way (see Seat map vs. can-buy).
