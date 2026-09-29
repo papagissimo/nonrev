@@ -64,6 +64,17 @@ working around it.
 - **Seat-map modeling** — when the selectable counts get modeled, key off
   time; a seat-map reading needn't share a can-buy reading's timestamp.
 
+- **Scenarios screen does two jobs**: a scenario's days mean "days I might
+  fly this trip," but they are also the only way to say "days I bother
+  logging this route" (e.g. log Tuesday on some routes and Wednesday on
+  others, since Tue and Wed look alike). Logging covers the union of all
+  active scenarios, so any scenario can quietly re-add a skipped day, and
+  getting it right means cross-checking every scenario that touches a route.
+  Candidate direction, not agreed: scenarios keep only the days-I-might-fly
+  job, and a separate per-route setting picks which of Tue/Wed gets logged
+  (default both). Open: whether a Tue question on a Wed-logged route should
+  then read Wed data.
+
 ## Service identity (raw depTime vs. clustered service) — CLOSED 2026-09-16
 
 This resurfaced across multiple sessions as a real, recurring frustration.
