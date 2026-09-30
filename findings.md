@@ -6,6 +6,33 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-09-29 — Early readings far from the middle mostly hold
+
+**Question**: once a flight reads well open or well full hours out, how
+often does T-1 end up somewhere else?
+
+**Method**: all three cabins summed, only readings with all three logged.
+Truth is the reading nearest T-1 (within 1.55h of departure). The anchor is
+the raw reading nearest T-6 (within 1.5h), T-8 (within 1.5h) or T-12
+(within 2h), never inside the truth window. The three horizons are pooled,
+so one flight-day can count up to three times.
+
+| Early reading | Days | Ended full (≤2) | Between | Ended open (≥8) |
+|---|---|---|---|---|
+| 16 or more | 364 | 10 (1 in 36) | 8 | 346 |
+| 12–15 | 242 | 14 (1 in 17) | 26 | 202 |
+| 8–11 | 471 | 49 (1 in 10) | 130 | 292 |
+| 6–7 | 101 | 28 | 58 | 15 (1 in 7) |
+| 3–5 | 197 | 89 | 74 | 34 (1 in 6) |
+| 0–2 | 203 | 155 | 37 | 11 (1 in 18) |
+
+- The band matters more than the horizon: no steady trend from T-12 to
+  T-6 within a band.
+- The top band is the most settled: 16 or more ended full about 1 time in
+  36. The bottom band is less so: 0–2 ended open 1 time in 18, and a
+  quarter of those days ended between.
+- From 3 to 7, an early reading says little about where T-1 ends.
+
 ## 2026-09-28 — Bedtime reading on Ohio morning departures
 
 **Question**: for Ohio departures before 8:00 local, where T-1 falls while
@@ -40,26 +67,27 @@ in the morning group. Raw readings, no estimator.
 
 **Method**: leave-one-out, raw logged readings for both the anchor and the
 truth. Truth is the reading nearest T-1 (within 1.55h of departure). The
-anchor is the single reading nearest the horizon, within 1h at T-4 (a
-quarter of the horizon further out); no bracket interpolation, since a
-bracket's far side is often the T-1 reading itself. Hold predicts T-1 equals
-the anchor reading. The curve is the live estimator with leave-one-out
-coefficients.
+anchor never uses a reading inside that window. Two readings straddling the
+horizon, each within twice the tolerance of it, are interpolated between;
+otherwise the anchor is the single reading nearest the horizon, within the
+tolerance (1h at T-4, a quarter of the horizon further out). Hold predicts
+T-1 equals the anchor. The curve is the estimator the live one replaced,
+with leave-one-out coefficients.
 
 **Game-day boxes** (python/HorizonDecisionBacktest.py): all three cabins
 summed per service-day, full ≤ 2, open ≥ 8.
 
 | From | Days | Only hold right | Only curve right | Both wrong | Hold: called open, was full | Curve: called open, was full | Curve: called full, was open |
 |---|---|---|---|---|---|---|---|
-| T-4 | 525 | 164 | 39 | 49 | 7 | 2 | 36 |
-| T-6 | 482 | 158 | 48 | 55 | 14 | 5 | 36 |
-| T-8 | 417 | 149 | 51 | 68 | 17 | 6 | 47 |
-| T-12 | 390 | 146 | 37 | 58 | 17 | 5 | 52 |
-| T-24 | 178 | 66 | 21 | 31 | 15 | 3 | 21 |
+| T-4 | 552 | 176 | 50 | 49 | 6 | 2 | 30 |
+| T-6 | 519 | 179 | 61 | 54 | 16 | 6 | 40 |
+| T-8 | 452 | 171 | 57 | 60 | 18 | 6 | 46 |
+| T-12 | 409 | 155 | 42 | 58 | 17 | 5 | 55 |
+| T-24 | 185 | 67 | 24 | 30 | 15 | 2 | 23 |
 
 - Hold calls the right box more often at every horizon tested.
 - Hold's misses are the costly kind (called open, was full), and they
-  roughly double from T-4 to T-6 and beyond. The curve's misses are almost
+  roughly triple from T-4 to T-6 and beyond. The curve's misses are almost
   all the other kind: it calls open flights full, often from a 20+ seat
   reading down to near zero.
 - The script lists every called-open-was-full day by service and date, and
@@ -70,17 +98,17 @@ within 1 seat.
 
 | Cabin | Days | Hold T-4 | Live curve | Curve with fitted bottom time |
 |---|---|---|---|---|
-| Coach | 210 | 2.09, 76% | 2.70, 44% | 2.15, 70% |
-| Comfort+ | 157 | 1.59, 87% | 2.00, 72% | 1.64, 83% |
-| First | 245 | 1.14, 91% | 1.30, 81% | 1.18, 88% |
+| Coach | 221 | 2.01, 74% | 2.66, 45% | 2.04, 69% |
+| Comfort+ | 170 | 1.50, 87% | 1.85, 74% | 1.50, 85% |
+| First | 253 | 1.11, 91% | 1.27, 79% | 1.14, 87% |
 
 - Bottom time: hours before departure at which seats stop dropping. Rules
   that hold by default and use the curve with a fitted bottom only when it
   beat hold by ½ or 1 seat on the service's other days, or on its day
-  group's (Mon+Fri, Sat+Sun, Tue-Thu), chose the curve on at most 21 coach
+  group's (Mon+Fri, Sat+Sun, Tue-Thu), chose the curve on at most 23 coach
   days and never beat hold.
-- The live curve predicts more decline than happens in every cabin (mean
-  error +0.45 to +1.27 seats).
+- The curve predicts more decline than happens in every cabin (mean
+  error +0.44 to +1.28 seats).
 - T4T1Backtest.py's T-4 bracket interpolates toward the T-1 reading on 504
   of 1118 summed days with a solid T-1; its numbers are flattered by that.
 

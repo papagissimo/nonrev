@@ -56,11 +56,6 @@ working around it.
   a321). The seat-map panel now handles those (its "add sizes" fills the
   missing row); whether the schedule dialog should become a real pick list
   too is open.
-- **Glance-only observation rows — decision pending.** 26 old rows
-  (2026-09-01 to 09-13) hold only the retired cheap* values: y, cPlus,
-  firstOrPS and d1 are all NULL. GraphObservations counts a missing cabin
-  as 0, so the 15 outside excluded date ranges plot as zero-seat points.
-  Delete them, or leave them.
 - **Seat-map modeling** — when the selectable counts get modeled, key off
   time; a seat-map reading needn't share a can-buy reading's timestamp.
 
@@ -278,6 +273,26 @@ before - a NEW, specific symptom is the bar for reopening it.
   read access before the switch, or Claude loses its only view of
   nonrev.db.
 
+## Parked
+
+- **When to stop logging a flight until the golden ticket.** An early
+  reading far enough from the middle may settle the day on its own: high
+  enough that it almost never ends full, or low enough that it almost
+  never ends open. Starting point is findings.md, 2026-09-29 (early
+  reading bands against T-1). Open: the threshold on each side, whether
+  it varies by service or route, and how the dialog would show it.
+- **White knuckle flights.** A flight that ended open (T-1 at or above the
+  open threshold) but dipped more than one below that threshold on the way
+  there. Show it beside the open/full counts, so "usually open, the odd
+  white knuckle" reads differently from "never had one" - a dip on a
+  service that has never had one means something is up today. Rough count
+  (2026-09-29, summed cabins, dip to 6 or less before the T-1 window): 60 of
+  956 days that ended open, on 42 of 146 services. A dip is only seen if a
+  reading lands in it, so "never" means less on thinly read services.
+- **Sharper glance-floor estimate.** He has ideas beyond the per-cabin
+  mean (per service, a plus/minus band). Low value for now: the estimate
+  only feeds the logging dialog's Prev and T-1 columns.
+
 ## Someday / not started, low priority
 
 - Long-haul Delta One analysis (Hawaii, Tokyo, New Zealand, Australia) —
@@ -352,22 +367,9 @@ before - a NEW, specific symptom is the bar for reopening it.
   all. goldenTicketHours (a display flag, not a gate) is untouched.
 - GraphObservations' t1Old/t1New side-by-side (old two-point method vs.
   floor-substituted variant) comparison feature — never actually used it.
-- Feeding cheap-glance data through FloorEstimates' conditional-mean
-  substitution to anchor the T1 estimator — real actual value or the raw
-  cheap-glance value itself now, never a laundered decimal guess.
-- Floor-plug-in coefficients table (per-floor conditional mean of
-  actual-given-floor) and its Beta-distribution refinement — superseded;
-  FloorEstimates.py and all glance-derived estimation fully retired
-  2026-09-14, and the cheap-glancing habit it depended on is already
-  dead below.
-- Cheap-glancing (as a cadence habit) for the purpose of catching C1/C2
-  corners — the curve fit doesn't need the corner observed at all
-  (left/right-censored instances fit fine from interior data alone);
-  precise interior (1-8) readings are what it actually needs, and cheap
-  glances were displacing the time to get those. Cadence window-start for
-  previously-observed C1 (searching for where a service's corner
-  happened, to aim cadence at it) is dead for the same reason — nothing
-  needs to search for a corner anymore.
+- Aiming cadence at a service's C1/C2 corner (glancing for it, or starting
+  the window at a previously observed C1) — the curve fit doesn't need the
+  corner observed, and the curve no longer drives the estimate.
 - Automating overnight Delta.com checks (scripted page loads, VPN/bot
   variant) — ToS/detection risk.
 - Cadence-from-slope, curve-shape decimation — real oversampled data showed

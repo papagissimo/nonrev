@@ -164,9 +164,8 @@ net-coverage win, on this snapshot.
 - Slope is seats/hour everywhere, never minutes/seat.
 - Slope accuracy matters most. C1 matters little: it only counts before a
   flight has any real reading.
-- Floor estimation from cheap-glance readings (FloorEstimates.py, its
-  Beta refinement, the per-floor coefficients table) is retired for good.
-  Glance columns stay as history; nothing live reads them.
+- The curve fit never reads glance (cheap*) columns. Glance floors feed
+  only the logging dialog's Prev and T-1 columns, through FloorEstimates.py.
 
 ## Open questions / backlog
 

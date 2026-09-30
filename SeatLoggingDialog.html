@@ -58,7 +58,14 @@
     #scheduleModalFrame { width: 100%; height: 100%; border: none; border-radius: 6px; }
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; min-height: 1.4em; }
-    #flightTable.mode-c1steps .grp-select, #flightTable.mode-select .grp-c1steps { display: none; }
+    #flightTable.mode-c1steps .grp-select, #flightTable.mode-c1steps .grp-glance,
+    #flightTable.mode-select .grp-c1steps, #flightTable.mode-select .grp-glance,
+    #flightTable.mode-glance .grp-c1steps, #flightTable.mode-glance .grp-select { display: none; }
+    td.col-glanceY { border-left: 2px solid #ddd; }
+    input.seat.glance { border-color: #a8c7fa; }
+    input.seat.auto { color: #999; background: #f2f2f2; }
+    .modeRadios { margin-left: 12px; font-size: 13px; color: #666; }
+    .modeRadios label { margin-right: 8px; cursor: pointer; white-space: nowrap; }
     td.col-soloY { border-left: 2px solid #ddd; padding-left: 12px; }
     td.col-blocked { border-left: 1px solid #eee; padding-left: 8px; }
     .prevHrsInline { display: inline-block; width: 38px; color: #666; }
@@ -153,7 +160,7 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span id="columnModeToggle" class="eyeToggle" title="Switch the history columns between C1/Steps and Solo select/X" onclick="toggleColumnMode()">&#8646;</span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="modeRadios"><label><input type="radio" name="columnMode" value="c1steps" checked onchange="setColumnMode(this.value)">C1/Steps</label><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" onchange="setColumnMode(this.value)">Glance</label></span>
     </div>
     <div id="routeFlagRow">
       <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
@@ -189,7 +196,9 @@
 
     function canBuyFields() { return (batch && batch.canBuyFields) || []; }
     function seatMapFields() { return (batch && batch.seatMapFields) || []; }
-    function dataFields() { return canBuyFields().concat(seatMapFields()); }
+    function glanceActualField() { return (batch && batch.glanceActualField) || {}; }
+    function glanceFields() { return Object.keys(glanceActualField()); }
+    function dataFields() { return canBuyFields().concat(glanceFields(), seatMapFields()); }
     function insiderFields() { return (batch && batch.insiderFields) || []; }
     function insiderKeys() { return insiderFields().concat(['verdict', 'checkTime']); }
     function insiderEl(key, i) {
@@ -240,7 +249,7 @@
         dep: row.dep, aircraftConfig: row.aircraftConfig, flightNumber: row.flightNumber,
         hoursUntilDep: row.hoursUntilDep, depDisplay: row.depDisplay
       };
-      canBuyFields().forEach(function (f) { entry[f] = fieldValue(f, i); });
+      canBuyFields().concat(glanceFields()).forEach(function (f) { entry[f] = fieldValue(f, i); });
       var typedSeatMapValue = seatMapFields().some(function (f) {
         return fieldValue(f, i) !== '' && !isAutoFilled(f, i);
       });
@@ -334,10 +343,10 @@
       var cols = [
         { key: 'dep', label: 'Dep', width: 92 }
       ];
-      // Glance ("cheap") columns fully retired 2026-09-14 (his call: not
-      // just hidden from the UI as of the first pass - eliminated from
-      // the code entirely, backend included, to stop being a source of
-      // confusion). No trace of them left here now.
+      cols.push({ key: 'glanceY', label: 'Y', width: 48, group: 'glance' });
+      cols.push({ key: 'glanceCplus', label: 'C+', width: 48, group: 'glance' });
+      cols.push({ key: 'glanceOnePS', label: '1/PS', width: 48, group: 'glance' });
+      if (anyD1) cols.push({ key: 'glanceD1', label: 'D1', width: 48, group: 'glance' });
       cols.push({ key: 'y', label: 'Y', width: 48 });
       cols.push({ key: 'cplus', label: 'C+', width: 48 });
       cols.push({ key: 'onePS', label: '1/PS', width: 48 });
@@ -547,6 +556,9 @@
         });
         lines.push('  current input (unsaved): y=' + blankDash(cur.y) + ' cplus=' + blankDash(cur.cplus) +
           ' onePS=' + blankDash(cur.onePS) + ' d1=' + blankDash(cur.d1));
+        lines.push('  current glance input (unsaved): ' + glanceFields().map(function (f) {
+          return f + '=' + blankDash(fieldValue(f, i));
+        }).join(' '));
         var seatMapTyped = seatMapFields().filter(function (f) { return fieldValue(f, i) !== ''; })
           .map(function (f) { return f + '=' + fieldValue(f, i) + (isAutoFilled(f, i) ? '(auto)' : ''); });
         lines.push('  current seat-map input (unsaved): ' + (seatMapTyped.length ? seatMapTyped.join(' ') : '-'));
@@ -570,6 +582,7 @@
         }
         readings.forEach(function (rd) {
           var steps = rd.steps || {};
+          var estimated = (rd.estimated || []).length ? '  (glance floor estimate: ' + rd.estimated.join(' ') + ')' : '';
           var solo = rd.solo || {};
           lines.push('    hrs=' + rd.hrs.toFixed(2) +
             '  y=' + blankDash(rd.y) + ' cplus=' + blankDash(rd.cplus) +
@@ -579,7 +592,7 @@
             ' onePS=' + blankDash(steps.onePS) + ' d1=' + blankDash(steps.d1) +
             '  solo select: y=' + blankDash(solo.y) + ' cplus=' + blankDash(solo.cplus) +
             ' onePS=' + blankDash(solo.onePS) + ' d1=' + blankDash(solo.d1) +
-            '  X=' + blankDash(rd.blocked));
+            '  X=' + blankDash(rd.blocked) + estimated);
         });
         lines.push('');
       });
@@ -624,10 +637,11 @@
       // characters follow it.
       if (!readings || readings.length === 0) return '';
       return readings.map(function (rd, idx) {
-        var parts = [rd.y, rd.cplus, rd.onePS];
-        if (anyD1) parts.push(rd.d1);
-        var text = parts.map(function (v) {
-          var display = (v === '' || v === null || v === undefined) ? '-' : v;
+        var cabins = anyD1 ? ['y', 'cplus', 'onePS', 'd1'] : ['y', 'cplus', 'onePS'];
+        var text = cabins.map(function (cabin) {
+          var v = rd[cabin];
+          var display = (v === '' || v === null || v === undefined) ? '-'
+            : ((rd.estimated || []).indexOf(cabin) !== -1 ? Number(v).toFixed(1) : v);
           return '<span class="prevSeatVal">' + display + '</span>';
         }).join('');
         var hrsText = formatHours(rd.hrs);
@@ -1013,15 +1027,14 @@
 
     function applyColumnMode() {
       document.getElementById('flightTable').className = 'mode-' + columnMode;
-      document.getElementById('columnModeToggle').className = 'eyeToggle' + (columnMode === 'select' ? ' active' : '');
       var span = visibleColumnCount(currentColumns);
       Array.prototype.forEach.call(document.querySelectorAll('tr.seatMapRow > td, tr.insiderRow > td'), function (td) {
         td.setAttribute('colspan', span);
       });
     }
 
-    function toggleColumnMode() {
-      columnMode = (columnMode === 'c1steps') ? 'select' : 'c1steps';
+    function setColumnMode(mode) {
+      columnMode = mode;
       applyColumnMode();
     }
 
@@ -1106,6 +1119,7 @@
           el.value = saved.vals[f];
           if (saved.autoFields.indexOf(f) !== -1) markAuto(el); else clearAuto(el);
         });
+        glanceFields().forEach(function (f) { syncActualFromGlance(f, i); });
         refreshSeatMapLink(i);
         if (saved.insiderOpen) insiderPanelFor(i).style.display = '';
         insiderKeys().forEach(function (k) {
@@ -1173,21 +1187,17 @@
         return '<th class="' + groupClass(c) + '"' + (c.title ? ' title="' + c.title + '"' : '') + '>' + c.label + '</th>';
       }).join('');
 
-      // Group-label row above the field labels - Actual, C1 (after
-      // slide), and Steps (see buildColumns) are the three groups now
-      // that Glance is gone. C1-after added 2026-09-16 to the left of
-      // Steps (his ask); Steps itself repositioned that same session
-      // to sit after the Hrs/gap/Prev block instead of right after
-      // Actual (his explicit call).
+      var glanceCount = anyD1 ? 4 : 3;
       var actualCount = anyD1 ? 4 : 3;
       var midCount = 3; // hrs, gap, prev
       var c1AfterCount = anyD1 ? 4 : 3;
       var stepCount = anyD1 ? 4 : 3;
       var selectCount = anyD1 ? 4 : 3;
       var blockedCount = 1;
-      var restCount = columns.length - 1 - actualCount - midCount - c1AfterCount - stepCount - selectCount - blockedCount;
+      var restCount = columns.length - 1 - glanceCount - actualCount - midCount - c1AfterCount - stepCount - selectCount - blockedCount;
       document.getElementById('groupHeaderRow').innerHTML =
         '<th></th>' +
+        '<th class="groupHead grp-glance" colspan="' + glanceCount + '">Glance</th>' +
         '<th class="groupHead" colspan="' + actualCount + '">Actual</th>' +
         '<th colspan="' + midCount + '"></th>' +
         '<th class="groupHead grp-c1steps" colspan="' + c1AfterCount + '">C1</th>' +
@@ -1210,6 +1220,10 @@
             (row.grade ? '<div class="gradeLine">' + escapeHtml(row.grade) + '</div>' : '') +
             '<div class="panelLinks"><a class="insiderLink" data-i="' + i + '">insider</a>' +
             (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>') + '</div>',
+          glanceY: glanceInputHtml('glanceY', i, seatDisabled),
+          glanceCplus: glanceInputHtml('glanceCplus', i, seatDisabled),
+          glanceOnePS: glanceInputHtml('glanceOnePS', i, seatDisabled),
+          glanceD1: glanceInputHtml('glanceD1', i, seatDisabled),
           y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.y) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.y) + '</div>',
           cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',
@@ -1283,6 +1297,30 @@
       tbody.addEventListener('focusin', selectSeatMapInputOnFocus);
     }
 
+    function glanceInputHtml(field, i, seatDisabled) {
+      return '<div class="seatCellWrap"><input class="seat glance" data-i="' + i + '" data-field="' + field +
+        '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '></div>';
+    }
+
+    // A glance of 9 or 0 is an exact count, so it fills and locks the
+    // matching Actual box; any other glance is only a floor and leaves
+    // Actual free for the binary search.
+    function syncActualFromGlance(glanceField, i) {
+      var actualField = glanceActualField()[glanceField];
+      var actual = inputFor(actualField, i);
+      if (!actual) return;
+      var glance = fieldValue(glanceField, i);
+      if (glance === '9' || glance === '0') {
+        actual.value = glance;
+        markAuto(actual);
+        actual.disabled = true;
+      } else if (isAutoFilled(actualField, i)) {
+        actual.value = '';
+        clearAuto(actual);
+        actual.disabled = !!batch.rows[i].departed;
+      }
+    }
+
     function sanitizeSeatInput(e) {
       // Hard block at the source - the whole reason a stray "65" ever
       // got into observations. Can-buy counts are a single digit 0-9;
@@ -1302,6 +1340,9 @@
       if (!isCanBuy && !isSeatMap) return;
       var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, isCanBuy ? 1 : 3);
       if (cleaned !== el.value) el.value = cleaned;
+      if (el.classList.contains('glance')) {
+        syncActualFromGlance(el.getAttribute('data-field'), parseInt(el.getAttribute('data-i'), 10));
+      }
       if (isSeatMap) {
         clearAuto(el);
         refreshSeatMapLink(parseInt(el.getAttribute('data-i'), 10));
@@ -1328,19 +1369,20 @@
     function canBuyArrowTarget(el, key) {
       var i = parseInt(el.getAttribute('data-i'), 10);
       var field = el.getAttribute('data-field');
-      var canBuy = canBuyFields();
+      var order = (columnMode === 'glance' ? glanceFields() : []).concat(canBuyFields());
+      function usable(candidate) { return candidate && !candidate.disabled ? candidate : null; }
 
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         var dir = key === 'ArrowLeft' ? -1 : 1;
-        for (var idx = canBuy.indexOf(field) + dir; idx >= 0 && idx < canBuy.length; idx += dir) {
-          var candidate = inputFor(canBuy[idx], i);
+        for (var idx = order.indexOf(field) + dir; idx >= 0 && idx < order.length; idx += dir) {
+          var candidate = usable(inputFor(order[idx], i));
           if (candidate) return candidate;
         }
         return null;
       }
       var targetRow = i + (key === 'ArrowUp' ? -1 : 1);
       if (targetRow < 0 || targetRow >= batch.rows.length) return null;
-      return inputFor(field, targetRow);
+      return usable(inputFor(field, targetRow));
     }
 
     function seatMapGridRows() {
@@ -1516,9 +1558,6 @@
       saveRouteDayFlag(e.target.value);
     });
 
-    // Floor->actual estimate refresh (FloorEstimates.py) retired
-    // 2026-09-14 along with all glance/cheap-derived estimation - just
-    // load the batch directly now.
     loadBatch();
   </script>
 </body>

@@ -106,15 +106,9 @@ CREATE TABLE dayGroupings (
 -- a real binary-search result). solo*/pair* are the seat-map selectable
 -- counts (single seats / adjacent pairs); blockedTotal is the seat map's X
 -- seats across all cabins.
--- cheapY/cheapCPlus/cheapFirstOrPS/cheapD1 are a FROZEN HISTORICAL ARTIFACT
--- as of 2026-09-14: the old glance-entry workflow (a free ceiling/floor
--- glance off Delta's all-flights page before the binary search) is fully
--- retired, "every whiff of it, gone" (his call) - nothing anywhere in this
--- codebase writes to these columns anymore, and no live code path reads them
--- either. They're kept, not dropped, purely to preserve rows logged before
--- this date - a genuine confirmed zero from back then is still 0 in both the
--- cheap and actual column for that cabin, never left implicit; NULL meant no
--- glance was taken that reading.
+-- cheapY/cheapCPlus/cheapFirstOrPS/cheapD1 are the glance: can 9 be bought,
+-- can 1 be bought. 9 and 0 are exact and are logged in the actual column
+-- too; any other value is a floor. NULL means no glance was taken.
 CREATE TABLE observations (
     observationId   INTEGER PRIMARY KEY AUTOINCREMENT,
     carrier         TEXT NOT NULL,
@@ -174,12 +168,8 @@ CREATE TABLE routeDayFlag (
     PRIMARY KEY (carrier, org, dest, flightDate)
 );
 
--- floorEstimateCoefficients (the cached glance-floor -> mean-actual
--- table) retired 2026-09-14 along with FloorEstimates.py itself and all
--- glance-derived estimation - "every whiff of it, gone" (his call).
--- Table dropped from this schema entirely; an existing live db from
--- before this date may still have the table sitting around unused -
--- harmless, nothing reads or writes it anymore.
+-- No floorEstimateCoefficients table: FloorEstimates.py computes floor
+-- estimates live. An older db may still hold the table, unused.
 
 -- Pooled per-(org, dest, dayOfWeek, depTime, cabin) decline-curve
 -- coefficients - the frozen slope + C1 the live T1 estimator slides to

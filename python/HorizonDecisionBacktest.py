@@ -22,10 +22,7 @@ open/full settings' fullThreshold and openThreshold.
 
 Anchors and truth are the raw logged readings - what an estimator sees on the day
 and what he actually saw - not the step-corrected ones T4T1Backtest scores.
-A horizon reading is the single reading nearest the horizon, used only when
-within horizon_tolerance of it. No bracket interpolation: a bracket's far
-side is often the T-1 reading itself, which would leak the answer into the
-prediction.
+See anchor_readings for how the horizon value is taken.
 """
 import os
 import sqlite3
@@ -53,11 +50,27 @@ def horizon_tolerance(horizon):
     return max(1.0, 0.25 * horizon)
 
 
-def horizon_reading(readings, horizon):
-    reading = nearest_reading(readings, horizon)
-    if reading is None or abs(reading[0] - horizon) > horizon_tolerance(horizon):
+def anchor_readings(readings, horizon, tolerance):
+    """[(reading, weight)] whose weighted sum is the value at the horizon, or
+    None. Readings inside the T-1 truth window never anchor, so the answer
+    can't leak into the prediction. Two readings straddling the horizon,
+    each within twice the tolerance of it, are interpolated between;
+    otherwise the single reading nearest the horizon is used when within
+    the tolerance."""
+    usable = [r for r in readings if r[0] > GOOD_OBSERVATION_CUTOFF_HOURS]
+    farther = [r for r in usable if horizon <= r[0] <= horizon + 2 * tolerance]
+    nearer = [r for r in usable if horizon - 2 * tolerance <= r[0] <= horizon]
+    if farther and nearer:
+        far = min(farther, key=lambda r: r[0])
+        near = max(nearer, key=lambda r: r[0])
+        if far[0] == near[0]:
+            return [(far, 1.0)]
+        weight_near = (far[0] - horizon) / (far[0] - near[0])
+        return [(far, 1.0 - weight_near), (near, weight_near)]
+    reading = nearest_reading(usable, horizon)
+    if reading is None or abs(reading[0] - horizon) > tolerance:
         return None
-    return reading
+    return [(reading, 1.0)]
 
 
 def box(seats, thresholds):
@@ -105,8 +118,8 @@ class CabinModel:
 
     def predictions(self, key, horizon, coefficients):
         """(hold, curve) seats at T-1 for this cabin from the horizon, or None."""
-        reading = horizon_reading(self.raw_readings(key), horizon)
-        if reading is None:
+        anchors = anchor_readings(self.raw_readings(key), horizon, horizon_tolerance(horizon))
+        if anchors is None:
             return None
         sid, flight_date = key
         org, dest, _, dep_time, _ = self.service_info[sid]
@@ -118,10 +131,12 @@ class CabinModel:
             with coefficients_supplied_to_live_estimator(coefficients):
                 return T1Estimator.curve_t1_replay_column(self.conn, org, dest, flight_date, dep_time, [row])[0]
 
-        curve = replay(reading)
-        if curve is None:
+        curves = [replay(reading) for reading, _ in anchors]
+        if None in curves:
             return None
-        return reading[1], curve
+        hold = sum(reading[1] * weight for reading, weight in anchors)
+        curve = sum(value * weight for value, (_, weight) in zip(curves, anchors))
+        return hold, curve
 
 
 def score_days(models, thresholds):
@@ -155,8 +170,9 @@ def service_label(service_info, key):
 
 
 def print_summary(horizon, scored):
-    print(f"=== From T-{horizon:g} ({len(scored)} days, reading within "
-          f"{horizon_tolerance(horizon):g}h of T-{horizon:g}) ===")
+    print(f"=== From T-{horizon:g} ({len(scored)} days, straddle within "
+          f"{2 * horizon_tolerance(horizon):g}h each side, else a reading within "
+          f"{horizon_tolerance(horizon):g}h) ===")
     outcome = Counter((d[2] == d[1], d[3] == d[1]) for d in scored)
     print(f"  both right {outcome[(True, True)]}, only hold right {outcome[(True, False)]}, "
           f"only curve right {outcome[(False, True)]}, both wrong {outcome[(False, False)]}")
@@ -175,7 +191,7 @@ def print_open_but_full_days(scored, service_info):
     for key, _, hold_box, curve_box, truth, hold, curve in sorted(
             misses, key=lambda d: service_label(service_info, d[0])):
         label, flight_date = service_label(service_info, key)
-        print(f"    {label} {flight_date}: T-1 {truth:.0f}; hold {hold:.0f} ({hold_box}), "
+        print(f"    {label} {flight_date}: T-1 {truth:.0f}; hold {hold:.1f} ({hold_box}), "
               f"curve {curve:.1f} ({curve_box})")
 
 

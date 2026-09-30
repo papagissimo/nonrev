@@ -57,6 +57,7 @@ from Scenarios import studied_cells
 from Grading import FlightGrades, load_grading_settings, settings_form
 from AircraftConfigs import load_aircraft_list
 from observation_filters import SEAT_MAP_COLUMNS, not_seat_map_only_where_clause
+from FloorEstimates import load_floor_estimates, seats_from_glance
 import InsiderReadings
 
 DEP_CUTOFF_MINUTES = 45
@@ -82,13 +83,18 @@ def minutes_to_12h(dep_minutes):
 CAN_BUY_ENTRY_COLUMNS = {
     'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': 'd1',
 }
+GLANCE_ENTRY_COLUMNS = {
+    'glanceY': 'cheapY', 'glanceCplus': 'cheapCPlus', 'glanceOnePS': 'cheapFirstOrPS', 'glanceD1': 'cheapD1',
+}
+GLANCE_ACTUAL_FIELD = {'glanceY': 'y', 'glanceCplus': 'cplus', 'glanceOnePS': 'onePS', 'glanceD1': 'd1'}
 SEAT_MAP_ENTRY_COLUMNS = {column: column for column in SEAT_MAP_COLUMNS}
-ENTRY_COLUMNS = {**CAN_BUY_ENTRY_COLUMNS, **SEAT_MAP_ENTRY_COLUMNS}
+ENTRY_COLUMNS = {**CAN_BUY_ENTRY_COLUMNS, **GLANCE_ENTRY_COLUMNS, **SEAT_MAP_ENTRY_COLUMNS}
 
 
 def entry_field_config():
     return {
         'canBuyFields': list(CAN_BUY_ENTRY_COLUMNS),
+        'glanceActualField': GLANCE_ACTUAL_FIELD,
         'seatMapFields': list(SEAT_MAP_ENTRY_COLUMNS),
         'insiderFields': InsiderReadings.NUMBER_FIELDS,
         'insiderVerdicts': InsiderReadings.VERDICTS,
@@ -174,7 +180,7 @@ def curve_estimates_for_row(conn, org, dest, dow, dep_time, hours_until_dep, dep
     return result
 
 
-def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
+def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor_estimates):
     """
     Every reading logged today for this exact flight, sorted
     most-recent-check first (ascending hoursBeforeDep, since it counts
@@ -196,10 +202,10 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     at logging time - the one place in this file a reading's displayed
     hours-before-dep can differ from what's in the observations table.
 
-    Each cabin value is the real actual if one was logged, else blank -
-    no glance/cheap fallback of any kind (retired 2026-09-14, his call:
-    "every whiff of it, gone" - the old FloorEstimates-derived decimal
-    substitute is fully removed, not just hidden).
+    Each cabin value is the real actual if one was logged, else the
+    glance's seat count (FloorEstimates.seats_from_glance) if one was
+    glanced, else None. 'estimated' lists the cabins whose value came from
+    a glance floor rather than an exact count.
 
     A reading with only seat-map numbers (no can-buy counts) is included
     as a row of its own: its can-buy cabins are None, its 't1' is None,
@@ -256,7 +262,8 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
     if is_today:
         rows = conn.execute(
             f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime,
-                      soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal
+                      soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal,
+                      cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
                FROM observations
                WHERE carrier=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, org, dest, flight_date),
@@ -272,35 +279,39 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date):
             conn, dep_time, org, datetime.strptime(flight_date, '%Y-%m-%d').date()
         )
         readings_raw = []
-        for hbd, y, cplus, first_or_ps, d1, check_ts, own_dep, *seat_map in rows:
+        for hbd, y, cplus, first_or_ps, d1, check_ts, own_dep, *seat_map_and_glances in rows:
             if own_dep not in this_flights_cluster:
                 continue
             check_dt = datetime.strptime(check_ts, '%Y-%m-%d %H:%M').replace(tzinfo=current_dep_dt.tzinfo)
             live_hbd = round((current_dep_dt - check_dt).total_seconds() / 3600, 2)
-            readings_raw.append((live_hbd, y, cplus, first_or_ps, d1, *seat_map))
+            readings_raw.append((live_hbd, y, cplus, first_or_ps, d1, *seat_map_and_glances))
         readings_raw.sort(key=lambda r: r[0])  # most-recent-check first, same convention as below
     else:
         readings_raw = conn.execute(
             f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1,
-                      soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal
+                      soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal,
+                      cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
                FROM observations
                WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
                ORDER BY hoursBeforeDep ASC""",
             (carrier, dep_time, org, dest, flight_date),
         ).fetchall()
 
-    readings = [
-        {
+    readings = []
+    for r in readings_raw:
+        reading = {
             'hrs': r[0],
-            'y': r[1],
-            'cplus': r[2],
-            'onePS': r[3],
-            'd1': r[4],
             'solo': {'y': r[5], 'cplus': r[6], 'onePS': r[7], 'd1': r[8]},
             'blocked': r[9],
+            'estimated': [],
         }
-        for r in readings_raw
-    ]
+        for cabin_key, actual, glance in zip(CABIN_KEY_TO_COLUMN, r[1:5], r[10:14]):
+            if actual is None and glance is not None:
+                actual = seats_from_glance(floor_estimates, CABIN_KEY_TO_COLUMN[cabin_key], glance)
+                if glance not in (0, 9):
+                    reading['estimated'].append(cabin_key)
+            reading[cabin_key] = actual
+        readings.append(reading)
     t1_column = compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings)
     for reading, t1 in zip(readings, t1_column):
         has_can_buy = any(reading[cabin_key] is not None for cabin_key in CABIN_KEY_TO_COLUMN)
@@ -573,6 +584,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
 
     d1_map = load_d1_map(conn)
     grades = FlightGrades(conn)
+    floor_estimates = load_floor_estimates(conn)
     route_rows = []
     for c in candidates:
         # Same route AND same schedule date - two different calendar
@@ -585,7 +597,8 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         # DEP_CUTOFF_MINUTES check above, by construction - nothing here
         # can still be departed. (departed_by_route, computed above, is
         # the one and only place that count is real.)
-        prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'])
+        prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'],
+                                                        floor_estimates)
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
             'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
@@ -611,7 +624,8 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             if c['org'] != next_candidate['org'] or c['dest'] != next_candidate['dest'] \
                     or c['flightDate'] != next_candidate['flightDate']:
                 continue
-            prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'])
+            prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'],
+                                                            c['flightDate'], floor_estimates)
             route_rows.append({
                 'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
                 'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
@@ -675,11 +689,8 @@ def save_entry_dialog(conn, payload):
                   insider: {InsiderReadings.NUMBER_FIELDS..., verdict, checkTime} }]
     }
     An entry is logged when any ENTRY_COLUMNS field is non-blank - a
-    seat-map-only entry is valid, blank can-buy just means not observed.
-    No cheap/glance keys anymore (retired 2026-09-14, "every whiff of it,
-    gone" - his call) - the cheapY/cheapCplus/cheapOnePS/cheapD1 columns
-    still exist on the observations table itself (historical data from
-    before this date stays intact), but nothing writes to them anymore.
+    seat-map-only or glance-only entry is valid, blank can-buy just means
+    not observed. Glance fields land in the cheap* columns.
     """
     flight_date = payload['flightDate']
     flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()

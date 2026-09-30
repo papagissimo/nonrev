@@ -28,10 +28,10 @@ Services on different days match within a day group when they share a route
 and their representative departure times fall in one clustering.py cluster.
 
 C1, night ratio and the coefficient tier walk are exactly T4T1Backtest's.
-Unlike T4T1Backtest, the T-4 value is the single raw reading nearest T-4,
-used only within T4_TOLERANCE_HOURS of it, and truth is the raw reading
-nearest T-1 - no bracket interpolation, whose far side is often the T-1
-reading itself, and no step-corrected values.
+Unlike T4T1Backtest, the T-4 value comes from raw readings through
+HorizonDecisionBacktest.anchor_readings, which never anchors on a reading
+inside the T-1 truth window, and truth is the raw reading nearest T-1 - no
+step-corrected values.
 """
 import os
 import sqlite3
@@ -48,6 +48,7 @@ from DeclineCurveFit import (
     piecewise_model, solve_c1_from_reading,
     T4_TARGET_HOURS_FOR_POOLING, T1_TARGET_HOURS_FOR_POOLING,
 )
+from HorizonDecisionBacktest import anchor_readings
 from T4T1Backtest import (
     GOOD_OBSERVATION_CUTOFF_HOURS, CABIN_COLUMN_TO_KEY, group_keys_by_service,
     resolve_leave_one_out_coefficients, coefficients_supplied_to_live_estimator, mean_and_rmse,
@@ -101,11 +102,8 @@ def solid_truth(readings):
     return truth[1]
 
 
-def t4_reading(readings):
-    reading = nearest_reading(readings, T4_TARGET_HOURS_FOR_POOLING)
-    if reading is None or abs(reading[0] - T4_TARGET_HOURS_FOR_POOLING) > T4_TOLERANCE_HOURS:
-        return None
-    return reading
+def t4_anchors(readings):
+    return anchor_readings(readings, T4_TARGET_HOURS_FOR_POOLING, T4_TOLERANCE_HOURS)
 
 
 def median_slope(pool_fits):
@@ -150,11 +148,11 @@ class Scorer:
         return solid_truth(self.raw_readings(key))
 
     def hold_error(self, key):
-        return self.truth(key) - t4_reading(self.raw_readings(key))[1]
+        return self.truth(key) - sum(reading[1] * weight for reading, weight in t4_anchors(self.raw_readings(key)))
 
     def scorable(self, key):
         return (self.fits.get(key) is not None and self.truth(key) is not None
-                and t4_reading(self.raw_readings(key)) is not None)
+                and t4_anchors(self.raw_readings(key)) is not None)
 
     def service_pool(self, key, excluded):
         return {k: self.fits[k] for k in self.keys_by_service[key[0]] if k != key and k not in excluded}
@@ -179,10 +177,16 @@ class Scorer:
     def predict(self, key, coefficients, bottom_hours):
         sid, flight_date = key
         org, dest, _, dep_time, _ = self.service_info[sid]
-        row = dict.fromkeys(T1Estimator.CABIN_KEY_TO_COLUMN, None)
-        row["hrs"], row[CABIN_COLUMN_TO_KEY[self.cabin]] = t4_reading(self.raw_readings(key))
-        with bottomed_at(bottom_hours), coefficients_supplied_to_live_estimator(coefficients):
-            return T1Estimator.curve_t1_replay_column(self.conn, org, dest, flight_date, dep_time, [row])[0]
+        total = 0.0
+        for reading, weight in t4_anchors(self.raw_readings(key)):
+            row = dict.fromkeys(T1Estimator.CABIN_KEY_TO_COLUMN, None)
+            row["hrs"], row[CABIN_COLUMN_TO_KEY[self.cabin]] = reading
+            with bottomed_at(bottom_hours), coefficients_supplied_to_live_estimator(coefficients):
+                pred = T1Estimator.curve_t1_replay_column(self.conn, org, dest, flight_date, dep_time, [row])[0]
+            if pred is None:
+                return None
+            total += pred * weight
+        return total
 
     def training_cases(self, training_keys, held_out):
         """[(key, coefficients, truth, holdT4 error)] for every training day
