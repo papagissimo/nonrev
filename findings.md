@@ -6,6 +6,44 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-09-29 — Weekday pattern: Tue/Wed/Sat open, Sun/Mon/Thu full
+
+**Question**: are some weekdays reliably more open or more full than others,
+across all logged flights and service by service?
+
+**Method**: the live T1 estimate (T1GridReport.last_t1_instances: each
+cabin's latest known reading, three cabins summed), one per service-day,
+only where the last reading is within 6h of departure. Open ≥ 8, full ≤ 2.
+Excluded date ranges left out.
+
+| Day | Flights | Dates | Open | Full |
+|---|---|---|---|---|
+| Sat | 96 | 2 | 88% | 7% |
+| Tue | 203 | 5 | 78% | 13% |
+| Wed | 273 | 4 | 77% | 8% |
+| Fri | 236 | 6 | 74% | 13% |
+| Thu | 278 | 5 | 67% | 18% |
+| Mon | 169 | 5 | 64% | 22% |
+| Sun | 134 | 5 | 60% | 19% |
+| All | 1,389 | | 72% | 14% |
+
+- Adjusting for which routes were logged on which day (Y at the last
+  reading within 3h, relative to its route's norm) gives the same order,
+  so route mix isn't driving it.
+- Friday sits with the light days fleet-wide. Service by service on the
+  studied routes it matches Tue/Wed except early afternoon out of Ohio on
+  the short hops: CMH-MSP 1:45pm (Tue OO, Wed O, Fri iFi), CMH-DTW 2:15pm,
+  CVG-DTW 4:00pm; PDX-MSP 1:45pm has one full Friday.
+- Thursday is the fullest weekday on several services, e.g. CMH-MSP 7:15pm
+  full all three Thursdays, open both Tuesdays.
+- Tue and Wed don't always agree either: MSP-PDX 4:00pm (Tue iii, Wed
+  OOiO), CVG-DTW 10:45am (Tue FOF, Wed FFOi).
+- Per service, cells hold 2-6 weeks. Telling two days apart takes roughly
+  12 weeks per day for a glaring difference (full 1 in 20 vs half the
+  time) and 30 for a moderate one (1 in 10 vs 4 in 10), so only glaring
+  per-service differences will ever show within a season.
+- Saturday rests on two dates.
+
 ## 2026-09-29 — Early readings far from the middle mostly hold
 
 **Question**: once a flight reads well open or well full hours out, how
