@@ -204,6 +204,14 @@ working around it.
   (2026-09-29, summed cabins, dip to 6 or less before the T-1 window): 60 of
   956 days that ended open, on 42 of 146 services. A dip is only seen if a
   reading lands in it, so "never" means less on thinly read services.
+- **Wide-open coach — parked.** A flight whose late seat map shows dozens
+  of selectable coach seats is wide open in coach, a different animal from
+  a can-buy of 9 with only a few selectable seats. Judge it per cabin,
+  coach on its own: coach can be wide open while Comfort+ shows none and
+  first shows two, and that combination is worth knowing (a coach row to
+  yourself). The per-cabin selectable counts are already logged (soloY,
+  soloCPlus, soloFirstOrPS). Open: the coach threshold, whether it scales
+  with aircraft size, and where it shows.
 - **Sharper glance-floor estimate.** He has ideas beyond the per-cabin
   mean (per service, a plus/minus band). Low value for now: the estimate
   only feeds the logging dialog's Prev and T-1 columns.

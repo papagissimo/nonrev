@@ -1369,20 +1369,33 @@
     function canBuyArrowTarget(el, key) {
       var i = parseInt(el.getAttribute('data-i'), 10);
       var field = el.getAttribute('data-field');
-      var order = (columnMode === 'glance' ? glanceFields() : []).concat(canBuyFields());
+      var isGlance = el.classList.contains('glance');
+      var gridFields = isGlance ? glanceFields() : canBuyFields();
+      var order = currentColumns.map(function (c) { return c.key; })
+        .filter(function (k) { return gridFields.indexOf(k) !== -1; });
       function usable(candidate) { return candidate && !candidate.disabled ? candidate : null; }
-
-      if (key === 'ArrowLeft' || key === 'ArrowRight') {
-        var dir = key === 'ArrowLeft' ? -1 : 1;
-        for (var idx = order.indexOf(field) + dir; idx >= 0 && idx < order.length; idx += dir) {
-          var candidate = usable(inputFor(order[idx], i));
+      function firstUsableInRow(row) {
+        for (var c = 0; c < order.length; c++) {
+          var candidate = usable(inputFor(order[c], row));
           if (candidate) return candidate;
         }
         return null;
       }
-      var targetRow = i + (key === 'ArrowUp' ? -1 : 1);
-      if (targetRow < 0 || targetRow >= batch.rows.length) return null;
-      return usable(inputFor(field, targetRow));
+
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        var dir = key === 'ArrowLeft' ? -1 : 1;
+        for (var idx = order.indexOf(field) + dir; idx >= 0 && idx < order.length; idx += dir) {
+          var sideways = usable(inputFor(order[idx], i));
+          if (sideways) return sideways;
+        }
+        return null;
+      }
+      var step = key === 'ArrowUp' ? -1 : 1;
+      for (var row = i + step; row >= 0 && row < batch.rows.length; row += step) {
+        var vertical = isGlance ? firstUsableInRow(row) : usable(inputFor(field, row));
+        if (vertical) return vertical;
+      }
+      return null;
     }
 
     function seatMapGridRows() {
