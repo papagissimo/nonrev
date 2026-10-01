@@ -81,3 +81,9 @@ open-seat count bears on sitting together as well as on clearing at all.
 The seat map's selectable solo and pair counts are not evidence of the
 chance of sitting together; what the seat map shows isn't understood well
 enough to read that way (see Seat map vs. can-buy).
+
+In roughly the last hour before departure, gate agents clear upgrades and
+reshuffle seat assignments, and standbys are seated during or after that
+reshuffle. Where a standby ends up, which cabin and whether together, is
+decided then, not predicted from earlier readings. Openness across all
+cabins is the only earlier signal that bears on it.

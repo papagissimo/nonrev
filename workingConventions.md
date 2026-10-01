@@ -24,8 +24,13 @@ TODO.md; dated analysis results belong in findings.md.
   whether a standard library or tool already solves it.
 - Trust only what the code does. Verify behavior against the code, never
   against a comment or docstring.
-- When a real data anomaly turns up (a duplicate row, a row that doesn't
-  fit), fix or delete it rather than dismissing it as too rare to matter.
+- Tiny anomalies wait until the end. Mid-discussion, raise one only if it
+  could change the answer to the question at hand. Others get fixed
+  quietly in the next zip, or, if they touch nonrev.db, go on a short
+  list of one-liners delivered at the end of the session or when he asks.
+  A real anomaly still gets fixed; it just doesn't get discussed. Example:
+  a reading entered under Y that belonged under Total doesn't change a
+  go/no-go verdict, so it waits for the end-of-session list.
 - Don't flag things that aren't problems. Example: a seat map and a
   can-buy reading from one sitting landing in separate rows a minute or
   two apart is just two clicks instead of one, and is fine.
