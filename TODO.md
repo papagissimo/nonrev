@@ -71,11 +71,6 @@ working around it.
 
 ## Decline curve / predictor
 
-- **Hold plus a typical drop — next to test.** Predict T-1 as the T-4
-  reading minus the typical T-4 -> T-1 drop, taken from the whole fleet or
-  from the flight's pool. Add as columns in python/PoolBacktest.py; worth
-  keeping only if it beats hold's 0.63 seats (findings.md, 2026-10-01).
-
 - **Logging hint is the history range, not the curve.** Under each cabin
   input: lowest–highest of what prior flights of the service read at this
   hour, with the count (ServiceGrouping.history_ranges_for_row). The
@@ -109,10 +104,16 @@ working around it.
   from the normal-open ones (rather than an aggregate spread), that flags
   exactly the day the history alone wouldn't. Flagged as "extremely
   useful" if it can be made to work.
-- **Golden-ticket window from data.** Find historically how far out the
-  estimator still reliably predicts the eventual T1; that, not a flat 1.5h,
-  should set the window per service. Delta's cutoff is T-45min, the hard
-  floor either way. Real interest, not today's task.
+- **Trust horizon per pool — next model, not wired.**
+  python/PoolTrustHorizon.py solves, per pool, how far out an "open" reading
+  can be trusted: the farthest horizon where open readings taken within it
+  ended full at most a tolerance of the time (findings.md, 2026-10-02).
+  Recomputed every run, like the pools. Intended use: the logging dialog
+  flags a reading taken earlier than its pool's horizon as not yet
+  trustworthy. Delta's cutoff, T-45min, is the hard floor.
+  - Open: the tolerance (1 in 20 and 1 in 50 tried so far).
+  - Open: what signal catches the middle child, whose open readings end
+    full 4-7% of the time at every distance, so no horizon helps.
 - **Cosmetic: the console's `gap = 9.0/slope` print** can show a huge
   meaningless number when thin data gives a near-zero slope. Display-only;
   drop it from the print or cap its display. The near-zero slope itself is

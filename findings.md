@@ -6,6 +6,57 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-02 — How far out a reading can be trusted, by pool
+
+**Question**: does correcting the held reading help, and does the time a
+reading becomes trustworthy differ by pool?
+
+**Pools** (python/PoolSplitReport.py on this date's data): bad boys = the
+32 fuller daily services, any day; middle child = 27 daily services that
+run fuller on Sun/Mon/Thu; golden boys = the other 50 on Sun/Mon/Thu, and
+all 90 non-bad-boys on Tue/Wed/Fri/Sat. Pool membership was built with all
+flights, held-out ones included. Three cabins summed, full <= 2,
+open >= 8, truth a reading within 1.55h of departure.
+
+**Hold with a correction** (python/PoolBacktest.py, T-4 anchors,
+leave-one-out): the typical T-4 -> T-1 change is zero per cabin and summed
+(median 0, mean 0.09 seats summed; a third of service-days unchanged).
+Subtracting the fleet or pool median changes nothing. Subtracting the pool
+mean gets 84.2% of 571 calls right against hold's 82.5%, but "called open,
+was full" stays at 6 under every method. Not worth adopting.
+
+**Hold from each horizon** (python/PoolResolveBacktest.py), right T-1 call:
+
+| From | Bad boys | Middle child | Golden, Sun/Mon/Thu | Golden, Tue/Wed/Fri/Sat |
+|---|---|---|---|---|
+| T-24 | 47% | 68% | 89% | 84% |
+| T-12 | 61% | 66% | 90% | 88% |
+| T-8 | 64% | 59% | 86% | 90% |
+| T-6 | 68% | 64% | 83% | 92% |
+| T-4 | 73% | 70% | 91% | 92% |
+| T-3 | 81% | 80% | 90% | 94% |
+
+Each horizon counts only days with a reading near it, so rows aren't the
+same flights.
+
+**Trust horizon for open readings** (python/PoolTrustHorizon.py): every
+logged reading that said open, scored on whether the flight ended full.
+
+| Pool | Open readings | Ended full | Trust from, 1 in 20 | Trust from, 1 in 50 |
+|---|---|---|---|---|
+| Bad boys | 608 | 106 | T-5.5 | T-4.1 |
+| Middle child | 303 | 26 | no stable answer | no stable answer |
+| Golden, Sun/Mon/Thu | 400 | 2 | earliest logged | earliest logged |
+| Golden, Tue/Wed/Fri/Sat | 1,022 | 14 | earliest logged | earliest logged |
+
+- Bad boys: open readings within T-4 ended full 2% of the time, within
+  T-12 10%, within T-48 14%.
+- Golden boys: about 1% at any distance, out to readings several days
+  ahead.
+- Middle child: 4-7% at every distance from T-3 to T-48. Its risk doesn't
+  shrink toward departure, so whether it passes depends only on the
+  tolerance.
+
 ## 2026-10-01 — Pools by best split: daily service first, then weekday
 
 **Question**: which weekly services behave alike, without assuming any
