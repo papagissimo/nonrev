@@ -1418,6 +1418,7 @@
         return null;
       }
 
+      if (isGlance && key === 'ArrowRight') return nextEmptyGlance(i, order.indexOf(field) + 1);
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         var dir = key === 'ArrowLeft' ? -1 : 1;
         for (var idx = order.indexOf(field) + dir; idx >= 0 && idx < order.length; idx += dir) {
@@ -1430,6 +1431,18 @@
       for (var row = i + step; row >= 0 && row < batch.rows.length; row += step) {
         var vertical = isGlance ? firstUsableInRow(row) : usable(inputFor(field, row));
         if (vertical) return vertical;
+      }
+      return null;
+    }
+
+    function nextEmptyGlance(i, startCol) {
+      var order = currentColumns.map(function (c) { return c.key; })
+        .filter(function (k) { return glanceFields().indexOf(k) !== -1; });
+      for (var row = i; row < batch.rows.length; row++) {
+        for (var c = (row === i ? startCol : 0); c < order.length; c++) {
+          var candidate = inputFor(order[c], row);
+          if (candidate && !candidate.disabled && candidate.value === '') return candidate;
+        }
       }
       return null;
     }
