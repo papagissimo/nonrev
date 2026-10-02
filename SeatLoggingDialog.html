@@ -1393,7 +1393,8 @@
 
       var target = null;
       if (el.classList.contains('seat')) target = canBuyArrowTarget(el, key);
-      else if (el.classList.contains('seatn')) target = seatMapArrowTarget(el, key);
+      else if (el.classList.contains('seatn')) target = panelGridArrowTarget(seatMapGridRows(), el.getAttribute('data-field'), key, el, inputFor);
+      else if (el.classList.contains('insn')) target = panelGridArrowTarget(insiderGridRows(), el.getAttribute('data-ins'), key, el, insiderEl);
 
       if (target) {
         e.preventDefault();
@@ -1456,15 +1457,16 @@
       ];
     }
 
-    function seatMapArrowTarget(el, key) {
-      var i = parseInt(el.getAttribute('data-i'), 10);
-      var field = el.getAttribute('data-field');
-      var rows = seatMapGridRows();
+    function insiderGridRows() {
+      return [insiderFields().slice(0, 5), ['numListed', 'ourPosition']];
+    }
 
+    function panelGridArrowTarget(rows, field, key, el, lookup) {
+      var i = parseInt(el.getAttribute('data-i'), 10);
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         var readingOrder = [].concat.apply([], rows);
         var next = readingOrder[readingOrder.indexOf(field) + (key === 'ArrowLeft' ? -1 : 1)];
-        return next ? inputFor(next, i) : null;
+        return next ? lookup(next, i) : null;
       }
       var rowIdx = -1, colIdx = -1;
       rows.forEach(function (row, r) {
@@ -1472,7 +1474,7 @@
         if (c !== -1) { rowIdx = r; colIdx = c; }
       });
       var targetRow = rows[rowIdx + (key === 'ArrowUp' ? -1 : 1)];
-      return targetRow ? inputFor(targetRow[Math.min(colIdx, targetRow.length - 1)], i) : null;
+      return targetRow ? lookup(targetRow[Math.min(colIdx, targetRow.length - 1)], i) : null;
     }
 
     function openScheduleModal() {
