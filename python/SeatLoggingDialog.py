@@ -213,6 +213,11 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
     (cabin_key -> solo available-to-select count) and 'blocked' (the X
     count), None wherever nothing was observed.
 
+    Each row also carries 'insider': that sitting's insider reading
+    (InsiderReadings.NUMBER_FIELDS plus 'verdict'), or None. An insider
+    reading with no observation at the same checkTimestamp is a row of its
+    own, every can-buy and seat-map value None.
+
     Each row also carries 't1': the live T1 estimate as of that point in
     the day (see T1Estimator.compute_t1_replay_column) - the ONE T1 value
     shown anywhere in the dialog (his call - he
@@ -258,12 +263,14 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
     not by design past today).
     """
     is_today = flight_date == eastern_now().strftime('%Y-%m-%d')
+    flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()
+    insider_rows = InsiderReadings.readings_for_route_day(conn, carrier, org, dest, flight_date)
 
     if is_today:
         rows = conn.execute(
-            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1, checkTimestamp, depTime,
+            f"""SELECT hoursBeforeDep, checkTimestamp, y, cPlus, firstOrPS, d1,
                       soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal,
-                      cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
+                      cheapY, cheapCPlus, cheapFirstOrPS, cheapD1, depTime
                FROM observations
                WHERE carrier=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, org, dest, flight_date),
@@ -272,46 +279,72 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
         # Cluster today's own logged depTimes together with the CURRENT
         # depTime so a same-day schedule correction can't silently drop
         # readings logged under the old value - see module docstring.
-        clusters = cluster_services([r[6] for r in rows] + [dep_time])
+        clusters = cluster_services([r[-1] for r in rows] + [ins['depTime'] for ins in insider_rows] + [dep_time])
         this_flights_cluster = next(c for c in clusters if dep_time in c)
+        current_dep_dt = et_equivalent_datetime(conn, dep_time, org, flight_date_obj)
 
-        current_dep_dt = et_equivalent_datetime(
-            conn, dep_time, org, datetime.strptime(flight_date, '%Y-%m-%d').date()
-        )
-        readings_raw = []
-        for hbd, y, cplus, first_or_ps, d1, check_ts, own_dep, *seat_map_and_glances in rows:
-            if own_dep not in this_flights_cluster:
-                continue
+        def live_hours(check_ts):
             check_dt = datetime.strptime(check_ts, '%Y-%m-%d %H:%M').replace(tzinfo=current_dep_dt.tzinfo)
-            live_hbd = round((current_dep_dt - check_dt).total_seconds() / 3600, 2)
-            readings_raw.append((live_hbd, y, cplus, first_or_ps, d1, *seat_map_and_glances))
-        readings_raw.sort(key=lambda r: r[0])  # most-recent-check first, same convention as below
+            return round((current_dep_dt - check_dt).total_seconds() / 3600, 2)
+
+        readings_raw = [(live_hours(r[1]), *r[1:-1]) for r in rows if r[-1] in this_flights_cluster]
+        insider_kept = [(live_hours(ins['checkTimestamp']), ins)
+                        for ins in insider_rows if ins['depTime'] in this_flights_cluster]
     else:
         readings_raw = conn.execute(
-            f"""SELECT hoursBeforeDep, y, cPlus, firstOrPS, d1,
+            f"""SELECT hoursBeforeDep, checkTimestamp, y, cPlus, firstOrPS, d1,
                       soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal,
                       cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
                FROM observations
-               WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?
-               ORDER BY hoursBeforeDep ASC""",
+               WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, dep_time, org, dest, flight_date),
         ).fetchall()
+        flight_insider = [ins for ins in insider_rows if ins['depTime'] == dep_time]
+        try:
+            dep_dt = et_equivalent_datetime(conn, dep_time, org, flight_date_obj)
+            insider_kept = [
+                (round((dep_dt - datetime.strptime(ins['checkTimestamp'], '%Y-%m-%d %H:%M')
+                        .replace(tzinfo=dep_dt.tzinfo)).total_seconds() / 3600, 2), ins)
+                for ins in flight_insider
+            ]
+        except UnconfirmedAirportError as e:
+            print(f"Warning: couldn't place insider readings for {org}->{dest}: {e}")
+            insider_kept = []
+
+    def blank_reading(hrs):
+        return {'hrs': hrs, 'solo': {'y': None, 'cplus': None, 'onePS': None, 'd1': None},
+                'blocked': None, 'estimated': [], 'insider': None,
+                **{cabin_key: None for cabin_key in CABIN_KEY_TO_COLUMN}}
 
     readings = []
+    reading_by_check = {}
     for r in readings_raw:
-        reading = {
-            'hrs': r[0],
-            'solo': {'y': r[5], 'cplus': r[6], 'onePS': r[7], 'd1': r[8]},
-            'blocked': r[9],
-            'estimated': [],
-        }
-        for cabin_key, actual, glance in zip(CABIN_KEY_TO_COLUMN, r[1:5], r[10:14]):
+        reading = blank_reading(r[0])
+        reading['solo'] = {'y': r[6], 'cplus': r[7], 'onePS': r[8], 'd1': r[9]}
+        reading['blocked'] = r[10]
+        for cabin_key, actual, glance in zip(CABIN_KEY_TO_COLUMN, r[2:6], r[11:15]):
             if actual is None and glance is not None:
                 actual = seats_from_glance(floor_estimates, CABIN_KEY_TO_COLUMN[cabin_key], glance)
                 if glance not in (0, 9):
                     reading['estimated'].append(cabin_key)
             reading[cabin_key] = actual
         readings.append(reading)
+        reading_by_check.setdefault(r[1], reading)
+
+    # An insider reading submitted in the same sitting as an observation
+    # shares its checkTimestamp and joins that row; otherwise it's a row
+    # of its own, like a seat-map-only reading.
+    for hrs, ins in insider_kept:
+        values = {f: ins[f] for f in InsiderReadings.NUMBER_FIELDS + ['verdict']}
+        host = reading_by_check.get(ins['checkTimestamp'])
+        if host is not None and host['insider'] is None:
+            host['insider'] = values
+        else:
+            reading = blank_reading(hrs)
+            reading['insider'] = values
+            readings.append(reading)
+
+    readings.sort(key=lambda rd: (rd['hrs'] is None, rd['hrs'] if rd['hrs'] is not None else 0))
     t1_column = compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings)
     for reading, t1 in zip(readings, t1_column):
         has_can_buy = any(reading[cabin_key] is not None for cabin_key in CABIN_KEY_TO_COLUMN)

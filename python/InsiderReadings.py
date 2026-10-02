@@ -101,6 +101,19 @@ def save_from_logging(conn, flight_date, entries, now):
     return saved
 
 
+def readings_for_route_day(conn, carrier, org, dest, flight_date):
+    """Every insider reading for one route on one flight date, each a dict
+    of depTime, checkTimestamp, NUMBER_FIELDS and verdict. The caller picks
+    out the flight by depTime."""
+    cols = ['depTime', 'checkTimestamp', *NUMBER_FIELDS, 'verdict']
+    rows = conn.execute(
+        f"""SELECT {', '.join(cols)} FROM insiderReadings
+            WHERE carrier = ? AND org = ? AND dest = ? AND flightDate = ?""",
+        (carrier, org, dest, flight_date),
+    ).fetchall()
+    return [dict(zip(cols, row)) for row in rows]
+
+
 def get_readings(conn, flight_date=None):
     flight_date = flight_date or datetime.now(ET_ZONE).date().isoformat()
     cols = ['readingId', 'carrier', 'org', 'dest', 'depTime', 'checkTimestamp',
