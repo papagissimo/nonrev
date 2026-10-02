@@ -6,6 +6,71 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-01 — Pools by best split: daily service first, then weekday
+
+**Question**: which weekly services behave alike, without assuming any
+grouping of weekdays?
+
+**Method** (python/PoolSplitReport.py): the 2026-09-29 flights (live T1,
+last reading within 6h, excluded ranges left out), each capped at 8. All
+flights start in one pool. For each of weekday, daily service and weekly
+service, a Kruskal-Wallis test asks whether its values differ; the
+strongest splits the pool if p < 0.01 after multiplying by the number of
+attributes tried. The cut is the one that best separates the two sides
+with values ordered by mean capped T1. Repeated inside each side.
+
+| Pool | Weekly services | Flights | Open | Full |
+|---|---|---|---|---|
+| 31 fuller daily services, any day | 177 | 381 | 41% | 35% |
+| The other 91, Tue/Wed/Fri/Sat | 269 | 601 | 89% | 4% |
+| 28 of the 91, Sun/Mon/Thu | 82 | 185 | 52% | 22% |
+| The other 50, Sun/Mon/Thu | 132 | 260 | 92% | 3% |
+| All | 660 | 1,427 | 72% | 14% |
+
+- The weekday split came out unprompted: Sun/Mon/Thu against
+  Tue/Wed/Fri/Sat (p ≈ 2e-7), matching 2026-09-29, Friday included.
+- The 31 fuller daily services: Detroit (10 of them), the Ohio-MSP short
+  hops both ways, SLC-BUR, and MSP-PDX 4:00pm, PDX-MSP 1:30pm and 3:00pm,
+  SLC-PDX 5:15pm, SLC-CVG 9:45am. CVG-MSP 4:30pm is the worst, about 80%
+  full. The report lists every member.
+- The 28/50 split clears the bar at about 1 in 150: probably real, still
+  settling.
+- Most weekly services have 1-3 flights, so for most of them the pool's
+  numbers are a better guess than their own record.
+- Testing one weekly service at a time against the pool found only 1-6
+  outliers and missed the weekday pattern entirely; a broad pattern only
+  shows when an attribute is tested across many flights.
+
+## 2026-10-01 — Slope: borrowing from the fleet helps, hold still wins
+
+**Question**: does a slope borrowed from the flight's pool predict T-1
+better than its own weekly service's slope?
+
+**Method** (python/PoolBacktest.py): BottomBacktest's leave-one-out scorer,
+T-4 anchors, truth within 1.55h of departure. Slope is the median of
+per-flight fitted slopes from the weekly service's other flights (own),
+every other flight (fleet), or every other flight in its pool (pool); C1
+is the weekly service's own in every column. Pool membership was built
+with all flights, held-out one included. Mean absolute error in seats,
+three cabins:
+
+| Own other flights | Cases | Hold | Global default | Own | Fleet | Pool |
+|---|---|---|---|---|---|---|
+| 0 | 315 | 0.64 | 2.11 | 2.11 | 0.89 | 0.88 |
+| 1 | 530 | 0.77 | 2.13 | 1.82 | 0.97 | 0.97 |
+| 2 | 499 | 0.52 | 2.06 | 1.41 | 0.78 | 0.78 |
+| 3 | 266 | 0.59 | 1.99 | 1.10 | 0.77 | 0.77 |
+| 4+ | 176 | 0.57 | 2.20 | 1.00 | 0.82 | 0.84 |
+| All | 1,786 | 0.63 | 2.09 | 1.57 | 0.86 | 0.86 |
+
+- Hold beats every curve, as on 2026-09-28.
+- Among curves, a borrowed slope roughly halves the error, even for weekly
+  services with 4+ flights of their own.
+- Pool and fleet tie: the pools sort by how full flights end up, but the
+  decline rate is about the same fleet-wide.
+- The global default, what a new weekly service gets today, is the worst.
+- "Own" is the median of per-flight slopes, not the live fit (pool_slope).
+
 ## 2026-09-29 — Weekday pattern: Tue/Wed/Sat open, Sun/Mon/Thu full
 
 **Question**: are some weekdays reliably more open or more full than others,

@@ -52,23 +52,29 @@ working around it.
   job, and a separate per-route setting picks which of Tue/Wed gets logged
   (default both). Open: whether a Tue question on a Wed-logged route should
   then read Wed data.
-- **Weekday pooling in the logging dialog — direction decided, not built.**
-  dayGroupings pools the O/F counts and the history range per route. Its
-  current labels (Tue/Wed/Thu together, Mon/Fri together) were an early
-  guess and are wrong: Thursday is the fullest weekday on several services.
-  Nothing else reads dayGroupings; decline-curve fitting, grading and the
-  T1 grid all key on the exact weekday.
-  - Direction: pool days by the fleet-wide weekday pattern (findings.md,
-    2026-09-29), and break a service out only when it's glaringly
-    different. Per-service data can only ever show glaring differences:
-    about 12 weeks per day to see one, about 30 for a moderate one.
-  - Grouping moves from route to service level: CMH-MSP 1:45pm differs on
-    Fridays and that route's other services don't. Schema change.
-  - O/F counts switch to the live T1 estimator at the same time; they
-    currently read GraphObservations' deprecated t1Old.
-  - Open: the pooled groups themselves, and whether Friday joins Tue/Wed.
+- **Pooling in the logging dialog — method chosen, not wired.** Pools come
+  from python/PoolSplitReport.py (findings.md, 2026-10-01): flights split
+  by weekday, daily service or weekly service, whichever separates them
+  most, while that clears p < 0.01 after allowing for the attributes tried.
+  Recomputed from scratch each run; no stored pool labels.
+  - Dialog shows the weekly service's own record, then its pool's open/full
+    numbers.
+  - Replaces dayGroupings (table, FlightScheduleDialog field,
+    get_grouped_days). O/F counts move to the live T1 estimate, and t1Old
+    goes from the code entirely.
+  - Open: what the history range under each cabin pools by, since raw
+    seats differ by aircraft size; whether pools get names in the dialog
+    (working names: bad boys for the fullest pool, golden boys for the most
+    open, middle child between).
+  - CMH-MSP 4:00pm and 4:45pm are probably one daily service that the
+    clustering keeps apart.
 
 ## Decline curve / predictor
+
+- **Hold plus a typical drop — next to test.** Predict T-1 as the T-4
+  reading minus the typical T-4 -> T-1 drop, taken from the whole fleet or
+  from the flight's pool. Add as columns in python/PoolBacktest.py; worth
+  keeping only if it beats hold's 0.63 seats (findings.md, 2026-10-01).
 
 - **Logging hint is the history range, not the curve.** Under each cabin
   input: lowest–highest of what prior flights of the service read at this

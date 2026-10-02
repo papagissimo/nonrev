@@ -39,6 +39,16 @@ TODO.md; dated analysis results belong in findings.md.
 - Don't suggest pulling or pushing just because a piece is finished. Wait
   for him to say he's done iterating.
 
+## Vocabulary
+
+- Flight: one dated departure - the 10:00 on Wednesday, 2026-09-30.
+- Weekly service: one departure time on one weekday - the 10:00 on
+  Wednesdays.
+- Daily service: one departure time on whatever days it runs - the 10:00.
+  In the code, `service` means daily service.
+- Pool: a set of weekly services grouped because they behave alike.
+- Never say bare "service" in docs or discussion; say weekly or daily.
+
 ## Delivering changes
 
 - Whole files, never fragments to splice in.
