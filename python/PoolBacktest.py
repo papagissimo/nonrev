@@ -7,8 +7,8 @@ import numpy as np
 
 from BottomBacktest import CABINS, Scorer, median_slope, t4_anchors
 from DeclineCurveFit import DB_PATH, compute_all_fits
-from PoolSplitReport import ATTRIBUTES, logged_flights
-from PoolSplitReport import grow as grow_pools
+from Pools import leaves, logged_flights
+from Pools import grow as grow_pools
 from ServiceGrouping import load_open_full_settings
 from settings import (
     load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS,
@@ -22,12 +22,6 @@ OWN_COUNT_LABELS = ["0", "1", "2", "3", "4+"]
 
 def own_count_label(count):
     return OWN_COUNT_LABELS[min(count, len(OWN_COUNT_LABELS) - 1)]
-
-
-def leaves(node):
-    if "children" not in node:
-        return [node]
-    return [leaf for child in node["children"] for leaf in leaves(child)]
 
 
 def leaf_name(leaf):

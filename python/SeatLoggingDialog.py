@@ -49,7 +49,8 @@ from timezones import et_equivalent_datetime, UnconfirmedAirportError
 from clustering import cluster_services
 from deptime_convergence import converge_flight_date
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
-from ServiceGrouping import get_open_full_counts, format_open_full, load_open_full_settings, history_ranges_for_row
+from ServiceGrouping import load_open_full_settings
+from Pools import snapshot as pool_snapshot
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
@@ -616,6 +617,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         }
 
     d1_map = load_d1_map(conn)
+    pools = pool_snapshot(conn)
     grades = FlightGrades(conn)
     floor_estimates = load_floor_estimates(conn)
     route_rows = []
@@ -641,15 +643,14 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
             'previousReadings': prev_readings,
-            'historyRange': history_ranges_for_row(
+            'historyRange': pools.history_ranges(
                 conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
             ),
             'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
-            'openFull': format_open_full(
-                get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['dep'])
-            ),
+            'openFull': pools.own_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
+            'pool': pools.pool_record(conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep']),
         })
 
     if include_departed:
@@ -668,15 +669,14 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'isNext': False,
                 'departed': True,
                 'previousReadings': prev_readings,
-                'historyRange': history_ranges_for_row(
+                'historyRange': pools.history_ranges(
                     conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
                 ),
                 'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
-                'openFull': format_open_full(
-                    get_open_full_counts(conn, c['org'], c['dest'], c['dow'], c['dep'])
-                ),
+                'openFull': pools.own_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
+                'pool': pools.pool_record(conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep']),
             })
         # Chronological, same order Delta's own site lists a route's day -
         # departed flights (earlier dep times, by construction) end up

@@ -41,6 +41,8 @@
     .flt { font-size: 14px; color: #666; }
     .gradeLine { font-size: 12px; font-weight: bold; color: #444; margin-top: 1px; white-space: pre; }
     .ofCell { font-size: 11px; color: #555; line-height: 1.35; white-space: nowrap; }
+    .poolLine { font-size: 12px; font-weight: bold; color: #444; margin-top: 1px; white-space: nowrap; }
+    .poolLine.beforeTrust { color: #b45309; }
     .pencil { cursor: pointer; color: #888; font-size: 16px; }
     .routePencil { margin-left: 8px; }
     #scheduleModalOverlay {
@@ -402,11 +404,19 @@
       // had room for doesn't wrap, it just overflows the table). Narrow
       // on purpose - a short number, nothing else lives here.
       cols.push({ key: 't1', label: 'T\u20111', width: 50 });
-      cols.push({ key: 'openFull', label: 'O/F', width: 66 });
+      cols.push({ key: 'openFull', label: 'O/F', width: 150 });
       cols.push({ key: 'flt', label: 'Flight', width: 68 });
       cols.push({ key: 'gap2', label: '', width: 10 });
       cols.push({ key: 'flag', label: 'Flag', width: 115 });
       return cols;
+    }
+
+    function formatOpenFullCell(row) {
+      var own = row.openFull || { openDisplay: '\u2014', fullDisplay: '\u2014' };
+      var poolOpen = row.pool ? '&nbsp; pool ' + row.pool.openDisplay : '';
+      var poolFull = row.pool ? '&nbsp; pool ' + row.pool.fullDisplay : '';
+      return '<span class="ofCell">open ' + own.openDisplay + poolOpen +
+        '<br>full ' + own.fullDisplay + poolFull + '</span>';
     }
 
     function formatCurveEstimate(v) {
@@ -568,6 +578,8 @@
         lines.push('  grade: ' + blankDash(row.grade));
         lines.push('  openFull: open ' + (row.openFull ? row.openFull.openDisplay : '?') +
           ', full ' + (row.openFull ? row.openFull.fullDisplay : '?'));
+        lines.push('  pool: ' + (row.pool ? row.pool.label + ', open ' + row.pool.openDisplay +
+          ', full ' + row.pool.fullDisplay + ', before trust horizon ' + row.pool.beforeTrustHorizon : '-'));
 
         var cur = {};
         ['y', 'cplus', 'onePS', 'd1'].forEach(function (f) {
@@ -1245,6 +1257,8 @@
 
         var cellHtml = {
           dep: '<span class="dep" data-i="' + i + '">' + row.depDisplay + '</span>' +
+            (row.pool ? '<div class="poolLine' + (row.pool.beforeTrustHorizon ? ' beforeTrust' : '') + '">' +
+              escapeHtml(row.pool.label) + '</div>' : '') +
             (row.grade ? '<div class="gradeLine">' + escapeHtml(row.grade) + '</div>' : '') +
             '<div class="panelLinks"><a class="insiderLink" data-i="' + i + '">insider</a>' +
             (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>') + '</div>',
@@ -1282,8 +1296,7 @@
           hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
           gap: '',
           gap2: '',
-          openFull: '<span class="ofCell">open ' + (row.openFull ? row.openFull.openDisplay : '\u2014') +
-            '<br>full ' + (row.openFull ? row.openFull.fullDisplay : '\u2014') + '</span>',
+          openFull: formatOpenFullCell(row),
           flt:
             '<span class="flt" data-i="' + i + '">' + row.flightNumber + '</span>',
           flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +

@@ -6,6 +6,33 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-02 — Trust horizon by per-hour risk
+
+**Question**: how likely is an open reading taken at a given hour to end
+full, per pool, and from how far out is that within 1 in 50?
+
+**Method** (python/PoolTrustHorizon.py): open readings as in the entry
+below, risk by hour fitted with isotonic regression (risk never falls with
+distance from departure). Horizon = farthest hour with fitted risk at most
+the tolerance, kept only if that few ending full inside it would happen by
+luck under 1% of the time at the pool's overall rate. Replaces the earlier
+rule, which pooled every reading within N hours, so the safe T-2 readings
+diluted the risky ones near N.
+
+**Result**:
+
+| Pool | 1 in 20 | 1 in 50 | Risk at T-3 / T-4 / T-6 |
+|---|---|---|---|
+| BadBoy | T-3.8 | T-2.8 | 0% / 7% / 12% |
+| Never Know | T-12.7 | none | 4% / 4% / 4% |
+| Golden SuMTh | any distance | any distance | 0% / 0% / 0% |
+| Golden TuWFSa | any distance | any distance | 1% / 1% / 1% |
+
+Under the old rule BadBoy's 1-in-50 horizon read T-4.1, but an open
+reading taken between T-4 and T-5 ended full 4 times in 46. About 50
+readings per hour can't by themselves show 1 in 50 (0 of 48 is consistent
+with up to about 6%), and readings from one flight aren't independent.
+
 ## 2026-10-02 — How far out a reading can be trusted, by pool
 
 **Question**: does correcting the held reading help, and does the time a

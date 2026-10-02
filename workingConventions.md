@@ -47,6 +47,10 @@ TODO.md; dated analysis results belong in findings.md.
 - Daily service: one departure time on whatever days it runs - the 10:00.
   In the code, `service` means daily service.
 - Pool: a set of weekly services grouped because they behave alike.
+  Recomputed from the data (python/Pools.py), never stored. Named by how
+  full they run: BadBoy is the fullest; Golden ends full at most 1 time
+  in 20; Never Know is the rest. Reports add the weekdays when two pools
+  share a name (Golden TuWFSa).
 - Never say bare "service" in docs or discussion; say weekly or daily.
 
 ## Delivering changes

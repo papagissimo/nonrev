@@ -31,10 +31,7 @@ Real differences from the Sheets version, not just syntax:
 import re
 
 from SeatLoggingDialog import minutes_to_12h
-from ServiceGrouping import (
-    get_day_grouping_row, save_day_grouping, get_known_day_groupings,
-    get_open_full_counts, format_open_full,
-)
+from Pools import snapshot as pool_snapshot
 from timezones import get_confirmed_timezone, UnconfirmedAirportError
 
 BOGUS_RE = re.compile(r'^bogus(\d+)$', re.IGNORECASE)
@@ -105,21 +102,19 @@ def get_schedule_for_route_day(conn, org, dest, dow):
         (org, dest, dow),
     ).fetchone() is not None
 
+    pools = pool_snapshot(conn)
     row_dicts = [
         {
             'scheduleRow': rowid, 'carrier': carrier or 'dl',
             'flightNumber': flight_number or '', 'dep': dep_time,
             'depDisplay': minutes_to_12h(dep_time), 'aircraftConfig': aircraft_config or '',
             'ignore': bool(ignore),
-            'openFull': format_open_full(
-                get_open_full_counts(conn, org, dest, dow, dep_time)
-            ),
+            'openFull': pools.own_record(conn, org, dest, dow, dep_time),
         }
         for rowid, carrier, flight_number, dep_time, aircraft_config, ignore in rows
     ]
 
     duration_minutes = get_route_duration(conn, org, dest)
-    day_grouping = get_day_grouping_row(conn, org, dest, dow)
 
     return {
         'org': org, 'dest': dest, 'dow': dow,
@@ -128,8 +123,6 @@ def get_schedule_for_route_day(conn, org, dest, dow):
         'nextBogusNumber': get_next_bogus_number(conn),
         'aircraftOptions': load_aircraft_options(conn),
         'durationMinutes': duration_minutes if duration_minutes is not None else '',
-        'dayGrouping': day_grouping['dayGrouping'],
-        'knownDayGroupings': get_known_day_groupings(conn),
     }
 
 
@@ -140,8 +133,7 @@ def save_schedule_for_route_day(conn, payload):
       rows: [{ scheduleRow (existing rowid, or null for a new row),
                carrier, flightNumber, dep (minutes-since-midnight int),
                aircraftConfig, ignore (bool), deleted (bool) }],
-      durationMinutes: '' or a number,
-      dayGrouping: '' or a string (see ServiceGrouping.save_day_grouping)
+      durationMinutes: '' or a number
     }
     """
     org = str(payload['org']).strip().lower()
@@ -197,10 +189,6 @@ def save_schedule_for_route_day(conn, payload):
     duration_minutes = payload.get('durationMinutes')
     duration_minutes = int(duration_minutes) if duration_minutes not in ('', None) else None
     save_route_duration(conn, org, dest, duration_minutes)
-
-    day_grouping = payload.get('dayGrouping')
-    if day_grouping not in ('', None):
-        save_day_grouping(conn, org, dest, dow, str(day_grouping).strip())
 
     conn.commit()
 

@@ -14,8 +14,6 @@
     #loadBtn:disabled { background: #a9c6f2; }
     .durationRow { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #666; }
     #durationInput { width: 50px; text-align: center; font-size: 12px; padding: 3px; }
-    #dayGroupingRow { margin-bottom: 12px; }
-    #dayGroupingInput { width: 120px; font-size: 12px; padding: 3px; }
     .ofCell { font-size: 11px; color: #555; line-height: 1.35; }
     table { border-collapse: collapse; width: 100%; table-layout: fixed; margin-top: 6px; }
     th { text-align: left; font-size: 11px; color: #888; padding: 2px 4px; }
@@ -62,11 +60,6 @@
     <input type="text" id="durationInput" placeholder="0215">
   </div>
 
-  <div class="durationRow" id="dayGroupingRow" style="display:none;">
-    <label for="dayGroupingInput" style="margin:0;">day grouping (this day)</label>
-    <input type="text" id="dayGroupingInput" list="dayGroupingOptions" placeholder="e.g. weekday">
-  </div>
-  <datalist id="dayGroupingOptions"></datalist>
 
   <div id="emptyMsg">No flights logged for this route/day yet - add one below.</div>
 
@@ -86,7 +79,7 @@
         <th>flight</th>
         <th>dep time</th>
         <th>aircraft</th>
-        <th title="Real counts pooled across this service's grouped days (see day grouping above) - not a percentage, since the sample size matters as much as the rate">open/full</th>
+        <th title="This weekly service's own flights, by live T1 - real counts, not a percentage, since the sample size matters as much as the rate">open/full</th>
         <th>ignore</th>
         <th></th>
       </tr>
@@ -195,9 +188,6 @@
     document.getElementById('durationInput').addEventListener('input', function () {
       isDirty = true;
     });
-    document.getElementById('dayGroupingInput').addEventListener('input', function () {
-      isDirty = true;
-    });
 
     function swapOrgDest() {
       var orgEl = document.getElementById('orgInput');
@@ -255,8 +245,6 @@
           renderAircraftOptions(current.aircraftOptions);
           renderRows();
           renderDuration();
-          renderDayGrouping();
-          renderDayGroupingOptions(current.knownDayGroupings);
           isDirty = false;
         })
         .catch(function (err) {
@@ -287,29 +275,6 @@
       var input = document.getElementById('durationInput');
       row.style.display = 'flex';
       input.value = minutesToHHMM(current.durationMinutes);
-    }
-
-    // Free text - no fixed vocabulary. dayGroupingOptions is just a
-    // "here's what's already been used elsewhere" list pulled fresh from
-    // the server each load (unlike aircraftOptions, which only ever
-    // grows from a small fixed set and so is rendered once) - it exists
-    // purely so re-typing the same label on a new route is a pick, not a
-    // retype, keeping "weekday" from drifting into "wkdy" by accident.
-    function renderDayGroupingOptions(options) {
-      var dl = document.getElementById('dayGroupingOptions');
-      dl.innerHTML = '';
-      (options || []).forEach(function (opt) {
-        var o = document.createElement('option');
-        o.value = opt;
-        dl.appendChild(o);
-      });
-    }
-
-    function renderDayGrouping() {
-      var row = document.getElementById('dayGroupingRow');
-      var input = document.getElementById('dayGroupingInput');
-      row.style.display = 'flex';
-      input.value = current.dayGrouping || '';
     }
 
     function renderRows() {
@@ -470,16 +435,13 @@
       btn.disabled = true;
       document.getElementById('status').textContent = 'Saving\u2026';
 
-      var dayGrouping = document.getElementById('dayGroupingInput').value.trim();
-
       fetch('/api/saveScheduleForRouteDay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           org: current.org, dest: current.dest, dow: current.dow,
           rows: current.rows,
-          durationMinutes: durationMinutes,
-          dayGrouping: dayGrouping
+          durationMinutes: durationMinutes
         })
       })
         .then(function (res) { return res.json(); })

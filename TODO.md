@@ -24,7 +24,7 @@ working around it.
     SeatLoggingDialog.py's previous-readings lookup; the past-date branch
     right beside it still reads the stored column.
   - Still reading the stored column: DeclineCurveFit.py, SeatLoggingDialog.py,
-    deptime_convergence.py, ServiceGrouping.py, T1Estimator.py,
+    deptime_convergence.py, Pools.py, T1Estimator.py,
     T1GridReport.py, ObservationsBrowser.py/.html, FlightScheduleDialog.py,
     backfill_deptime_convergence.py, GraphObservations.py (deprecated -
     decide whether to update it or let it break), create_db.py.
@@ -52,22 +52,8 @@ working around it.
   job, and a separate per-route setting picks which of Tue/Wed gets logged
   (default both). Open: whether a Tue question on a Wed-logged route should
   then read Wed data.
-- **Pooling in the logging dialog — method chosen, not wired.** Pools come
-  from python/PoolSplitReport.py (findings.md, 2026-10-01): flights split
-  by weekday, daily service or weekly service, whichever separates them
-  most, while that clears p < 0.01 after allowing for the attributes tried.
-  Recomputed from scratch each run; no stored pool labels.
-  - Dialog shows the weekly service's own record, then its pool's open/full
-    numbers.
-  - Replaces dayGroupings (table, FlightScheduleDialog field,
-    get_grouped_days). O/F counts move to the live T1 estimate, and t1Old
-    goes from the code entirely.
-  - Open: what the history range under each cabin pools by, since raw
-    seats differ by aircraft size; whether pools get names in the dialog
-    (working names: bad boys for the fullest pool, golden boys for the most
-    open, middle child between).
-  - CMH-MSP 4:00pm and 4:45pm are probably one daily service that the
-    clustering keeps apart.
+- **CMH-MSP 4:00pm and 4:45pm** are probably one daily service that the
+  clustering keeps apart, so they can land in different pools.
 
 ## Decline curve / predictor
 
@@ -104,16 +90,9 @@ working around it.
   from the normal-open ones (rather than an aggregate spread), that flags
   exactly the day the history alone wouldn't. Flagged as "extremely
   useful" if it can be made to work.
-- **Trust horizon per pool — next model, not wired.**
-  python/PoolTrustHorizon.py solves, per pool, how far out an "open" reading
-  can be trusted: the farthest horizon where open readings taken within it
-  ended full at most a tolerance of the time (findings.md, 2026-10-02).
-  Recomputed every run, like the pools. Intended use: the logging dialog
-  flags a reading taken earlier than its pool's horizon as not yet
-  trustworthy. Delta's cutoff, T-45min, is the hard floor.
-  - Open: the tolerance (1 in 20 and 1 in 50 tried so far).
-  - Open: what signal catches the middle child, whose open readings end
-    full 4-7% of the time at every distance, so no horizon helps.
+- **What catches Never Know's late collapses — open, not designed.** Its
+  open readings end full 4-7% of the time at every distance
+  (findings.md, 2026-10-02), so it gets no trust horizon and no flag.
 - **Cosmetic: the console's `gap = 9.0/slope` print** can show a huge
   meaningless number when thin data gives a near-zero slope. Display-only;
   drop it from the print or cap its display. The near-zero slope itself is
