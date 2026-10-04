@@ -1,5 +1,5 @@
 flask
 airportsdata
-numpy
+numpy>=2.0
 scipy
 lifelines

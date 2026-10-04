@@ -23,6 +23,7 @@ now would buy are the curve at the last reading's distance less the curve
 now. The leadoff and the golden ticket are always called for, since the
 study needs them whatever the curve says.
 """
+from bisect import bisect_left
 from collections import defaultdict
 from datetime import date, datetime
 
@@ -41,6 +42,9 @@ SHUFFLES = 9999
 MIN_POOL_FLIGHTS = 30
 CURVE_HOURS = [48, 24, 12, 8, 6, 4, 3, 2]
 GLANCE_COLUMNS = {'y': 'cheapY', 'cPlus': 'cheapCPlus', 'firstOrPS': 'cheapFirstOrPS'}
+T1_RANGE_QUANTILES = (0.1, 0.9)
+T1_RANGE_LEVEL_SPREAD = 3.0
+T1_RANGE_MIN_FLIGHTS = 10
 
 ATTRIBUTES = {
     'weekday': lambda f: f['day'],
@@ -269,6 +273,34 @@ def still_to_come_at(curve, hours):
     return float(np.interp(hours, [h for h, _ in points], [v for _, v in points]))
 
 
+def held_reading(flight, hours):
+    early = flight['early']
+    index = bisect_left(early, (hours, float('-inf')))
+    return early[index][1] if index < len(early) else None
+
+
+def t1_range(flights, hours, held):
+    """Where flights like this one ended: the T1_RANGE_QUANTILES of past
+    flights' moves from their reading held at this distance to their T1,
+    each flight weighted by how close its held total sits to this one's,
+    added to this held total. None when the weights add up to fewer than
+    T1_RANGE_MIN_FLIGHTS flights' worth."""
+    moves, weights = [], []
+    for flight in flights:
+        past_held = held_reading(flight, hours)
+        if past_held is None:
+            continue
+        moves.append(flight['t1'] - past_held)
+        weights.append(np.exp(-0.5 * ((past_held - held) / T1_RANGE_LEVEL_SPREAD) ** 2))
+    if not weights:
+        return None
+    weights = np.array(weights)
+    if weights.sum() ** 2 / np.sum(weights ** 2) < T1_RANGE_MIN_FLIGHTS:
+        return None
+    low, high = np.quantile(moves, T1_RANGE_QUANTILES, weights=weights, method='inverted_cdf')
+    return {'lo': max(0.0, held + float(low)), 'hi': held + float(high)}
+
+
 def cadence_state(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points):
     if not reading_hours:
         return 'now'
@@ -311,6 +343,14 @@ class TrustSnapshot:
         if leaf is None:
             return None
         return {'label': self.letters[id(leaf)], 'curve': self.curves[id(leaf)]}
+
+    def t1_range(self, conn, org, dest, day, dep_time, flight_date, hours, held):
+        leaf = classify(self.tree, self.weekly_service(conn, org, dest, day, dep_time))
+        if leaf is None:
+            return None
+        others = [f for f in leaf['flights']
+                  if (f['org'], f['dest'], f['flightDate']) != (org, dest, flight_date)]
+        return t1_range(others, hours, held)
 
 
 _cached = {}

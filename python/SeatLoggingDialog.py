@@ -491,6 +491,19 @@ def pool_and_cadence(conn, trust, settings, candidate, prev_readings):
     return {'pool': pool, 'cadence': state}
 
 
+def attach_t1_ranges(conn, trust, settings, candidate, prev_readings):
+    for reading in prev_readings:
+        reading['goldenTicket'] = False
+        reading['t1Range'] = None
+        if reading.get('t1') is None or reading.get('hrs') is None:
+            continue
+        if reading['hrs'] <= settings['goldenTicketHours']:
+            reading['goldenTicket'] = True
+            continue
+        reading['t1Range'] = trust.t1_range(conn, candidate['org'], candidate['dest'], candidate['dow'],
+                                            candidate['dep'], candidate['flightDate'], reading['hrs'], reading['t1'])
+
+
 def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_route=None):
     settings = load_settings(conn)
     decline_settings = load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
@@ -647,6 +660,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         # the one and only place that count is real.)
         prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'],
                                                         floor_estimates)
+        attach_t1_ranges(conn, trust, settings, c, prev_readings)
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
             'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),
@@ -673,6 +687,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 continue
             prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'],
                                                             c['flightDate'], floor_estimates)
+            attach_t1_ranges(conn, trust, settings, c, prev_readings)
             route_rows.append({
                 'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
                 'dep': c['dep'], 'depDisplay': minutes_to_12h(c['dep']),

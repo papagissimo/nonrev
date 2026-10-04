@@ -73,7 +73,12 @@
     .prevHrsInline { display: inline-block; width: 38px; color: #666; }
     .prevHrsInline.mostRecent { color: #c5221f; }
     .prevSeatVal { display: inline-block; width: 30px; text-align: left; }
-    .t1cell { font-style: italic; color: #555; }
+    .t1glyph { position: relative; height: 1.4em; }
+    .t1glyph .axis { position: absolute; left: 0; right: 0; top: 0.7em; border-top: 1px solid #e3e3e3; }
+    .t1glyph .tick { position: absolute; top: 0; height: 1.4em; border-left: 1px dashed #aaa; }
+    .t1glyph .bar { position: absolute; top: 0.2em; height: 1em; border-radius: 0.5em; }
+    .t1glyph .golden { position: absolute; top: 0.1em; width: 3px; height: 1.2em; border-radius: 2px; transform: translateX(-50%); }
+    .t1glyph .num { position: absolute; top: 0; line-height: 1.4em; font-size: 12px; transform: translateX(-50%); }
     td.col-flt { padding-right: 2px; }
     td.col-flag { padding-left: 2px; }
     .flagCell input { font-size: 15px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 5px 7px; }
@@ -416,7 +421,7 @@
       // fixed-width nowrap cell forced to hold far more text than it
       // had room for doesn't wrap, it just overflows the table). Narrow
       // on purpose - a short number, nothing else lives here.
-      cols.push({ key: 't1', label: 'T\u20111', width: 50 });
+      cols.push({ key: 't1', label: 'T\u20111', width: 180 });
       cols.push({ key: 'openFull', label: 'O/F', width: 150 });
       cols.push({ key: 'flt', label: 'Flight', width: 68 });
       cols.push({ key: 'gap2', label: '', width: 10 });
@@ -598,6 +603,8 @@
             '  y=' + blankDash(rd.y) + ' cplus=' + blankDash(rd.cplus) +
             ' onePS=' + blankDash(rd.onePS) + ' d1=' + blankDash(rd.d1) +
             '  t1=' + blankDash(round2(rd.t1)) +
+            (rd.t1Range ? ' range=' + round2(rd.t1Range.lo) + '-' + round2(rd.t1Range.hi) : '') +
+            (rd.goldenTicket ? ' (golden ticket)' : '') +
             '  steps: y=' + blankDash(steps.y) + ' cplus=' + blankDash(steps.cplus) +
             ' onePS=' + blankDash(steps.onePS) + ' d1=' + blankDash(steps.d1) +
             '  solo select: y=' + blankDash(solo.y) + ' cplus=' + blankDash(solo.cplus) +
@@ -620,15 +627,52 @@
       });
     }
 
+    var T1_GLYPH_MAX_SEATS = 27;
+    var T1_GLYPH_COLORS = {
+      open: { fill: '#97C459', text: '#27500A' },
+      straddles: { fill: '#EF9F27', text: '#633806' },
+      full: { fill: '#F09595', text: '#791F1F' }
+    };
+
+    function t1GlyphPercent(seats) {
+      return Math.max(0, Math.min(100, seats / T1_GLYPH_MAX_SEATS * 100));
+    }
+
+    function t1GlyphColors(lo, hi) {
+      var thresholds = batch.openFullSettings || { fullThreshold: 2, openThreshold: 8 };
+      if (lo >= thresholds.openThreshold) return T1_GLYPH_COLORS.open;
+      if (hi <= thresholds.fullThreshold) return T1_GLYPH_COLORS.full;
+      return T1_GLYPH_COLORS.straddles;
+    }
+
+    function t1GlyphHtml(rd) {
+      if (rd.t1 === null || rd.t1 === undefined) return '';
+      var thresholds = batch.openFullSettings || { fullThreshold: 2, openThreshold: 8 };
+      var html = '<div class="axis"></div>' +
+        '<div class="tick" style="left:' + t1GlyphPercent(thresholds.fullThreshold) + '%"></div>' +
+        '<div class="tick" style="left:' + t1GlyphPercent(thresholds.openThreshold) + '%"></div>';
+      var at = t1GlyphPercent(rd.t1);
+      var numberAt = Math.max(5, Math.min(95, at));
+      if (rd.goldenTicket) {
+        var golden = t1GlyphColors(rd.t1, rd.t1);
+        html += '<div class="golden" style="left:' + at + '%;background:' + golden.text + '"></div>' +
+          '<div class="num" style="left:calc(' + Math.min(90, at) + '% + 12px);color:#333">' + formatT1Value(rd.t1) + '</div>';
+      } else if (rd.t1Range) {
+        var colors = t1GlyphColors(rd.t1Range.lo, rd.t1Range.hi);
+        var left = t1GlyphPercent(rd.t1Range.lo);
+        var width = Math.max(2, t1GlyphPercent(rd.t1Range.hi) - left);
+        html += '<div class="bar" style="left:' + left + '%;width:' + width + '%;background:' + colors.fill + '"></div>' +
+          '<div class="num" style="left:' + numberAt + '%;color:' + colors.text + '">' + formatT1Value(rd.t1) + '</div>';
+      } else {
+        html += '<div class="num" style="left:' + numberAt + '%;color:#999">' + formatT1Value(rd.t1) + '</div>';
+      }
+      return html;
+    }
+
     function formatT1Column(readings) {
-      // Server-computed now (T1Estimator.compute_t1_replay_column) -
-      // each reading already carries its own 't1' value, replay-style
-      // (as of that point in the day). No calculation happens here,
-      // just display formatting - his call, no good reason for real
-      // math to live client-side.
       if (!readings || readings.length === 0) return '';
       return readings.map(function (rd) {
-        return '<div class="row t1cell">' + formatT1Value(rd.t1) + '</div>';
+        return '<div class="row t1glyph">' + t1GlyphHtml(rd) + '</div>';
       }).join('');
     }
 
