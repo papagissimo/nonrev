@@ -6,6 +6,47 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-04 — SLC routes: SLC→CVG sells out most
+
+**Question**: which routes into and out of SLC sell out most?
+
+**Answer**: SLC→CVG, by a wide margin. Going in, PDX→SLC is fullest.
+The CMH legs are the roomiest both ways. Each flight counts once, at its
+last reading within 6h of departure, as summed can-buy across cabins.
+
+| Route | Flights | Avg seats left |
+|---|---|---|
+| SLC→CVG | 57 | 8.7 |
+| SLC→PDX | 126 | 13.1 |
+| SLC→LAX | 95 | 13.4 |
+| SLC→CMH | 27 | 14.8 |
+| PDX→SLC | 63 | 11.0 |
+| LAX→SLC | 79 | 14.4 |
+| CVG→SLC | 45 | 15.0 |
+| CMH→SLC | 18 | 16.2 |
+
+SLC→CVG is lopsided: the same pair coming in (CVG→SLC) is among the
+roomiest, so the demand runs one way.
+
+**Assumptions / caveats**: can-buy counts only paying passengers; it
+says nothing about standby list length. No DTW↔SLC or MSP↔SLC routes are
+logged. BUR left out. The charts were one dot per flight on a
+seats-left axis, one row per route, with the average marked; this
+reproduces their data:
+
+```python
+import os, sqlite3, statistics, sys
+sys.path.insert(0, os.path.expanduser('~/nonrev/python'))
+from Pools import logged_flights
+conn = sqlite3.connect(os.path.expanduser('~/nonrev/nonrev.db'))
+routes = {}
+for f in logged_flights(conn, 999):
+    if 'slc' in (f['org'], f['dest']) and 'bur' not in (f['org'], f['dest']):
+        routes.setdefault(f"{f['org']}-{f['dest']}", []).append(f['cappedT1'])
+for route, seats in sorted(routes.items(), key=lambda kv: statistics.mean(kv[1])):
+    print(route, len(seats), round(statistics.mean(seats), 1), sorted(seats))
+```
+
 ## 2026-10-03 — Trust pools: four ways readings settle
 
 **Question**: grouped by how readings settle rather than how flights end,
