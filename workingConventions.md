@@ -106,9 +106,13 @@ TODO.md; dated analysis results belong in findings.md.
 
 ## Logging workflow
 
-- He walks every scheduled flight in departure order, logging or
-  blank-skipping each. The dialog only colors rows by cadence state; it
-  never picks, orders or skips flights for him.
+- The dialog shows one route-day at a time, its flights in departure
+  order, and he logs or blank-skips each route. The next route is the
+  most pressing by cadence (TrustPools.cadence_reading), re-ranked after
+  every route: Now! first (unread golden-ticket windows by soonest
+  departure, then by points, then leadoffs by soonest departure), then
+  Meh by points (no pool last), then Skip by departure. A route ranks by
+  its most pressing flight. The dialog never skips flights for him.
 - After a submit, the dialog reshows the same route with the new values;
   a blank submit skips the route. Keep this confirm-then-skip two-step.
 - His logging tab stays open for days. Refreshing deliberately resets the

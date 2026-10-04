@@ -340,13 +340,9 @@
     var recentSeeded = false;
 
     function formatHours(h) {
-      // Below 10h, precision to a tenth still matters. At 10h+ it
-      // doesn't - his call ("no difference between 10.3 and 11.6") -
-      // so just round to a whole number past that point. One shared
-      // function so every place hours get shown (current Hrs, Prev,
-      // the recent-readings panel) follows the same rule.
       if (h === null || h === undefined || h === '') return '--';
       var n = Number(h);
+      if (Math.abs(n) > 48) return (n / 24).toFixed(1) + 'd';
       if (Math.abs(n) >= 10) return Math.round(n) + 'h';
       return n.toFixed(1) + 'h';
     }

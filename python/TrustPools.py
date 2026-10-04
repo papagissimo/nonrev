@@ -301,21 +301,28 @@ def t1_range(flights, hours, held):
     return {'lo': max(0.0, held + float(low)), 'hi': held + float(high)}
 
 
-def cadence_state(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points):
+def cadence_reading(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points):
+    """(state, urgency). Urgency sorts most pressing first: Now! by unread
+    golden-ticket window (soonest departure), then points, then leadoff
+    (soonest departure); Meh by points, then no pool; Skip by departure."""
     if not reading_hours:
-        return 'now'
+        return 'now', (0, 2, hours_until_dep)
     if any(hours <= golden_ticket_hours for hours in reading_hours):
-        return 'skip'
+        return 'skip', (2, 0, hours_until_dep)
     if hours_until_dep <= golden_ticket_hours:
-        return 'now'
+        return 'now', (0, 0, hours_until_dep)
     if curve is None:
-        return 'meh'
+        return 'meh', (1, 1, hours_until_dep)
     gain = still_to_come_at(curve, min(reading_hours)) - still_to_come_at(curve, hours_until_dep)
     if gain >= now_points:
-        return 'now'
+        return 'now', (0, 1, -gain)
     if gain >= skip_points:
-        return 'meh'
-    return 'skip'
+        return 'meh', (1, 0, -gain)
+    return 'skip', (2, 0, hours_until_dep)
+
+
+def cadence_state(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points):
+    return cadence_reading(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points)[0]
 
 
 class TrustSnapshot:

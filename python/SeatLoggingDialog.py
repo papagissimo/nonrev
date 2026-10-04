@@ -51,7 +51,7 @@ from deptime_convergence import converge_flight_date
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from ServiceGrouping import load_open_full_settings
 from Pools import snapshot as pool_snapshot
-from TrustPools import cadence_state, snapshot as trust_snapshot
+from TrustPools import cadence_reading, snapshot as trust_snapshot
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
@@ -480,15 +480,42 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
     return {'saved': True}
 
 
-def pool_and_cadence(conn, trust, settings, candidate, prev_readings):
+def pool_and_cadence_reading(conn, trust, settings, candidate, prev_readings):
     pool = trust.pool_record(conn, candidate['org'], candidate['dest'], candidate['dow'], candidate['dep'])
     reading_hours = [reading['hrs'] for reading in prev_readings
                      if reading.get('hrs') is not None
                      and any(reading.get(cabin) is not None for cabin in CABIN_KEY_TO_COLUMN)]
-    state = cadence_state(reading_hours, candidate['hoursUntilDep'], settings['goldenTicketHours'],
-                          pool['curve'] if pool else None,
-                          settings['cadenceNowPoints'], settings['cadenceSkipPoints'])
+    state, urgency = cadence_reading(reading_hours, candidate['hoursUntilDep'], settings['goldenTicketHours'],
+                                     pool['curve'] if pool else None,
+                                     settings['cadenceNowPoints'], settings['cadenceSkipPoints'])
+    return pool, state, urgency
+
+
+def pool_and_cadence(conn, trust, settings, candidate, prev_readings):
+    pool, state, _ = pool_and_cadence_reading(conn, trust, settings, candidate, prev_readings)
     return {'pool': pool, 'cadence': state}
+
+
+def most_pressing_route(conn, trust, settings, candidates, skip_set, floor_estimates, readings_cache):
+    best = None
+    for c in candidates:
+        route_key = (c['org'], c['dest'], c['flightDate'])
+        if route_key in skip_set:
+            continue
+        prev_readings = readings_for_candidate(conn, c, floor_estimates, readings_cache)
+        _, _, urgency = pool_and_cadence_reading(conn, trust, settings, c, prev_readings)
+        rank = (urgency, c['depEtDatetime'])
+        if best is None or rank < best[0]:
+            best = (rank, c)
+    return None if best is None else best[1]
+
+
+def readings_for_candidate(conn, c, floor_estimates, readings_cache):
+    flight = (c['scheduleRow'], c['flightDate'])
+    if flight not in readings_cache:
+        readings_cache[flight] = previous_readings_for(
+            conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'], floor_estimates)[0]
+    return readings_cache[flight]
 
 
 def attach_t1_ranges(conn, trust, settings, candidate, prev_readings):
@@ -582,16 +609,6 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
 
     candidates.sort(key=lambda c: c['depEtDatetime'])
 
-    # No cadence/eligibility engine anymore - every scheduled, non-departed
-    # flight in the window is a candidate every time. What keeps "next"
-    # moving forward through a session, instead of re-offering the same
-    # route over and over, is purely this session-scoped marker: a route+
-    # day lands in here the moment it's either logged (a real save) or
-    # explicitly blank-submitted ("nothing to log here right now") -
-    # either way, it's skipped for the rest of this session. Client
-    # resets it on reload, which is the deliberate way back to the top of
-    # the list. Keyed on (org, dest, flightDate) so skipping today's
-    # dtw-pdx can never bleed into tomorrow's.
     skip_set = {
         (r['org'], r['dest'], r['flightDate']) for r in (skip_route_days or [])
     }
@@ -611,12 +628,12 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
              and c['flightDate'] == forced_route['flightDate']),
             None,
         )
+    trust = trust_snapshot(conn)
+    floor_estimates = load_floor_estimates(conn)
+    readings_cache = {}
     if next_candidate is None:
-        next_candidate = next(
-            (c for c in candidates
-             if (c['org'], c['dest'], c['flightDate']) not in skip_set),
-            None,
-        )
+        next_candidate = most_pressing_route(conn, trust, settings, candidates, skip_set,
+                                             floor_estimates, readings_cache)
 
     if next_candidate is None:
         total_departed = sum(departed_by_route.values())
@@ -643,9 +660,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
 
     d1_map = load_d1_map(conn)
     pools = pool_snapshot(conn)
-    trust = trust_snapshot(conn)
     grades = FlightGrades(conn)
-    floor_estimates = load_floor_estimates(conn)
     route_rows = []
     for c in candidates:
         # Same route AND same schedule date - two different calendar
@@ -658,8 +673,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         # DEP_CUTOFF_MINUTES check above, by construction - nothing here
         # can still be departed. (departed_by_route, computed above, is
         # the one and only place that count is real.)
-        prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'],
-                                                        floor_estimates)
+        prev_readings = readings_for_candidate(conn, c, floor_estimates, readings_cache)
         attach_t1_ranges(conn, trust, settings, c, prev_readings)
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
