@@ -109,10 +109,12 @@ TODO.md; dated analysis results belong in findings.md.
 - The dialog shows one route-day at a time, its flights in departure
   order, and he logs or blank-skips each route. The next route is the
   most pressing by cadence (TrustPools.cadence_reading), re-ranked after
-  every route: Now! first (unread golden-ticket windows by soonest
-  departure, then by points, then leadoffs by soonest departure), then
-  Meh by points (no pool last), then Skip by departure. A route ranks by
-  its most pressing flight. The dialog never skips flights for him.
+  every route, one 24-hour window at a time (departing within 24h, then
+  24-48h, and so on). Within a window: Now! first (unread golden-ticket
+  windows by soonest departure, then by points, then leadoffs by soonest
+  departure), then Meh by points (no pool last). Skip routes come after
+  every window, by departure. A route ranks by its most pressing flight.
+  The dialog never skips flights for him.
 - After a submit, the dialog reshows the same route with the new values;
   a blank submit skips the route. Keep this confirm-then-skip two-step.
 - His logging tab stays open for days. Refreshing deliberately resets the

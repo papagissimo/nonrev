@@ -42,6 +42,7 @@ no separate yesterday/today branching is needed once the math is done
 in absolute datetimes instead of minutes-since-midnight.
 """
 
+import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -504,10 +505,16 @@ def most_pressing_route(conn, trust, settings, candidates, skip_set, floor_estim
             continue
         prev_readings = readings_for_candidate(conn, c, floor_estimates, readings_cache)
         _, _, urgency = pool_and_cadence_reading(conn, trust, settings, c, prev_readings)
-        rank = (urgency, c['depEtDatetime'])
+        rank = route_day_rank(urgency, c['hoursUntilDep']) + (urgency, c['depEtDatetime'])
         if best is None or rank < best[0]:
             best = (rank, c)
     return None if best is None else best[1]
+
+
+def route_day_rank(urgency, hours_until_dep):
+    if urgency[0] == 2:
+        return (1, 0)
+    return (0, max(0, math.ceil(hours_until_dep / 24) - 1))
 
 
 def readings_for_candidate(conn, c, floor_estimates, readings_cache):
