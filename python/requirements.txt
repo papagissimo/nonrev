@@ -2,3 +2,4 @@ flask
 airportsdata
 numpy
 scipy
+lifelines

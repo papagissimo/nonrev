@@ -51,6 +51,7 @@ from deptime_convergence import converge_flight_date
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from ServiceGrouping import load_open_full_settings
 from Pools import snapshot as pool_snapshot
+from TrustPools import cadence_state, snapshot as trust_snapshot
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, CABIN_KEY_TO_COLUMN
@@ -479,6 +480,17 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
     return {'saved': True}
 
 
+def pool_and_cadence(conn, trust, settings, candidate, prev_readings):
+    pool = trust.pool_record(conn, candidate['org'], candidate['dest'], candidate['dow'], candidate['dep'])
+    reading_hours = [reading['hrs'] for reading in prev_readings
+                     if reading.get('hrs') is not None
+                     and any(reading.get(cabin) is not None for cabin in CABIN_KEY_TO_COLUMN)]
+    state = cadence_state(reading_hours, candidate['hoursUntilDep'], settings['goldenTicketHours'],
+                          pool['curve'] if pool else None,
+                          settings['cadenceNowPoints'], settings['cadenceSkipPoints'])
+    return {'pool': pool, 'cadence': state}
+
+
 def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_route=None):
     settings = load_settings(conn)
     decline_settings = load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
@@ -618,6 +630,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
 
     d1_map = load_d1_map(conn)
     pools = pool_snapshot(conn)
+    trust = trust_snapshot(conn)
     grades = FlightGrades(conn)
     floor_estimates = load_floor_estimates(conn)
     route_rows = []
@@ -650,7 +663,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
             'openFull': pools.own_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
-            'pool': pools.pool_record(conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep']),
+            **pool_and_cadence(conn, trust, settings, c, prev_readings),
         })
 
     if include_departed:
@@ -676,7 +689,8 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
                 'openFull': pools.own_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
-                'pool': pools.pool_record(conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep']),
+                'pool': trust.pool_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
+                'cadence': 'skip',
             })
         # Chronological, same order Delta's own site lists a route's day -
         # departed flights (earlier dep times, by construction) end up

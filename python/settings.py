@@ -29,6 +29,9 @@ DEFAULT_SETTINGS = {
     # already-logged data.
     'goldenTicketHours': 1.5,
     'lookaheadDays': 2,
+    'cadenceYardstick': '3 3, 10 3.5, 20 10',
+    'cadenceNowPoints': 10.0,
+    'cadenceSkipPoints': 3.0,
 }
 
 
@@ -36,6 +39,21 @@ def validate_next_up_settings(new_settings):
     lookahead = new_settings.get('lookaheadDays')
     if isinstance(lookahead, bool) or not isinstance(lookahead, int) or lookahead < 0:
         raise ValueError('lookaheadDays must be a whole number, 0 or more')
+    yardstick = new_settings.get('cadenceYardstick')
+    try:
+        pairs = [pair.split() for pair in yardstick.split(',') if pair.strip()]
+        values = [(float(total), float(move)) for total, move in pairs]
+    except (AttributeError, ValueError):
+        raise ValueError('cadenceYardstick must be pairs like "3 3, 10 3.5, 20 10"')
+    if not values or any(move <= 0 for _total, move in values):
+        raise ValueError('cadenceYardstick needs at least one pair, every move above 0')
+    now_points = new_settings.get('cadenceNowPoints')
+    skip_points = new_settings.get('cadenceSkipPoints')
+    for name, value in (('cadenceNowPoints', now_points), ('cadenceSkipPoints', skip_points)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f'{name} must be a number of points, 0 or more')
+    if skip_points >= now_points:
+        raise ValueError('cadenceSkipPoints must be below cadenceNowPoints')
 
 
 def ensure_table(conn):
