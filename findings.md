@@ -6,6 +6,82 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-03 — Trust pools: four ways readings settle
+
+**Question**: grouped by how readings settle rather than how flights end,
+how many distinct cadences do the flights need?
+
+**Answer**: four pools. Each curve is the percent of flights whose
+reading at that distance still has a move that matters to come, by the
+yardstick `3 3, 10 3.5, 20 10` (summed cabins, either direction).
+
+| Pool | Flights | T-48 | T-24 | T-12 | T-8 | T-6 | T-4 | T-3 | T-2 |
+|---|---|---|---|---|---|---|---|---|---|
+| A | 308 | 8 | 7 | 8 | 7 | 5 | 3 | 3 | 1 |
+| B | 131 | 28 | 31 | 18 | 15 | 13 | 11 | 10 | 8 |
+| C | 270 | 61 | 40 | 28 | 21 | 20 | 19 | 16 | 14 |
+| D | 269 | 58 | 51 | 43 | 36 | 34 | 35 | 24 | 21 |
+
+The first split is by daily service, then by weekday on each side. All
+three splits clear 0.01 (0.0006-0.003) against 9,999 shuffles, and the
+same four pools come out on every shuffle seed tried.
+
+**Assumptions / caveats**: about 20 flights per pool were read as far
+out as T-48, so the left end of each curve is rough; T-8 inward rests on
+95-180 flights per pool. Most weekly services have 1-3 flights, so a
+single service's placement is thin. Glance readings enter at the
+dialog's floor estimates.
+
+## 2026-10-03 — Settling measures that don't separate flights
+
+**Question**: which ways of saying "this flight's readings have settled"
+tell steady flights from jumpy ones?
+
+**Answer**: only a yardstick that shrinks the move that matters at low
+totals and widens it at high ones. A fixed seat band (2-6 seats), a
+percent band (30%) and changes of open/between/full box each put every
+group's settling around T-3 to T-5, because high-count wobble (25 to 15)
+or edge jitter (8 to 7) counts as unsettled. Counting only flips between
+the extremes separates the groups but drops every flight that ends
+between.
+
+## 2026-10-03 — Holding the last reading beats the decline curve in every pool
+
+**Question**: does the decline curve forecast T1 better than holding the
+last reading within any pool?
+
+**Answer**: no. Per-cabin error and open/full calls favor holding at T-4,
+T-8 and T-12 in all four trust pools, as in the old pools. Pool D is the
+one exception worth noting: the fleet-slope curve halves the open-to-full
+misses (T-8: 12 to 6) but adds as many full-to-open false alarms (1 to 6).
+
+## 2026-10-03 — How far out a leadoff still means something
+
+**Question**: how far out does an early reading's open or full call hold?
+
+**Answer**: by the old pools, open readings ended full:
+
+| Open reading at | Golden | BadBoy | Never Know |
+|---|---|---|---|
+| T-3 to 8h | 1 of 340 | 21 of 202 | 0 of 36 |
+| ~1 day | 2 of 175 | 24 of 99 | 2 of 22 |
+| ~2 days | 1 of 98 | 11 of 48 | 3 of 15 |
+| ~3 days | 2 of 58 | 28 of 45 | 7 of 12 |
+
+No full BadBoy reading out to two days ended open; 17 of 161 ended
+between. Counts are readings, not flights; past three days too few
+flights to say.
+
+## 2026-10-03 — Seat maps add little beyond the golden ticket
+
+**Answer**: while can-buy reads 9, a seat map with 5 or fewer open
+singles failed to end open 8 of 21 flights versus 7 of 41 otherwise
+(about 1-in-15 odds of luck). Late, when can-buy reads full, about a
+quarter of seat maps still show 6-17 open singles: the plane isn't full,
+the standby list decides. Open seats plus blocked seats tracked the
+insider standby count on one flight (MSP-PDX 3:55pm, 2026-10-02) and
+nowhere else yet.
+
 ## 2026-10-02 — Trust horizon by per-hour risk
 
 **Question**: how likely is an open reading taken at a given hour to end

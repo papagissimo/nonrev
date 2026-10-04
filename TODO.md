@@ -55,6 +55,19 @@ working around it.
 - **CMH-MSP 4:00pm and 4:45pm** are probably one daily service that the
   clustering keeps apart, so they can land in different pools.
 
+## Trust pools / cadence
+
+- **Retire Pools.py — next, not started.** Nothing pools on open/full
+  any more, but the dialog still gets each service's own O/F record and
+  the history ranges from Pools.snapshot. Move those two out, then remove
+  the old pool tree, PoolTrustHorizon, PoolBacktest, PoolSplitReport and
+  PoolResolveBacktest. List every reference before removing anything.
+- **Retire the decline curve — decided in principle, not scoped.** It lost
+  to holding the last reading everywhere (findings.md, 2026-10-03). The
+  dialog no longer shows C1/Steps, but previous_readings_for still
+  computes them, and about 19 files touch the curve. Needs its own
+  reference list and a decision on the history-range hint.
+
 ## Decline curve / predictor
 
 - **Logging hint is the history range, not the curve.** Under each cabin
@@ -90,9 +103,6 @@ working around it.
   from the normal-open ones (rather than an aggregate spread), that flags
   exactly the day the history alone wouldn't. Flagged as "extremely
   useful" if it can be made to work.
-- **What catches Never Know's late collapses — open, not designed.** Its
-  open readings end full 4-7% of the time at every distance
-  (findings.md, 2026-10-02), so it gets no trust horizon and no flag.
 - **Cosmetic: the console's `gap = 9.0/slope` print** can show a huge
   meaningless number when thin data gives a near-zero slope. Display-only;
   drop it from the print or cap its display. The near-zero slope itself is
@@ -176,12 +186,10 @@ working around it.
 
 ## Parked
 
-- **When to stop logging a flight until the golden ticket.** An early
-  reading far enough from the middle may settle the day on its own: high
-  enough that it almost never ends full, or low enough that it almost
-  never ends open. Starting point is findings.md, 2026-09-29 (early
-  reading bands against T-1). Open: the threshold on each side, whether
-  it varies by service or route, and how the dialog would show it.
+- **Stopping a weekly service entirely — tabled.** By the time a service
+  has enough weeks to stop confidently, the season has changed. 54
+  non-triangle services had 3+ flights all ending the same way as of
+  2026-10-03.
 - **White knuckle flights.** A flight that ended open (T-1 at or above the
   open threshold) but dipped more than one below that threshold on the way
   there. Show it beside the open/full counts, so "usually open, the odd
@@ -199,8 +207,9 @@ working around it.
   soloCPlus, soloFirstOrPS). Open: the coach threshold, whether it scales
   with aircraft size, and where it shows.
 - **Sharper glance-floor estimate.** He has ideas beyond the per-cabin
-  mean (per service, a plus/minus band). Low value for now: the estimate
-  only feeds the logging dialog's Prev and T-1 columns.
+  mean (per service, a plus/minus band). The estimate feeds the dialog's
+  Prev and T-1 columns and every glance reading in the trust pools'
+  settling, so a better one sharpens the pools too.
 
 ## Someday / not started, low priority
 
@@ -213,6 +222,14 @@ working around it.
   flights.
 
 ## Dead ideas — do not re-propose
+
+- Settling as a fixed seat band, a percent band, or a change of
+  open/between/full box — none separates steady flights from jumpy ones
+  (findings.md, 2026-10-03). The yardstick replaced them.
+- Split tests that sort levels by their own outcome and then pick the best
+  cut, or the many-group log-rank's chi-square p-value, on weekly-service
+  levels — both call shuffled noise significant when levels hold 1-3
+  flights. The shuffle-based p-value replaced them.
 
 - Re-auditing service identity (raw depTime vs. clustered service) on
   general principle — closed 2026-09-16; a new, specific symptom is the

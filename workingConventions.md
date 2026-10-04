@@ -46,11 +46,12 @@ TODO.md; dated analysis results belong in findings.md.
   Wednesdays.
 - Daily service: one departure time on whatever days it runs - the 10:00.
   In the code, `service` means daily service.
-- Pool: a set of weekly services grouped because they behave alike.
-  Recomputed from the data (python/Pools.py), never stored. Named by how
-  full they run: BadBoy is the fullest; Golden ends full at most 1 time
-  in 20; Never Know is the rest. Reports add the weekdays when two pools
-  share a name (Golden TuWFSa).
+- Pool: a set of weekly services grouped because their readings settle
+  alike (python/TrustPools.py), recomputed from the data, never stored.
+  Lettered A onward from the steadiest. How flights end is not a pooling
+  question: a service's open/full record is its own, shown as counts.
+- Yardstick: how big a move in the summed can-buy total matters, by the
+  current total, in either direction. A setting, as total/move pairs.
 - Never say bare "service" in docs or discussion; say weekly or daily.
 
 ## Delivering changes
@@ -106,14 +107,22 @@ TODO.md; dated analysis results belong in findings.md.
 ## Logging workflow
 
 - He walks every scheduled flight in departure order, logging or
-  blank-skipping each. There is no automated cadence engine and there
-  shouldn't be one.
+  blank-skipping each. The dialog only colors rows by cadence state; it
+  never picks, orders or skips flights for him.
 - After a submit, the dialog reshows the same route with the new values;
   a blank submit skips the route. Keep this confirm-then-skip two-step.
 - His logging tab stays open for days. Refreshing deliberately resets the
   session and revisits skipped flights. Keep this.
-- Cadence floor: every flight gets an early reading, a T-4 and a
-  golden-ticket reading. Grades only decide effort above that floor.
+- Cadence practice: the leadoff (first reading of a flight) is a full
+  count; readings in between are usually glances; the golden ticket, or
+  the last reading he knows he'll get, is a full count. Seat maps only at
+  the golden ticket. This is practice, not code.
+- Cadence states (TrustPools.cadence_state): Now! for the leadoff and for
+  an unread golden-ticket window; Skip once the golden ticket is in;
+  otherwise by the points a reading now would buy - the pool's curve at
+  the last reading's distance less the curve now - against the Now! and
+  Skip settings. Rows show Now! green and bold, Meh light gray, Skip dark
+  gray, striped within each.
 - Overnight flights whose T-1 falls while he's asleep cap out at T-4.
   Extrapolating T-4 to T-1 and automating overnight site checks were
   both rejected.
@@ -131,8 +140,9 @@ TODO.md; dated analysis results belong in findings.md.
   routing work - nothing through ATL or JFK to reach the west coast.
 - No itineraries needing a 3-4am wake-up; he'd rather buy.
 - CMH is strongly preferred over CVG as the Ohio origin.
-- Short western hops (PDX-LAX, LAX-SLC, SLC-BUR) get bought, not flown
-  nonrev. Nonrev is for Ohio to the west coast and back.
+- The Western Triangle (any flight among SLC, LAX/BUR and PDX) gets
+  bought, not flown nonrev, and is no longer studied. Nonrev is for Ohio
+  to the west coast and back.
 
 ## Charts and documents
 
