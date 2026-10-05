@@ -52,7 +52,7 @@ from deptime_convergence import converge_flight_date
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from ServiceGrouping import load_open_full_settings
 from Pools import snapshot as pool_snapshot
-from TrustPools import cadence_reading, snapshot as trust_snapshot
+from TrustPools import cadence_reading, next_now_hours, snapshot as trust_snapshot
 from DeclineCurveFit import piecewise_model, effective_hours_between, slide_c1_through_readings
 from DeclineCurveHierarchy import resolve_coefficients
 from T1Estimator import compute_t1_replay_column, held_t1_replay_column, CABIN_KEY_TO_COLUMN
@@ -486,30 +486,55 @@ def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
     return {'saved': True}
 
 
-def pool_and_cadence_reading(conn, trust, settings, candidate, prev_readings):
+def cadence_reading_hours(prev_readings):
+    return [reading['hrs'] for reading in prev_readings
+            if reading.get('hrs') is not None
+            and any(reading.get(cabin) is not None for cabin in CABIN_KEY_TO_COLUMN)]
+
+
+def pool_and_cadence_reading(conn, trust, settings, candidate, prev_readings, last_chance_hours):
     pool = trust.pool_record(conn, candidate['org'], candidate['dest'], candidate['dow'], candidate['dep'])
-    reading_hours = [reading['hrs'] for reading in prev_readings
-                     if reading.get('hrs') is not None
-                     and any(reading.get(cabin) is not None for cabin in CABIN_KEY_TO_COLUMN)]
-    state, urgency = cadence_reading(reading_hours, candidate['hoursUntilDep'], settings['goldenTicketHours'],
-                                     pool['curve'] if pool else None,
-                                     settings['cadenceNowPoints'], settings['cadenceSkipPoints'])
+    state, urgency = cadence_reading(cadence_reading_hours(prev_readings), candidate['hoursUntilDep'],
+                                     settings['goldenTicketHours'], pool['curve'] if pool else None,
+                                     settings['cadenceNowPoints'], settings['cadenceSkipPoints'],
+                                     last_chance_hours)
     return pool, state, urgency
 
 
-def pool_and_cadence(conn, trust, settings, candidate, prev_readings):
-    pool, state, _ = pool_and_cadence_reading(conn, trust, settings, candidate, prev_readings)
-    return {'pool': pool, 'cadence': state}
+def pool_and_cadence(conn, trust, settings, candidate, prev_readings, last_chance_hours, now):
+    pool, state, _ = pool_and_cadence_reading(conn, trust, settings, candidate, prev_readings, last_chance_hours)
+    next_hours = next_now_hours(cadence_reading_hours(prev_readings), candidate['hoursUntilDep'],
+                                settings['goldenTicketHours'], pool['curve'] if pool else None,
+                                settings['cadenceNowPoints'])
+    next_reading = None
+    if state == 'last':
+        next_reading = {'label': 'last rdg', 'note': 'full count'}
+    elif next_hours is not None and next_hours >= candidate['hoursUntilDep']:
+        next_reading = {'label': 'next rdg', 'note': 'now'}
+    elif next_hours is not None:
+        when = candidate['depEtDatetime'] - timedelta(hours=next_hours)
+        next_reading = {'label': 'next rdg', 'atMs': round(when.timestamp() * 1000)}
+    return {'pool': pool, 'cadence': state, 'nextReading': next_reading}
 
 
-def most_pressing_route(conn, trust, settings, candidates, skip_set, floor_estimates, readings_cache):
+def last_chance_hours_for(back_at_ms, settings, now):
+    if back_at_ms is None:
+        return None
+    back_at = datetime.fromtimestamp(back_at_ms / 1000, ET_ZONE)
+    if back_at <= now:
+        return None
+    return (back_at - now).total_seconds() / 3600 + settings['awayMarginHours']
+
+
+def most_pressing_route(conn, trust, settings, candidates, skip_set, floor_estimates, readings_cache,
+                        last_chance_hours):
     best = None
     for c in candidates:
         route_key = (c['org'], c['dest'], c['flightDate'])
         if route_key in skip_set:
             continue
         prev_readings = readings_for_candidate(conn, c, floor_estimates, readings_cache)
-        _, _, urgency = pool_and_cadence_reading(conn, trust, settings, c, prev_readings)
+        _, _, urgency = pool_and_cadence_reading(conn, trust, settings, c, prev_readings, last_chance_hours)
         rank = route_day_rank(urgency, c['hoursUntilDep']) + (urgency, c['depEtDatetime'])
         if best is None or rank < best[0]:
             best = (rank, c)
@@ -543,12 +568,13 @@ def attach_t1_ranges(conn, trust, settings, candidate, prev_readings):
                                             candidate['dep'], candidate['flightDate'], reading['hrs'], reading['held'])
 
 
-def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_route=None):
+def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_route=None, back_at_ms=None):
     settings = load_settings(conn)
     decline_settings = load_settings(conn, key=DECLINE_CURVE_SETTINGS_KEY, defaults=DEFAULT_DECLINE_CURVE_SETTINGS)
     night_start_hour = decline_settings['nightStartHour']
     night_end_hour = decline_settings['nightEndHour']
     now = eastern_now()
+    last_chance_hours = last_chance_hours_for(back_at_ms, settings, now)
 
     studied = studied_cells(conn)
     days_ahead_of_today = settings['lookaheadDays']
@@ -645,7 +671,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
     readings_cache = {}
     if next_candidate is None:
         next_candidate = most_pressing_route(conn, trust, settings, candidates, skip_set,
-                                             floor_estimates, readings_cache)
+                                             floor_estimates, readings_cache, last_chance_hours)
 
     if next_candidate is None:
         total_departed = sum(departed_by_route.values())
@@ -693,6 +719,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'flightNumber': c['flightNumber'], 'aircraftConfig': c['aircraftConfig'],
             'hasD1': d1_map.get(str(c['aircraftConfig']).lower(), False),
             'hoursUntilDep': round(c['hoursUntilDep'], 1),
+            'minutesUntilDep': round(c['hoursUntilDep'] * 60),
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
             'previousReadings': prev_readings,
@@ -703,7 +730,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
             'openFull': pools.own_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
-            **pool_and_cadence(conn, trust, settings, c, prev_readings),
+            **pool_and_cadence(conn, trust, settings, c, prev_readings, last_chance_hours, now),
         })
 
     if include_departed:
@@ -720,6 +747,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'flightNumber': c['flightNumber'], 'aircraftConfig': c['aircraftConfig'],
                 'hasD1': d1_map.get(str(c['aircraftConfig']).lower(), False),
                 'hoursUntilDep': round(c['hoursUntilDep'], 1),
+                'minutesUntilDep': round(c['hoursUntilDep'] * 60),
                 'isNext': False,
                 'departed': True,
                 'previousReadings': prev_readings,
@@ -829,7 +857,7 @@ def save_entry_dialog(conn, payload):
     return {'logged': len(to_write)}
 
 
-def save_and_get_next_batch(conn, payload, include_departed=False, forced_route=None):
+def save_and_get_next_batch(conn, payload, include_departed=False, forced_route=None, back_at_ms=None):
     save_result = save_entry_dialog(conn, payload)
-    next_result = get_next_batch(conn, None, include_departed, forced_route)
+    next_result = get_next_batch(conn, None, include_departed, forced_route, back_at_ms)
     return {'logged': save_result['logged'], 'next': next_result}

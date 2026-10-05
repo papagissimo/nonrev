@@ -46,9 +46,9 @@ leave-one-out, all finished flights, full <= 2, open >= 8):
 
 | From | Days | Miss: hold / fleet / pool | Box right: hold / fleet / pool | Called open, was full: hold / fleet / pool |
 |---|---|---|---|---|
-| T-24 | 286 | 3.73 / 3.36 / 3.37 | 72.4% / 69.9% / 69.9% | 22 / 13 / 13 |
-| T-12 | 461 | 2.92 / 2.89 / 2.90 | 75.7% / 74.6% / 73.5% | 19 / 17 / 13 |
-| T-8 | 484 | 2.93 / 2.93 / 2.94 | 71.7% / 72.5% / 71.3% | 19 / 16 / 14 |
+| T-24 | 288 | 3.74 / 3.37 / 3.38 | 72.2% / 69.8% / 69.8% | 22 / 13 / 13 |
+| T-12 | 468 | 2.92 / 2.89 / 2.90 | 75.4% / 74.4% / 72.4% | 19 / 17 / 12 |
+| T-8 | 489 | 2.91 / 2.91 / 2.92 | 72.0% / 72.8% / 72.2% | 19 / 16 / 16 |
 
 The fleet move is -2.5 seats at T-24, -1.0 at T-12 and -1.0 at T-8. Inside
 T-6 the median move is 0, so the shift is zero there. The shift trades a
