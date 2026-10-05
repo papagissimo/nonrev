@@ -26,7 +26,7 @@
     #rows tr.cad-last-0 { background: #b5dfc0; font-weight: bold; }
     #rows tr.cad-last-1 { background: #c7e8cf; font-weight: bold; }
     #rows tr.cad-last-0 > td:first-child, #rows tr.cad-last-1 > td:first-child { border-left: 5px solid #1e7a3a; }
-    .nextLine { font-size: 11px; color: #555; font-weight: normal; white-space: nowrap; }
+    .nextReading { margin-top: 10px; font-size: 11px; color: #555; font-weight: normal; line-height: 1.25; }
     .backAt { font-size: 14px; color: #444; margin-left: 14px; }
     .backAt input { font-size: 14px; }
     .backAt .clearBackAt { cursor: pointer; color: #888; margin-left: 4px; }
@@ -183,7 +183,8 @@
             Two rows ignore the points: a flight with no reading yet (the leadoff) and a flight inside
             the golden-ticket window not yet read there are always <b>Now!</b>, because the study needs
             both readings whatever the curve says. Once the golden ticket is in, the flight is Skip.<br><br>
-            Under each row's hours is when it next turns <b>Now!</b>, on your clock.
+            Under each row's hours, <i>next rdg</i> is when it next turns <b>Now!</b>, on this device's
+            clock, rounded up to 15 minutes.
           </div>
         </div>
         <div class="tierRow">
@@ -368,6 +369,17 @@
     function formatTimeUntil(row) {
       if (Math.abs(row.minutesUntilDep) < 60) return row.minutesUntilDep + 'm';
       return formatHours(row.hoursUntilDep);
+    }
+
+    var NEXT_READING_ROUNDING_MS = 15 * 60 * 1000;
+
+    function formatNextReadingWhen(next) {
+      if (next.atMs === undefined) return next.note;
+      var when = new Date(Math.ceil(next.atMs / NEXT_READING_ROUNDING_MS) * NEXT_READING_ROUNDING_MS);
+      var hours = when.getHours();
+      var clock = (hours % 12 || 12) + ':' + String(when.getMinutes()).padStart(2, '0') + (hours < 12 ? 'a' : 'p');
+      if (when.toDateString() === new Date().toDateString()) return clock;
+      return when.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + clock;
     }
 
     var backAtMs = null;
@@ -609,6 +621,7 @@
           '  hoursUntilDep=' + row.hoursUntilDep +
           '  aircraftConfig=' + row.aircraftConfig + '  hasD1=' + row.hasD1 +
           '  departed=' + row.departed + ' ===');
+        lines.push('  ' + (row.nextReading ? row.nextReading.label + ': ' + formatNextReadingWhen(row.nextReading) : 'next rdg: -'));
         lines.push('  flag: ' + blankDash(row.flag));
         lines.push('  grade: ' + blankDash(row.grade));
         lines.push('  openFull: open ' + (row.openFull ? row.openFull.openDisplay : '?') +
@@ -1368,7 +1381,8 @@
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           t1: '<div class="prev">' + formatT1Column(row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatTimeUntil(row) + '</span>' +
-            (row.nextReading ? '<div class="nextLine">' + escapeHtml(row.nextReading) + '</div>' : ''),
+            (row.nextReading ? '<div class="nextReading">' + escapeHtml(row.nextReading.label) + '<br>' +
+              escapeHtml(formatNextReadingWhen(row.nextReading)) + '</div>' : ''),
           gap: '',
           gap2: '',
           openFull: formatOpenFullCell(row),

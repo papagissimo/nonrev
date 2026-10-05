@@ -133,8 +133,10 @@ TODO.md; dated analysis results belong in findings.md.
   the reading now is its last, so a full count. Rows show Last darker
   green, bold, with a left bar; Now! green and bold; Meh light gray; Skip
   dark gray, striped within each. Back-at clears itself once it passes.
-- Under each row's hours is when it next turns Now!, on his clock,
-  rounded up to 5 minutes. Hours under 1 show as minutes.
+- Under each row's hours, "next rdg" is when it next turns Now!, on the
+  browser's own clock (right in whatever time zone he's in), rounded up to
+  15 minutes. Last rows show "last rdg" / "full count" there instead.
+  Hours under 1 show as minutes.
 - Overnight flights whose T-1 falls while he's asleep cap out at T-4.
   Extrapolating T-4 to T-1 and automating overnight site checks were
   both rejected.

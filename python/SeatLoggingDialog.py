@@ -503,20 +503,13 @@ def pool_and_cadence(conn, trust, settings, candidate, prev_readings, last_chanc
                                 settings['cadenceNowPoints'])
     next_reading = None
     if state == 'last':
-        next_reading = 'last \u00b7 full'
+        next_reading = {'label': 'last rdg', 'note': 'full count'}
     elif next_hours is not None and next_hours >= candidate['hoursUntilDep']:
-        next_reading = 'next now'
+        next_reading = {'label': 'next rdg', 'note': 'now'}
     elif next_hours is not None:
-        next_reading = 'next ' + next_reading_display(
-            candidate['depEtDatetime'] - timedelta(hours=next_hours), now)
+        when = candidate['depEtDatetime'] - timedelta(hours=next_hours)
+        next_reading = {'label': 'next rdg', 'atMs': round(when.timestamp() * 1000)}
     return {'pool': pool, 'cadence': state, 'nextReading': next_reading}
-
-
-def next_reading_display(when, now):
-    when = (when.astimezone(ET_ZONE) + timedelta(minutes=4, seconds=59)).replace(second=0, microsecond=0)
-    when -= timedelta(minutes=when.minute % 5)
-    clock = minutes_to_12h(when.hour * 60 + when.minute).replace(' am', 'a').replace(' pm', 'p')
-    return clock if when.date() == now.date() else when.strftime('%a ') + clock
 
 
 def last_chance_hours_for(back_at_ms, settings, now):
