@@ -6,6 +6,61 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-04 — Drift corrections by cabin and by service
+
+**Question**: judged on seats rather than open/full boxes, does a drift
+correction beat hold, and does doing it per cabin or per daily service
+help?
+
+**Answer**: only from a day out, and not yet per service. Average miss
+in summed seats at T-1, leave-one-out:
+
+| From | Hold | Shift on the sum | Per-cabin shift | Per-cabin, per-daily-service shift |
+|---|---|---|---|---|
+| T-8 | 2.71 | 2.74 | 2.74 | 2.86 |
+| T-12 | 2.85 | 2.81 | 2.81 | 2.92 |
+| T-24 | 3.73 | 3.47 | 3.47 | 3.50 |
+
+- Each cabin's median drift is 0 at every horizon: on a typical day a
+  cabin doesn't move, and decline comes in occasional chunks, mostly in
+  coach (mean -0.8 seats from T-12, -1.4 from T-24). Comfort+ and First
+  barely move until a day out.
+- Per-cabin mean shifts sum to the same total as one shift on the sum.
+  Per cabin can only differ through something cabin-specific, such as a
+  cabin already at 0.
+- Per-service drift isn't visible yet: the spread of service medians
+  (services with 5+ days) is no wider than with days shuffled among
+  services at T-6 to T-12. Per-service shifts are pulled toward the
+  fleet value when a service has few days, and still do worse.
+- Revisit when weekly services have roughly 10 or more weeks each.
+
+## 2026-10-04 — Shifting the held reading by typical drift
+
+**Question**: seats drift down between a far-out reading and T-1. Does
+shifting the held reading by that typical drift call the T-1 box better
+than plain hold?
+
+**Answer**: only modestly, and only from T-8 out. Summed seats change
+from the horizon to T-1 by a median of 0 from T-4 and T-6, -0.3 from
+T-8, -1.0 from T-12 and -1.9 from T-24. Shifting by that median
+(python/DriftShiftBacktest.py, leave-one-out, three cabins summed, full
+<= 2, open >= 8):
+
+| From | Days | Hold right | Shifted right | Hold: open->full | Shifted: open->full |
+|---|---|---|---|---|---|
+| T-4 | 588 | 82.3% | 82.3% | 7 | 7 |
+| T-6 | 558 | 77.8% | 77.8% | 16 | 16 |
+| T-8 | 497 | 74.0% | 75.3% | 18 | 15 |
+| T-12 | 463 | 75.6% | 74.9% | 20 | 16 |
+| T-24 | 226 | 69.5% | 66.4% | 19 | 13 |
+
+- From T-12 and T-24 the shift trades overall accuracy for fewer
+  called-open-was-full misses: it moves near-8 readings to between, and
+  most of those flights ended open.
+- Shifting by the mean, or by the median within the held value's band
+  (0-2, 3-7, 8-15, 16+), lands in the same place. Seat error barely moves
+  under any shift.
+
 ## 2026-10-04 — SLC routes: SLC→CVG sells out most
 
 **Question**: which routes into and out of SLC sell out most?
