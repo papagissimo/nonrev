@@ -110,9 +110,10 @@ TODO.md; dated analysis results belong in findings.md.
   order, and he logs or blank-skips each route. The next route is the
   most pressing by cadence (TrustPools.cadence_reading), re-ranked after
   every route, one 24-hour window at a time (departing within 24h, then
-  24-48h, and so on). Within a window: Now! first (unread golden-ticket
-  windows by soonest departure, then by points, then leadoffs by soonest
-  departure), then Meh by points (no pool last). Skip routes come after
+  24-48h, and so on). Within a window: Last first (never-read by soonest
+  departure, then by points, then no pool), then Now! (unread
+  golden-ticket windows by soonest departure, then by points, then
+  leadoffs by soonest departure), then Meh by points (no pool last). Skip routes come after
   every window, by departure. A route ranks by its most pressing flight.
   The dialog never skips flights for him.
 - After a submit, the dialog reshows the same route with the new values;
@@ -127,8 +128,13 @@ TODO.md; dated analysis results belong in findings.md.
   an unread golden-ticket window; Skip once the golden ticket is in;
   otherwise by the points a reading now would buy - the pool's curve at
   the last reading's distance less the curve now - against the Now! and
-  Skip settings. Rows show Now! green and bold, Meh light gray, Skip dark
-  gray, striped within each.
+  Skip settings. Last, only while a Back-at time is set: any flight not
+  yet golden-ticketed that departs before Back-at plus the away margin -
+  the reading now is its last, so a full count. Rows show Last darker
+  green, bold, with a left bar; Now! green and bold; Meh light gray; Skip
+  dark gray, striped within each. Back-at clears itself once it passes.
+- Under each row's hours is when it next turns Now!, on his clock,
+  rounded up to 5 minutes. Hours under 1 show as minutes.
 - Overnight flights whose T-1 falls while he's asleep cap out at T-4.
   Extrapolating T-4 to T-1 and automating overnight site checks were
   both rejected.

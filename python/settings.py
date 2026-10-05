@@ -32,6 +32,7 @@ DEFAULT_SETTINGS = {
     'cadenceYardstick': '3 3, 10 3.5, 20 10',
     'cadenceNowPoints': 10.0,
     'cadenceSkipPoints': 3.0,
+    'awayMarginHours': 1.0,
 }
 
 
@@ -54,6 +55,9 @@ def validate_next_up_settings(new_settings):
             raise ValueError(f'{name} must be a number of points, 0 or more')
     if skip_points >= now_points:
         raise ValueError('cadenceSkipPoints must be below cadenceNowPoints')
+    margin = new_settings.get('awayMarginHours')
+    if isinstance(margin, bool) or not isinstance(margin, (int, float)) or margin < 0:
+        raise ValueError('awayMarginHours must be a number of hours, 0 or more')
 
 
 def ensure_table(conn):

@@ -23,6 +23,13 @@
     #rows tr.cad-meh-1 { background: #ececec; }
     #rows tr.cad-skip-0 { background: #d4d4d4; }
     #rows tr.cad-skip-1 { background: #c8c8c8; }
+    #rows tr.cad-last-0 { background: #b5dfc0; font-weight: bold; }
+    #rows tr.cad-last-1 { background: #c7e8cf; font-weight: bold; }
+    #rows tr.cad-last-0 > td:first-child, #rows tr.cad-last-1 > td:first-child { border-left: 5px solid #1e7a3a; }
+    .nextLine { font-size: 11px; color: #555; font-weight: normal; white-space: nowrap; }
+    .backAt { font-size: 14px; color: #444; margin-left: 14px; }
+    .backAt input { font-size: 14px; }
+    .backAt .clearBackAt { cursor: pointer; color: #888; margin-left: 4px; }
     .cadenceGroup { border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; margin: 6px 0; }
     .infoGlyph { cursor: pointer; color: #1a73e8; margin-left: 4px; }
     .infoText { display: none; font-size: 12px; color: #333; background: #fafafa; border-left: 3px solid #ccc; padding: 4px 8px; margin: 4px 0; }
@@ -175,7 +182,18 @@
             own.<br><br>
             Two rows ignore the points: a flight with no reading yet (the leadoff) and a flight inside
             the golden-ticket window not yet read there are always <b>Now!</b>, because the study needs
-            both readings whatever the curve says. Once the golden ticket is in, the flight is Skip.
+            both readings whatever the curve says. Once the golden ticket is in, the flight is Skip.<br><br>
+            Under each row's hours is when it next turns <b>Now!</b>, on your clock.
+          </div>
+        </div>
+        <div class="tierRow">
+          <b>Away margin</b><span class="infoGlyph" onclick="toggleInfo('infoAwayMargin')">&#9432;</span>
+          <input type="number" step="0.25" min="0" id="setAwayMarginHours"> h
+          <div class="infoText" id="infoAwayMargin">
+            With <b>Back at</b> set, every flight departing before you're back plus this margin is
+            <b>Last</b>: the reading now is the last one it will get, so make it a full count. The margin is
+            working room to get through the list once you're back. Last rows come first: never-read flights,
+            then by points, then no pool. Back at clears itself once that time passes.
           </div>
         </div>
       </div>
@@ -204,7 +222,7 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" checked onchange="setColumnMode(this.value)">Glance</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="backAt">Back at <input type="time" id="backAtInput" onchange="setBackAt()"><span class="clearBackAt" title="Not away" onclick="clearBackAt()">&#10005;</span></span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" checked onchange="setColumnMode(this.value)">Glance</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
     </div>
     <div id="routeFlagRow">
       <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
@@ -347,6 +365,42 @@
       return n.toFixed(1) + 'h';
     }
 
+    function formatTimeUntil(row) {
+      if (Math.abs(row.minutesUntilDep) < 60) return row.minutesUntilDep + 'm';
+      return formatHours(row.hoursUntilDep);
+    }
+
+    var backAtMs = null;
+
+    function setBackAt() {
+      var value = document.getElementById('backAtInput').value;
+      if (!value) { clearBackAt(); return; }
+      var parts = value.split(':');
+      var when = new Date();
+      when.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+      if (when.getTime() <= Date.now()) when.setDate(when.getDate() + 1);
+      backAtMs = when.getTime();
+      refreshSameRoute();
+    }
+
+    function clearBackAt() {
+      backAtMs = null;
+      document.getElementById('backAtInput').value = '';
+      refreshSameRoute();
+    }
+
+    function refreshSameRoute() {
+      if (batch && batch.routeOrg) loadBatch(captureUnsavedSeatValues(), currentRouteKey());
+    }
+
+    function currentBackAt() {
+      if (backAtMs !== null && backAtMs <= Date.now()) {
+        backAtMs = null;
+        document.getElementById('backAtInput').value = '';
+      }
+      return backAtMs;
+    }
+
     function padRight(s, len) {
       s = String(s);
       return s.length >= len ? s : s + ' '.repeat(len - s.length);
@@ -396,7 +450,7 @@
       // "what I'm about to log" block reads as one unit. Hrs/Prev
       // columns themselves stay put - only the padding/gap around them
       // shrank, to give other columns more room.
-      cols.push({ key: 'hrs', label: 'Hrs', width: 60 });
+      cols.push({ key: 'hrs', label: 'Hrs', width: 90 });
       cols.push({ key: 'gap', label: '', width: 0 });
       cols.push({ key: 'prev', label: 'Prev', width: 136 });
       cols.push({ key: 'soloY', label: 'Y', width: 34, group: 'select' });
@@ -428,7 +482,8 @@
     var CADENCE_TOOLTIPS = {
       now: 'Now!',
       meh: 'Meh, if you must.',
-      skip: "Skip this, dammit, you've got better things to do!"
+      skip: "Skip this, dammit, you've got better things to do!",
+      last: "Last reading before you're back - full count."
     };
 
     function formatOpenFullCell(row) {
@@ -978,6 +1033,7 @@
       document.getElementById('setCadenceYardstick').value = settings.cadenceYardstick;
       document.getElementById('setCadenceNowPoints').value = settings.cadenceNowPoints;
       document.getElementById('setCadenceSkipPoints').value = settings.cadenceSkipPoints;
+      document.getElementById('setAwayMarginHours').value = settings.awayMarginHours;
     }
 
     function toggleInfo(id) {
@@ -1035,7 +1091,8 @@
         lookaheadDays: parseInt(document.getElementById('setLookaheadDays').value, 10),
         cadenceYardstick: document.getElementById('setCadenceYardstick').value,
         cadenceNowPoints: parseFloat(document.getElementById('setCadenceNowPoints').value),
-        cadenceSkipPoints: parseFloat(document.getElementById('setCadenceSkipPoints').value)
+        cadenceSkipPoints: parseFloat(document.getElementById('setCadenceSkipPoints').value),
+        awayMarginHours: parseFloat(document.getElementById('setAwayMarginHours').value)
       };
       var openFullSettings = {
         dateFrom: document.getElementById('setOpenFullDateFrom').value,
@@ -1082,7 +1139,7 @@
       // Only the toggle re-fetches the SAME route/day purely to reveal
       // more rows - nothing here was submitted or discarded, so whatever
       // he'd typed but not yet logged has to survive the rebuild.
-      if (batch && batch.routeOrg) loadBatch(captureUnsavedSeatValues(), currentRouteKey());
+      refreshSameRoute();
     }
 
     function visibleColumnCount(columns) {
@@ -1111,7 +1168,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           skippedRouteDays: skippedRouteDays, includeDeparted: showDeparted,
-          forcedRoute: sameRoute || null
+          forcedRoute: sameRoute || null, backAt: currentBackAt()
         })
       })
         .then(function (res) { return res.json(); })
@@ -1310,7 +1367,8 @@
           insVerdict: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'verdict') + '</div>',
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           t1: '<div class="prev">' + formatT1Column(row.previousReadings) + '</div>',
-          hrs: '<span class="' + hrsClass + '">' + formatHours(row.hoursUntilDep) + '</span>',
+          hrs: '<span class="' + hrsClass + '">' + formatTimeUntil(row) + '</span>' +
+            (row.nextReading ? '<div class="nextLine">' + escapeHtml(row.nextReading) + '</div>' : ''),
           gap: '',
           gap2: '',
           openFull: formatOpenFullCell(row),
@@ -1573,7 +1631,9 @@
         fetch('/api/getNextBatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skippedRouteDays: skippedRouteDays, includeDeparted: showDeparted })
+          body: JSON.stringify({
+            skippedRouteDays: skippedRouteDays, includeDeparted: showDeparted, backAt: currentBackAt()
+          })
         })
           .then(function (res) { return res.json(); })
           .then(function (nextResult) {
@@ -1604,7 +1664,8 @@
         body: JSON.stringify({
           payload: { flightDate: batch.flightDate, entries: entries },
           includeDeparted: showDeparted,
-          forcedRoute: currentRouteKey()
+          forcedRoute: currentRouteKey(),
+          backAt: currentBackAt()
         })
       })
         .then(function (res) { return res.json(); })

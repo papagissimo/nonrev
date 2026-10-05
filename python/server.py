@@ -164,9 +164,11 @@ def api_get_next_batch():
     skip_route_days = body.get('skippedRouteDays')
     include_departed = body.get('includeDeparted', False)
     forced_route = body.get('forcedRoute')
+    back_at_ms = body.get('backAt')
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_days, include_departed, forced_route))
+        return jsonify(SeatLoggingDialog.get_next_batch(conn, skip_route_days, include_departed, forced_route,
+                                                        back_at_ms))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -179,9 +181,11 @@ def api_save_and_get_next_batch():
     payload = body['payload']
     include_departed = body.get('includeDeparted', False)
     forced_route = body.get('forcedRoute')
+    back_at_ms = body.get('backAt')
     conn = get_conn()
     try:
-        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, include_departed, forced_route))
+        return jsonify(SeatLoggingDialog.save_and_get_next_batch(conn, payload, include_departed, forced_route,
+                                                                 back_at_ms))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
