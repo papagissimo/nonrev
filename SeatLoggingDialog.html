@@ -7,6 +7,11 @@
     .subhead { margin-bottom: 2px; display: flex; align-items: baseline; }
     .routeTitle { font-size: 27px; font-weight: bold; color: #222; }
     .dateSub { font-size: 16px; color: #666; margin-left: 10px; }
+    .dateSub.dateLocked {
+      font-size: 24px; font-weight: bold; color: #5c3b00; background: #ffc94d;
+      border: 2px solid #c98a00; border-radius: 5px; padding: 2px 10px; cursor: pointer;
+    }
+    .lockedForDate { opacity: 0.4; }
     .summary { color: #888; font-size: 13px; margin-left: 10px; }
     .eyeToggle { cursor: pointer; margin-left: 8px; font-size: 14px; opacity: 0.35; }
     .eyeToggle.active { opacity: 1; }
@@ -223,7 +228,7 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="backAt">Back at <input type="time" id="backAtInput" onchange="setBackAt()"><span class="clearBackAt" title="Not away" onclick="clearBackAt()">&#10005;</span></span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" checked onchange="setColumnMode(this.value)">Glance</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub" onclick="confirmDate()"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="backAt">Back at <input type="time" id="backAtInput" onchange="setBackAt()"><span class="clearBackAt" title="Not away" onclick="clearBackAt()">&#10005;</span></span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" checked onchange="setColumnMode(this.value)">Glance</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
     </div>
     <div id="routeFlagRow">
       <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
@@ -344,6 +349,26 @@
 
     // The route+day currently on screen, in the shape the backend wants
     // (org/dest/flightDate) - null before the first batch loads.
+    var confirmedDate = null;
+
+    function applyDateLock() {
+      var locked = !!(batch && batch.routeOrg) && batch.flightDate !== confirmedDate;
+      var dateEl = document.getElementById('dateSub');
+      dateEl.classList.toggle('dateLocked', locked);
+      dateEl.title = locked ? 'New date - click once you have Delta on this date' : '';
+      ['flightTable', 'routeFlagRow'].forEach(function (id) {
+        var el = document.getElementById(id);
+        el.inert = locked;
+        el.classList.toggle('lockedForDate', locked);
+      });
+    }
+
+    function confirmDate() {
+      if (!batch || !batch.routeOrg) return;
+      confirmedDate = batch.flightDate;
+      applyDateLock();
+    }
+
     function currentRouteKey() {
       return batch && batch.routeOrg
         ? { org: batch.routeOrg, dest: batch.routeDest, flightDate: batch.flightDate }
@@ -1282,6 +1307,7 @@
       renderRecentPanel();
 
       document.getElementById('dateSub').textContent = batch.dowDisplay + ', ' + batch.dateDisplay;
+      applyDateLock();
 
       var waitEl = document.getElementById('wait');
       var table = document.getElementById('flightTable');
