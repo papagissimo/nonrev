@@ -40,6 +40,30 @@ working around it.
 - **Seat-map modeling** — when the selectable counts get modeled, key off
   time; a seat-map reading needn't share a can-buy reading's timestamp.
 
+## Drift shift on the T1 estimate — built, watching
+
+The live T1 estimate is the held reading plus the fleet's typical move
+from that distance (python/DriftCurve.py; findings.md, 2026-10-05). Things
+to watch:
+
+- **Decliners and risers as a trait.** Rerun python/DirectionTrackRecord.py
+  once weekly services have about 5 flights read near a horizon; as of
+  2026-10-05 at most 2 do. Grouping unrelated services by their own record
+  is worth building only once a record beats shuffled labels.
+- **Per-pool move.** Rerun python/DriftCurveBacktest.py when the trust pools
+  change; switch from the fleet move only if per-pool misses less.
+- **Move by level.** One move serves every level, but a flight at 0-2 seats
+  can't drop much and 3-8 moves most, both ways. If shifted estimates near
+  the open line keep missing, test the move by held level.
+- **Past T-24.** The move holds its T-24 value farther out, though a
+  T-48 reading likely moves more. Add a T-48 point once enough flights are
+  read that far out.
+- **False alarms.** From T-12 and T-24 the shift moves some near-8 flights
+  to between that end open. Watch whether that costs more than the
+  open-to-full misses it saves.
+- **Season.** The move averages all history. If recent weeks move
+  differently (holiday travel), older flights will hold it back.
+
 ## Weekdays: what gets logged and what gets pooled
 
 - **Scenarios screen does two jobs**: a scenario's days mean "days I might

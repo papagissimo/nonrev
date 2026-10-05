@@ -21,9 +21,7 @@ to come, by distance, and pools are lettered A onward from the steadiest.
 A flight's cadence state comes from its pool's curve: the points a reading
 now would buy are the curve at the last reading's distance less the curve
 now. The leadoff and the golden ticket are always called for, since the
-study needs them whatever the curve says. While he's away, a flight
-departing before he's back (plus a margin) is Last: the reading now is the
-last one it will get.
+study needs them whatever the curve says.
 """
 from bisect import bisect_left
 from collections import defaultdict
@@ -33,6 +31,7 @@ import numpy as np
 from lifelines import NelsonAalenFitter
 
 from DeclineCurveFit import build_service_map
+from DriftCurve import drift_points
 from FloorEstimates import load_floor_estimates, seats_from_glance
 from PoolingSettingsDialog import excluded_date_where_clause
 from T1GridReport import format_minutes, scheduled_service_finder
@@ -270,13 +269,9 @@ def still_to_come_curve(flights, yardstick):
     return curve
 
 
-def still_to_come(curve, hours):
-    points = [(h, v) for h, v in zip(CURVE_HOURS, curve) if v is not None][::-1]
-    return np.interp(hours, [h for h, _ in points], [v for _, v in points])
-
-
 def still_to_come_at(curve, hours):
-    return float(still_to_come(curve, hours))
+    points = [(h, v) for h, v in zip(CURVE_HOURS, curve) if v is not None][::-1]
+    return float(np.interp(hours, [h for h, _ in points], [v for _, v in points]))
 
 
 def held_reading(flight, hours):
@@ -307,29 +302,19 @@ def t1_range(flights, hours, held):
     return {'lo': max(0.0, held + float(low)), 'hi': held + float(high)}
 
 
-def cadence_reading(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points,
-                    last_chance_hours=None):
-    """(state, urgency). Urgency sorts most pressing first: Last (never read,
-    by soonest departure; then points; then no pool), then Now! by unread
+def cadence_reading(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points):
+    """(state, urgency). Urgency sorts most pressing first: Now! by unread
     golden-ticket window (soonest departure), then points, then leadoff
-    (soonest departure); Meh by points, then no pool; Skip by departure.
-    Last is a flight departing within last_chance_hours, while he's away
-    until then: the reading now is the last one he'll get."""
-    if any(hours <= golden_ticket_hours for hours in reading_hours):
-        return 'skip', (2, 0, hours_until_dep)
-    if last_chance_hours is not None and hours_until_dep <= last_chance_hours:
-        if not reading_hours:
-            return 'last', (0, -1, 0, hours_until_dep)
-        if curve is None:
-            return 'last', (0, -1, 2, hours_until_dep)
-        return 'last', (0, -1, 1, -points_now(reading_hours, hours_until_dep, curve))
+    (soonest departure); Meh by points, then no pool; Skip by departure."""
     if not reading_hours:
         return 'now', (0, 2, hours_until_dep)
+    if any(hours <= golden_ticket_hours for hours in reading_hours):
+        return 'skip', (2, 0, hours_until_dep)
     if hours_until_dep <= golden_ticket_hours:
         return 'now', (0, 0, hours_until_dep)
     if curve is None:
         return 'meh', (1, 1, hours_until_dep)
-    gain = points_now(reading_hours, hours_until_dep, curve)
+    gain = still_to_come_at(curve, min(reading_hours)) - still_to_come_at(curve, hours_until_dep)
     if gain >= now_points:
         return 'now', (0, 1, -gain)
     if gain >= skip_points:
@@ -337,27 +322,8 @@ def cadence_reading(reading_hours, hours_until_dep, golden_ticket_hours, curve, 
     return 'skip', (2, 0, hours_until_dep)
 
 
-def points_now(reading_hours, hours_until_dep, curve):
-    return still_to_come_at(curve, min(reading_hours)) - still_to_come_at(curve, hours_until_dep)
-
-
 def cadence_state(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points):
     return cadence_reading(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points)[0]
-
-
-def next_now_hours(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points):
-    """Hours before departure at which the flight turns Now!, to the minute:
-    hours_until_dep when it already is, None once the golden ticket is in."""
-    if any(hours <= golden_ticket_hours for hours in reading_hours):
-        return None
-    if not reading_hours or hours_until_dep <= golden_ticket_hours:
-        return hours_until_dep
-    if curve is None:
-        return golden_ticket_hours
-    target = still_to_come_at(curve, min(reading_hours)) - now_points
-    hours = np.arange(hours_until_dep, golden_ticket_hours, -1 / 60)
-    reached = hours[still_to_come(curve, hours) <= target]
-    return float(reached[0]) if reached.size else golden_ticket_hours
 
 
 class TrustSnapshot:
@@ -366,6 +332,7 @@ class TrustSnapshot:
         self.golden_ticket_hours = settings['goldenTicketHours']
         self.yardstick = parse_yardstick(settings['cadenceYardstick'])
         self.flights = settled_flights(conn, self.golden_ticket_hours, self.yardstick)
+        self.drift = drift_points(self.flights)
         self.tree = grow(self.flights, [], np.random.default_rng(0))
         self.pool_leaves = leaves(self.tree)
         self.curves = {id(leaf): still_to_come_curve(leaf['flights'], self.yardstick) for leaf in self.pool_leaves}

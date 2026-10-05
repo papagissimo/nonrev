@@ -2,14 +2,17 @@
 The live T1 estimator: the one T1 value shown anywhere in the app (his call:
 he never wants to see two different T1 numbers side by side).
 
-compute_t1_replay_column holds the latest reading. Per cabin, independently,
-the T1 estimate is that cabin's most recent KNOWN reading, unchanged - not
+held_t1_replay_column holds the latest reading. Per cabin, independently,
+the held value is that cabin's most recent KNOWN reading, unchanged - not
 necessarily the most recent reading overall, since a "9, blank, blank"
 partial entry deliberately leaves other cabins unlogged rather than implying
 zero. A cabin never logged contributes nothing to the total, not zero; a row
-where no cabin has been logged yet has no estimate at all (None). Holding the
-latest reading calls the T-1 full/between/open box right more often than the
-decline curve from T-4 out to T-24 (findings.md, 2026-09-28).
+where no cabin has been logged yet has nothing held (None).
+
+compute_t1_replay_column is the live estimate: each row's held total plus the
+typical move from a reading that far out (DriftCurve), at that row's own
+hours before departure. Inside T-6 the move is zero, so there the estimate is
+the held total.
 
 curve_t1_replay_column is the decline-curve estimator the live one replaced,
 kept for the backtests that measure it. Per cabin: take the pooled (c1,
@@ -28,6 +31,7 @@ from datetime import datetime
 
 from DeclineCurveFit import piecewise_model, solve_c1_from_reading, CABIN_COLUMNS
 from DeclineCurveHierarchy import resolve_coefficients
+from DriftCurve import current_points, shifted
 from settings import load_settings, DECLINE_CURVE_SETTINGS_KEY, DEFAULT_DECLINE_CURVE_SETTINGS
 from timezones import et_equivalent_datetime, UnconfirmedAirportError
 
@@ -66,12 +70,12 @@ def latest_known_readings(readings, idx):
     return latest
 
 
-def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
+def held_t1_replay_column(readings):
     """readings: as returned by SeatLoggingDialog.previous_readings_for -
     most-recent-first (ascending hrs), each {'hrs':, 'y':, 'cplus':,
     'onePS':, 'd1':}, None where that cabin wasn't logged on that check.
 
-    Returns a list the same length as readings - one T1 estimate per row,
+    Returns a list the same length as readings - one held total per row,
     replay-style: the sum over cabins of each cabin's most recent known
     reading as of that row, or None where no cabin has been logged yet."""
     results = []
@@ -81,8 +85,16 @@ def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
     return results
 
 
+def compute_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
+    """Same readings and return shape as held_t1_replay_column; each row's
+    held total shifted by DriftCurve's typical move at that row's hrs."""
+    points = current_points(conn)
+    return [shifted(held, points, reading['hrs'])
+            for held, reading in zip(held_t1_replay_column(readings), readings)]
+
+
 def curve_t1_replay_column(conn, org, dest, flight_date, dep_time, readings):
-    """Same readings and return shape as compute_t1_replay_column, but each
+    """Same readings and return shape as held_t1_replay_column, but each
     row's estimate is the decline-curve prediction described in the module
     docstring.
 

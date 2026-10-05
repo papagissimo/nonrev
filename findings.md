@@ -6,6 +6,55 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-05 — Drops and rises hidden in the average move
+
+**Question**: the average move from a reading to T1 is small. Does it hide
+flights that drop a lot and flights that rise a lot, can those be told
+apart ahead of time, and does adding the average move to the held reading
+call T1 better?
+
+**Answer**: it hides them; they can't be told apart yet; adding the move
+helps from T-24 and is a wash from T-12 and T-8, and one fleet-wide move
+does as well as one per trust pool. The live T1 estimate now adds it
+(python/DriftCurve.py).
+
+Change from the reading to T1, summed cabins, Triangle left out:
+
+| From | Flights | Avg | Within 2 | Drop 3+ | Rise 3+ |
+|---|---|---|---|---|---|
+| T-24 | 226 | -2.7 | 46% | 44%, about 6 seats | 7% |
+| T-12 | 324 | -1.0 | 60% | 27%, about 6 | 13%, about 6 |
+| T-8 | 310 | -1.1 | 60% | 27%, about 6 | 12%, about 6 |
+| T-4 | 346 | 0.0 | 76% | 13%, about 5 | 11%, about 6 |
+
+- A drop already seen between two early readings doesn't predict more:
+  21% of those flights dropped another 3+ and 25% rose 3+, against 19%
+  and 9% for flights that had held flat.
+- A service's own track record (python/DirectionTrackRecord.py,
+  leave-one-out, readings at 3+ seats): labeling services decliner,
+  steady or riser by their other flights never beat shuffled labels, by
+  weekly or by daily service, at T-24, T-12 or T-8. Weekly services are
+  too thin: 310 of them, 9 with 5 finished flights and none with more, and
+  at most 2 with 5 flights read near any one horizon.
+- Trust pools on this date's data are two, split by weekday only (A: Wed,
+  Fri, Sat; B: Mon, Tue, Thu, Sun). Pool B drops more than A only from
+  T-12 (38% against 21% of flights at 3+ seats). Within B, riser track
+  records cover 7-10 flights at any horizon.
+
+Adding the move to the held reading (python/DriftCurveBacktest.py,
+leave-one-out, all finished flights, full <= 2, open >= 8):
+
+| From | Days | Miss: hold / fleet / pool | Box right: hold / fleet / pool | Called open, was full: hold / fleet / pool |
+|---|---|---|---|---|
+| T-24 | 286 | 3.73 / 3.36 / 3.37 | 72.4% / 69.9% / 69.9% | 22 / 13 / 13 |
+| T-12 | 461 | 2.92 / 2.89 / 2.90 | 75.7% / 74.6% / 73.5% | 19 / 17 / 13 |
+| T-8 | 484 | 2.93 / 2.93 / 2.94 | 71.7% / 72.5% / 71.3% | 19 / 16 / 14 |
+
+The fleet move is -2.5 seats at T-24, -1.0 at T-12 and -1.0 at T-8. Inside
+T-6 the median move is 0, so the shift is zero there. The shift trades a
+little box accuracy from T-12 and T-24 for fewer flights called open that
+ended full.
+
 ## 2026-10-04 — Drift corrections by cabin and by service
 
 **Question**: judged on seats rather than open/full boxes, does a drift
