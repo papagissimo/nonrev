@@ -6,6 +6,56 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-05 — Aircraft: Comfort+ cabin size, and aircraft as a pool split
+
+**Question**: does the aircraft, or the size of its cabins, show any
+pattern in how flights end or settle?
+
+**Answer**: one pattern, in Comfort+: big Comfort+ cabins usually still
+have sellable seats at the last reading, small ones usually don't.
+Aircraft doesn't change pooling or the T1 estimate yet.
+
+Flights from 2026-09-15 on, last reading within 6h, Triangle left out:
+295 flights, 97 of them with a blank or TBD aircraft. Aircraft is the
+weekly service's flightSchedule entry, so day-of swaps don't show.
+
+| Comfort+ seats | Aircraft | Flights | Comfort+ at 0 | Mean Comfort+ left |
+|---|---|---|---|---|
+| 18-27 | A320, CRJ, E175, A220, 737-900ER | 100 | 68% | ~1 |
+| 35-60 | A321, 737-800, A321neo | 96 | 30% | ~4.5 |
+
+- The big-cabin aircraft fly the long legs (737-800 to SLC, A321neo to
+  PDX and LAX); the small ones fly the Ohio-MSP and Ohio-DTW hops. The one
+  route pair flying both often, MSP↔PDX, agrees: Comfort+ at 0 on 7 of 25
+  A321neo flights and 10 of 13 737-900ER flights (Fisher p ≈ 0.006). Those
+  737-900ERs are mostly MSP-PDX 3:55pm and ran fuller in coach too, so
+  route and time are not separated from cabin size.
+- First ends near empty whatever its size: about half of flights at 0, mean
+  about 1, for 12-, 16- and 20-seat cabins.
+- Main ends at 9 more often on bigger aircraft, following the route mix.
+- The move from T-12 to T1 is the same on small (main ≤ 110) and large
+  aircraft: mean -1.2 seats both.
+- Summed can-buy stays the right measure across aircraft: a Comfort+ seat
+  is a seat a standby can be put in.
+
+**Aircraft as a pool split**: the trust-pool tree, with aircraft added as
+a fourth attribute, on flights whose weekly service has a known aircraft.
+Unadjusted root p-values:
+
+| Flights | Weekday | Daily service | Weekly service | Aircraft | Splits |
+|---|---|---|---|---|---|
+| Since 9/15 (197) | 0.11 | 0.16 | 0.38 | 0.21 | none |
+| All dates (681) | 0.019 | 0.013 | 0.52 | 0.011 | none |
+
+- No attribute clears the bar on either set, so the test can't tell
+  aircraft apart from daily service yet.
+- The all-dates row assigns each weekly service its current aircraft back
+  into August, which isn't reliable; it only hints that aircraft is worth
+  retesting.
+- Revisit once the blank and TBD aircraft are filled in. If aircraft
+  still doesn't beat daily service, it is only a proxy for daily service
+  and adds nothing to pooling.
+
 ## 2026-10-05 — Drops and rises hidden in the average move
 
 **Question**: the average move from a reading to T1 is small. Does it hide
