@@ -46,6 +46,7 @@ MIN_POOL_FLIGHTS = 30
 CURVE_HOURS = [48, 24, 12, 8, 6, 4, 3, 2]
 GLANCE_COLUMNS = {'y': 'cheapY', 'cPlus': 'cheapCPlus', 'firstOrPS': 'cheapFirstOrPS'}
 T1_RANGE_QUANTILES = (0.1, 0.9)
+T1_WIDE_RANGE_QUANTILES = (0.05, 0.95)
 T1_RANGE_LEVEL_SPREAD = 3.0
 T1_RANGE_MIN_FLIGHTS = 10
 
@@ -287,7 +288,8 @@ def held_reading(flight, hours):
 
 
 def t1_range(flights, hours, held):
-    """Where flights like this one ended: the T1_RANGE_QUANTILES of past
+    """Where flights like this one ended: the T1_RANGE_QUANTILES (lo, hi)
+    and the wider T1_WIDE_RANGE_QUANTILES (wideLo, wideHi) of past
     flights' moves from their reading held at this distance to their T1,
     each flight weighted by how close its held total sits to this one's,
     added to this held total. None when the weights add up to fewer than
@@ -304,8 +306,11 @@ def t1_range(flights, hours, held):
     weights = np.array(weights)
     if weights.sum() ** 2 / np.sum(weights ** 2) < T1_RANGE_MIN_FLIGHTS:
         return None
-    low, high = np.quantile(moves, T1_RANGE_QUANTILES, weights=weights, method='inverted_cdf')
-    return {'lo': max(0.0, held + float(low)), 'hi': held + float(high)}
+    wide_low, low, high, wide_high = np.quantile(
+        moves, (T1_WIDE_RANGE_QUANTILES[0], *T1_RANGE_QUANTILES, T1_WIDE_RANGE_QUANTILES[1]),
+        weights=weights, method='inverted_cdf')
+    return {'lo': max(0.0, held + float(low)), 'hi': held + float(high),
+            'wideLo': max(0.0, held + float(wide_low)), 'wideHi': held + float(wide_high)}
 
 
 def cadence_reading(reading_hours, hours_until_dep, golden_ticket_hours, curve, now_points, skip_points,

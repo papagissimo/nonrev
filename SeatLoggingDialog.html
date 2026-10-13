@@ -87,10 +87,14 @@
     .prevSeatVal { display: inline-block; width: 30px; text-align: left; }
     .t1glyph { position: relative; height: 1.4em; }
     .t1glyph .axis { position: absolute; left: 0; right: 0; top: 0.7em; border-top: 1px solid #e3e3e3; }
-    .t1glyph .tick { position: absolute; top: 0; height: 1.4em; border-left: 1px dashed #aaa; }
+    .t1glyph .tick { position: absolute; top: 0; height: 1.4em; border-left: 2px solid; transform: translateX(-1px); z-index: 1; }
+    .t1glyph .tick.full { border-color: #C62828; }
+    .t1glyph .tick.open { border-color: #2E7D32; }
     .t1glyph .bar { position: absolute; top: 0.2em; height: 1em; border-radius: 0.5em; }
+    .t1glyph .bar.wide { background: #FAD7A0; }
+    .t1glyph .bar.inner { background: #E8891C; }
     .t1glyph .golden { position: absolute; top: 0.1em; width: 3px; height: 1.2em; border-radius: 2px; transform: translateX(-50%); }
-    .t1glyph .num { position: absolute; top: 0; line-height: 1.4em; font-size: 12px; transform: translateX(-50%); }
+    .t1glyph .num { position: absolute; z-index: 2; top: 0; line-height: 1.4em; font-size: 12px; transform: translateX(-50%); }
     td.col-flt { padding-right: 2px; }
     td.col-flag { padding-left: 2px; }
     .flagCell input { font-size: 15px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 5px 7px; }
@@ -690,7 +694,8 @@
             '  y=' + blankDash(rd.y) + ' cplus=' + blankDash(rd.cplus) +
             ' onePS=' + blankDash(rd.onePS) + ' d1=' + blankDash(rd.d1) +
             '  t1=' + blankDash(round2(rd.t1)) +
-            (rd.t1Range ? ' range=' + round2(rd.t1Range.lo) + '-' + round2(rd.t1Range.hi) : '') +
+            (rd.t1Range ? ' range=' + round2(rd.t1Range.lo) + '-' + round2(rd.t1Range.hi) +
+              ' wide=' + round2(rd.t1Range.wideLo) + '-' + round2(rd.t1Range.wideHi) : '') +
             (rd.goldenTicket ? ' (golden ticket)' : '') +
             '  steps: y=' + blankDash(steps.y) + ' cplus=' + blankDash(steps.cplus) +
             ' onePS=' + blankDash(steps.onePS) + ' d1=' + blankDash(steps.d1) +
@@ -715,41 +720,31 @@
     }
 
     var T1_GLYPH_MAX_SEATS = 27;
-    var T1_GLYPH_COLORS = {
-      open: { fill: '#97C459', text: '#27500A' },
-      straddles: { fill: '#EF9F27', text: '#633806' },
-      full: { fill: '#F09595', text: '#791F1F' }
-    };
-
     function t1GlyphPercent(seats) {
       return Math.max(0, Math.min(100, seats / T1_GLYPH_MAX_SEATS * 100));
     }
 
-    function t1GlyphColors(lo, hi) {
-      var thresholds = batch.openFullSettings || { fullThreshold: 2, openThreshold: 8 };
-      if (lo >= thresholds.openThreshold) return T1_GLYPH_COLORS.open;
-      if (hi <= thresholds.fullThreshold) return T1_GLYPH_COLORS.full;
-      return T1_GLYPH_COLORS.straddles;
+    function t1GlyphBar(cls, lo, hi) {
+      var left = t1GlyphPercent(lo);
+      var width = Math.max(2, t1GlyphPercent(hi) - left);
+      return '<div class="bar ' + cls + '" style="left:' + left + '%;width:' + width + '%"></div>';
     }
 
     function t1GlyphHtml(rd) {
       if (rd.t1 === null || rd.t1 === undefined) return '';
       var thresholds = batch.openFullSettings || { fullThreshold: 2, openThreshold: 8 };
       var html = '<div class="axis"></div>' +
-        '<div class="tick" style="left:' + t1GlyphPercent(thresholds.fullThreshold) + '%"></div>' +
-        '<div class="tick" style="left:' + t1GlyphPercent(thresholds.openThreshold) + '%"></div>';
+        '<div class="tick full" style="left:' + t1GlyphPercent(thresholds.fullThreshold) + '%"></div>' +
+        '<div class="tick open" style="left:' + t1GlyphPercent(thresholds.openThreshold) + '%"></div>';
       var at = t1GlyphPercent(rd.t1);
       var numberAt = Math.max(5, Math.min(95, at));
       if (rd.goldenTicket) {
-        var golden = t1GlyphColors(rd.t1, rd.t1);
-        html += '<div class="golden" style="left:' + at + '%;background:' + golden.text + '"></div>' +
+        html += '<div class="golden" style="left:' + at + '%;background:#333"></div>' +
           '<div class="num" style="left:calc(' + Math.min(90, at) + '% + 12px);color:#333">' + formatT1Value(rd.t1) + '</div>';
       } else if (rd.t1Range) {
-        var colors = t1GlyphColors(rd.t1Range.lo, rd.t1Range.hi);
-        var left = t1GlyphPercent(rd.t1Range.lo);
-        var width = Math.max(2, t1GlyphPercent(rd.t1Range.hi) - left);
-        html += '<div class="bar" style="left:' + left + '%;width:' + width + '%;background:' + colors.fill + '"></div>' +
-          '<div class="num" style="left:' + numberAt + '%;color:' + colors.text + '">' + formatT1Value(rd.t1) + '</div>';
+        html += t1GlyphBar('wide', rd.t1Range.wideLo, rd.t1Range.wideHi) +
+          t1GlyphBar('inner', rd.t1Range.lo, rd.t1Range.hi) +
+          '<div class="num" style="left:' + numberAt + '%;color:#3a2000">' + formatT1Value(rd.t1) + '</div>';
       } else {
         html += '<div class="num" style="left:' + numberAt + '%;color:#999">' + formatT1Value(rd.t1) + '</div>';
       }
@@ -1466,12 +1461,15 @@
 
     // A glance of 9 or 0 is an exact count, so it fills and locks the
     // matching Actual box; any other glance is only a floor and leaves
-    // Actual free for the binary search.
+    // Actual free for the binary search, with the floor's estimate as its
+    // placeholder.
     function syncActualFromGlance(glanceField, i) {
       var actualField = glanceActualField()[glanceField];
       var actual = inputFor(actualField, i);
       if (!actual) return;
       var glance = fieldValue(glanceField, i);
+      var estimate = ((batch.glanceEstimates || {})[actualField] || {})[glance];
+      actual.placeholder = estimate === undefined ? '-' : Number(estimate).toFixed(1);
       if (glance === '9' || glance === '0') {
         actual.value = glance;
         markAuto(actual);

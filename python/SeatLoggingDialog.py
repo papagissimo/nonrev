@@ -104,6 +104,15 @@ def entry_field_config():
     }
 
 
+def glance_estimates(floor_estimates):
+    """{actual field: {floor: estimated seats}} for every non-exact glance
+    floor, shown as the Actual box's placeholder once a glance is typed."""
+    return {
+        field: {floor: seats_from_glance(floor_estimates, column, floor) for floor in range(1, 9)}
+        for field, column in CAN_BUY_ENTRY_COLUMNS.items()
+    }
+
+
 def load_d1_map(conn):
     return {
         row[0].lower(): bool(row[1])
@@ -784,6 +793,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         'flightDate': next_candidate['flightDate'],
         'routeOrg': next_candidate['org'], 'routeDest': next_candidate['dest'],
         'carrier': next_candidate['car'], 'routeFlag': route_flag,
+        'glanceEstimates': glance_estimates(floor_estimates),
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
         'aircraftList': load_aircraft_list(conn), 'settings': settings,
         'openFullSettings': load_open_full_settings(conn),
