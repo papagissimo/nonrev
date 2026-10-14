@@ -537,11 +537,11 @@ def last_chance_hours_for(back_at_ms, settings, now):
 
 def most_pressing_route(conn, trust, settings, candidates, skip_set, floor_estimates, readings_cache,
                         last_chance_hours):
+    open_candidates = [c for c in candidates if (c['org'], c['dest'], c['flightDate']) not in skip_set]
+    if settings['walkInDepartureOrder']:
+        return open_candidates[0] if open_candidates else None
     best = None
-    for c in candidates:
-        route_key = (c['org'], c['dest'], c['flightDate'])
-        if route_key in skip_set:
-            continue
+    for c in open_candidates:
         prev_readings = readings_for_candidate(conn, c, floor_estimates, readings_cache)
         _, _, urgency = pool_and_cadence_reading(conn, trust, settings, c, prev_readings, last_chance_hours)
         rank = route_day_rank(urgency, c['hoursUntilDep']) + (urgency, c['depEtDatetime'])

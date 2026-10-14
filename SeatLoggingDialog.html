@@ -91,6 +91,8 @@
     .t1glyph .tick.full { border-color: #C62828; }
     .t1glyph .tick.open { border-color: #2E7D32; }
     .t1glyph .bar { position: absolute; z-index: 1; top: 0.2em; height: 1em; border-radius: 0.5em; opacity: 1; }
+    .t1glyph .bar.peggedLo { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+    .t1glyph .bar.peggedHi { border-top-right-radius: 0; border-bottom-right-radius: 0; }
     .t1glyph .bar.wide { background: #FAD7A0; }
     .t1glyph .bar.inner { background: #E8891C; }
     .t1glyph .golden { position: absolute; z-index: 1; top: 0.1em; width: 3px; height: 1.2em; border-radius: 2px; transform: translateX(-50%); }
@@ -157,6 +159,10 @@
       <div class="tierRow">
         <b>Lookahead</b> - how many days past today the logging walk reaches into<br>
         <input type="number" step="1" min="0" id="setLookaheadDays"> days
+      </div>
+      <div class="tierRow">
+        <label><input type="checkbox" id="setWalkInDepartureOrder"> <b>Walk in departure order</b> - next route is
+        whichever has the soonest flight, ignoring cadence</label>
       </div>
       <div class="cadenceGroup">
         <b>Cadence</b>
@@ -726,8 +732,10 @@
 
     function t1GlyphBar(cls, lo, hi) {
       var left = t1GlyphPercent(lo);
-      var width = Math.max(2, t1GlyphPercent(hi) - left);
-      return '<div class="bar ' + cls + '" style="left:' + left + '%;width:' + width + '%"></div>';
+      var right = t1GlyphPercent(hi);
+      var width = Math.max(2, right - left);
+      var pegged = (left === 0 ? ' peggedLo' : '') + (right === 100 ? ' peggedHi' : '');
+      return '<div class="bar ' + cls + pegged + '" style="left:' + left + '%;width:' + width + '%"></div>';
     }
 
     function t1GlyphHtml(rd) {
@@ -1065,6 +1073,7 @@
       document.getElementById('setCadenceNowPoints').value = settings.cadenceNowPoints;
       document.getElementById('setCadenceSkipPoints').value = settings.cadenceSkipPoints;
       document.getElementById('setAwayMarginHours').value = settings.awayMarginHours;
+      document.getElementById('setWalkInDepartureOrder').checked = settings.walkInDepartureOrder;
     }
 
     function toggleInfo(id) {
@@ -1123,7 +1132,8 @@
         cadenceYardstick: document.getElementById('setCadenceYardstick').value,
         cadenceNowPoints: parseFloat(document.getElementById('setCadenceNowPoints').value),
         cadenceSkipPoints: parseFloat(document.getElementById('setCadenceSkipPoints').value),
-        awayMarginHours: parseFloat(document.getElementById('setAwayMarginHours').value)
+        awayMarginHours: parseFloat(document.getElementById('setAwayMarginHours').value),
+        walkInDepartureOrder: document.getElementById('setWalkInDepartureOrder').checked
       };
       var openFullSettings = {
         dateFrom: document.getElementById('setOpenFullDateFrom').value,

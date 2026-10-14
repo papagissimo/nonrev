@@ -16,12 +16,6 @@ import json
 
 SETTINGS_KEY = 'nextUpSettings'
 
-# No cadence/eligibility tiers here anymore - his real workflow is
-# walking every scheduled flight in departure order once per session
-# (get_next_batch), logging or blank-skipping each in turn; a tiered
-# eligibility engine sitting on top of that just gave already-handled
-# flights a way to silently cut back in line ahead of ones he hadn't
-# reached yet. goldenTicketHours is the one setting left here.
 DEFAULT_SETTINGS = {
     # "Golden ticket" - his term for a reading close enough to departure
     # to trust as the real go/no-go signal. Configurable rather than
@@ -33,6 +27,7 @@ DEFAULT_SETTINGS = {
     'cadenceNowPoints': 10.0,
     'cadenceSkipPoints': 3.0,
     'awayMarginHours': 1.0,
+    'walkInDepartureOrder': False,
 }
 
 
@@ -58,6 +53,8 @@ def validate_next_up_settings(new_settings):
     margin = new_settings.get('awayMarginHours')
     if isinstance(margin, bool) or not isinstance(margin, (int, float)) or margin < 0:
         raise ValueError('awayMarginHours must be a number of hours, 0 or more')
+    if not isinstance(new_settings.get('walkInDepartureOrder'), bool):
+        raise ValueError('walkInDepartureOrder must be true or false')
 
 
 def ensure_table(conn):
