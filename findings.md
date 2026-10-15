@@ -6,6 +6,33 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-13 — Late drops after T-1.5 are mostly First
+
+**Question**: when a flight changes for the worse after T-1.5, is it
+usually First?
+
+**Answer**: by how often, yes; by how many seats, no. First drops on
+about twice as many flights as coach in the last stretch, and almost
+always to 0. The big late collapses are coach.
+
+Each flight's earliest reading in T-1.5..1.0 against its last reading
+under T-1 (python/LateCabinDrops.py), 121 flights:
+
+| Cabin | Dropped | To 0 | Rose | Seats lost |
+|---|---|---|---|---|
+| Y | 15 of 121 (12%) | 2 | 8 | 30 |
+| Comfort+ | 12 of 108 (11%) | 6 | 8 | 21 |
+| First | 22 of 98 (22%) | 18 | 6 | 37 |
+
+- The same-length gap earlier, T-3..2.5 to T-2..1.5, has First dropping
+  on 2 of 40 flights (5%), none to 0. First emptying out belongs to the
+  final hour.
+- The largest late collapse is coach: MSP-CMH 10:04am on 2026-08-25, Y
+  and Comfort+ both 9 to 0 between T-1.5 and T-0.75, 19 seats. Nothing
+  else lost more than 6 seats summed.
+- "Late" here means T-1.5 to about T-0.75. Few readings fall later than
+  that, so what happens in the last 45 minutes is untested.
+
 ## 2026-10-05 — Aircraft: Comfort+ cabin size, and aircraft as a pool split
 
 **Question**: does the aircraft, or the size of its cabins, show any
