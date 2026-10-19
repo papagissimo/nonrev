@@ -579,7 +579,7 @@ def api_export_coefficients_csv():
 def api_get_t1_grid_routes():
     conn = get_conn()
     try:
-        return jsonify({'routes': T1GridReport.routes_with_history(conn)})
+        return jsonify({'routes': T1GridReport.scheduled_routes(conn)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

@@ -62,6 +62,17 @@ def routes_with_history(conn):
     )
 
 
+def scheduled_routes(conn):
+    rows = conn.execute(
+        """SELECT DISTINCT fs.org, fs.dest, rs.durationMinutes
+           FROM flightSchedule fs
+           LEFT JOIN routeSettings rs ON rs.org = fs.org AND rs.dest = fs.dest
+           WHERE fs.ignore = 0
+           ORDER BY fs.org, fs.dest"""
+    ).fetchall()
+    return [{'org': org, 'dest': dest, 'durationMinutes': duration} for org, dest, duration in rows]
+
+
 def format_t1(value):
     if value is None:
         return NO_ESTIMATE_DISPLAY

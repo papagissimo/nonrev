@@ -36,17 +36,20 @@
 
   <div class="topBar">
     <label>Day <select id="daySelect" onchange="load()"></select></label>
+    <label>From <select id="originSelect" onchange="onOriginChange()"></select></label>
+    <label>To <select id="destSelect" onchange="onDestChange()"></select></label>
+    <label>Via <select id="viaSelect" onchange="load()"></select></label>
     <label>Connection band <input id="bandMinutes" type="number" min="0" step="5" value="60" oninput="drawChart()"> min</label>
     <span id="status"></span>
   </div>
 
   <div class="legRow">
     <div class="legBlock">
-      <label>First leg <select id="routeSelectFirst" onchange="onFirstLegChange()"></select></label>
+      <label id="titleFirst"></label>
       <div id="gridFirst"></div>
     </div>
     <div class="legBlock">
-      <label>Second leg <select id="routeSelectSecond" onchange="load()"></select></label>
+      <label id="titleSecond"></label>
       <div id="gridSecond"></div>
     </div>
   </div>
@@ -104,58 +107,72 @@
       document.getElementById('status').textContent = text;
     }
 
-    function routeValue(r) { return r.org + '|' + r.dest; }
-
-    function routeLabel(r) {
-      return r.org.toUpperCase() + '\u2192' + r.dest.toUpperCase() + (r.durationMinutes ? '' : NO_FLIGHT_TIME_SUFFIX);
+    function routeLabel(org, dest) {
+      return org.toUpperCase() + '\u2192' + dest.toUpperCase();
     }
 
-    function fillRouteSelect(select, routes, keepValue) {
+    function routeBetween(org, dest) {
+      return allRoutes.find(function (r) { return r.org === org && r.dest === dest; }) || null;
+    }
+
+    function sortedUnique(airports) {
+      return Array.from(new Set(airports)).sort();
+    }
+
+    function destinationsFrom(origin) {
+      const hubs = allRoutes.filter(function (r) { return r.org === origin; }).map(function (r) { return r.dest; });
+      return sortedUnique(allRoutes
+        .filter(function (r) { return hubs.includes(r.org) && r.dest !== origin; })
+        .map(function (r) { return r.dest; }));
+    }
+
+    function viasBetween(origin, dest) {
+      return sortedUnique(allRoutes
+        .filter(function (r) { return r.org === origin && routeBetween(r.dest, dest); })
+        .map(function (r) { return r.dest; }));
+    }
+
+    function viaLabel(origin, via, dest) {
+      const bothTimed = routeBetween(origin, via).durationMinutes && routeBetween(via, dest).durationMinutes;
+      return via.toUpperCase() + (bothTimed ? '' : NO_FLIGHT_TIME_SUFFIX);
+    }
+
+    function fillAirportSelect(select, airports, labelOf) {
+      const previous = select.value;
       select.replaceChildren();
-      routes.forEach(function (r) {
+      airports.forEach(function (airport) {
         const option = document.createElement('option');
-        option.value = routeValue(r);
-        option.textContent = routeLabel(r);
+        option.value = airport;
+        option.textContent = labelOf(airport);
         select.appendChild(option);
       });
-      if (routes.some(function (r) { return routeValue(r) === keepValue; })) select.value = keepValue;
+      select.value = airports.includes(previous) ? previous : airports[0];
     }
 
-    function selectedRoute(selectId) {
-      const value = document.getElementById(selectId).value;
-      if (!value) return null;
-      const parts = value.split('|');
-      return { org: parts[0], dest: parts[1] };
+    function selectedAirport(selectId) {
+      return document.getElementById(selectId).value;
     }
 
-    function refreshSecondLegOptions() {
-      const second = document.getElementById('routeSelectSecond');
-      const first = selectedRoute('routeSelectFirst');
-      const onward = allRoutes.filter(function (r) { return r.org === first.dest; });
-      const previous = second.value;
-      fillRouteSelect(second, onward, previous);
-      second.disabled = onward.length === 0;
-      if (second.value === previous || !onward.length) return;
-      const withFlightTime = onward.find(function (r) { return r.durationMinutes; });
-      second.value = routeValue(withFlightTime || onward[0]);
+    function refreshDestOptions() {
+      const origin = selectedAirport('originSelect');
+      fillAirportSelect(document.getElementById('destSelect'), destinationsFrom(origin),
+        function (a) { return a.toUpperCase(); });
     }
 
-    function defaultPair(routes) {
-      const hasFlightTime = function (r) { return r.durationMinutes; };
-      for (const first of routes.filter(hasFlightTime)) {
-        const second = routes.find(function (r) { return r.org === first.dest && hasFlightTime(r); });
-        if (second) return [first, second];
-      }
-      const first = routes[0];
-      return [first, routes.find(function (r) { return r.org === first.dest; }) || first];
+    function refreshViaOptions() {
+      const origin = selectedAirport('originSelect');
+      const dest = selectedAirport('destSelect');
+      fillAirportSelect(document.getElementById('viaSelect'), viasBetween(origin, dest),
+        function (via) { return viaLabel(origin, via, dest); });
     }
 
     function fillSelects(routes) {
       allRoutes = routes;
-      const pair = defaultPair(routes);
-      fillRouteSelect(document.getElementById('routeSelectFirst'), routes, routeValue(pair[0]));
-      refreshSecondLegOptions();
-      document.getElementById('routeSelectSecond').value = routeValue(pair[1]);
+      const origins = sortedUnique(routes.map(function (r) { return r.org; }))
+        .filter(function (origin) { return destinationsFrom(origin).length > 0; });
+      fillAirportSelect(document.getElementById('originSelect'), origins, function (a) { return a.toUpperCase(); });
+      refreshDestOptions();
+      refreshViaOptions();
 
       const daySelect = document.getElementById('daySelect');
       DAYS_OF_WEEK.forEach(function (d) {
@@ -167,8 +184,14 @@
       daySelect.value = DEFAULT_DAY;
     }
 
-    function onFirstLegChange() {
-      refreshSecondLegOptions();
+    function onOriginChange() {
+      refreshDestOptions();
+      refreshViaOptions();
+      load();
+    }
+
+    function onDestChange() {
+      refreshViaOptions();
       load();
     }
 
@@ -429,24 +452,26 @@
 
     function load() {
       const sequence = ++loadSequence;
-      const first = selectedRoute('routeSelectFirst');
-      const second = selectedRoute('routeSelectSecond');
+      const origin = selectedAirport('originSelect');
+      const via = selectedAirport('viaSelect');
+      const dest = selectedAirport('destSelect');
       const dayOfWeek = document.getElementById('daySelect').value;
+      document.getElementById('titleFirst').textContent = routeLabel(origin, via);
+      document.getElementById('titleSecond').textContent = routeLabel(via, dest);
       setStatus('Loading\u2026');
       Promise.all([
-        post('/api/getT1Grid', { org: first.org, dest: first.dest, dayOfWeek: dayOfWeek }),
-        second ? post('/api/getT1Grid', { org: second.org, dest: second.dest, dayOfWeek: dayOfWeek }) : Promise.resolve(null),
-        second ? post('/api/getConnectionChart', {
-          firstOrg: first.org, firstDest: first.dest, secondOrg: second.org, secondDest: second.dest, dayOfWeek: dayOfWeek,
-        }) : Promise.resolve({ problem: 'No route with history leaves from ' + first.dest.toUpperCase() + '.' }),
+        post('/api/getT1Grid', { org: origin, dest: via, dayOfWeek: dayOfWeek }),
+        post('/api/getT1Grid', { org: via, dest: dest, dayOfWeek: dayOfWeek }),
+        post('/api/getConnectionChart', {
+          firstOrg: origin, firstDest: via, secondOrg: via, secondDest: dest, dayOfWeek: dayOfWeek,
+        }),
       ])
         .then(function (results) {
           if (sequence !== loadSequence) return;
-          const failed = results.find(function (r) { return r && r.error; });
+          const failed = results.find(function (r) { return r.error; });
           if (failed) { setStatus('Error: ' + failed.error); return; }
           renderGrid('gridFirst', results[0]);
-          if (results[1]) renderGrid('gridSecond', results[1]);
-          else document.getElementById('gridSecond').replaceChildren();
+          renderGrid('gridSecond', results[1]);
           lastChart = results[2];
           drawChart();
           setStatus('');
