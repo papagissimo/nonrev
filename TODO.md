@@ -201,12 +201,16 @@ to watch:
 
 ## Repo privacy
 
-- **Make the repo less public — decided, not started.** The routes and
-  cities being checked reveal personal details on their own. Open
-  question: Claude reads the repo and live data by cloning the public
-  GitHub URL, so going private needs a replacement way for Claude to get
-  read access before the switch, or Claude loses its only view of
-  nonrev.db.
+- **Make the repo private — decided, waiting on him.** First he links his
+  GitHub account to Claude (claude.ai Settings → Connectors). Then, in
+  order: Claude confirms it can still clone and push; the repo goes
+  private; the trip-scenario docs move into a `trips/` folder.
+- **One repo with a clean seam, not two repos.** The code and the domain
+  docs stay free of personal details, so they could be shared someday.
+  nonrev.db and `trips/` are the private side: the routes and airports
+  watched point straight at home and family. If sharing ever happens,
+  carve the private side out then with git filter-repo, rather than
+  maintaining a split now.
 
 ## Parked
 
