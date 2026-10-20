@@ -6,6 +6,45 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-20 — LAX→CVG red-eye: a T-3 reading calls the golden ticket
+
+**Question**: on the LAX→CVG red-eye, is a reading around T-3 enough to
+know where the flight lands at the golden ticket?
+
+**Answer**: yes, so far. Summed across cabins, no reading in T-5..2.5
+has missed the golden ticket by more than the cadence yardstick allows.
+The one late miss on record is Thursday 10/8, and its nearest reading
+was at T-5.7.
+
+Each flight's latest reading in T-5..2.5 against its golden ticket,
+totals from `reading_total`, judged by `matters()` with the current
+yardstick:
+
+| Flight | ~T-3 total | Golden ticket | Move | Yardstick allows |
+|---|---|---|---|---|
+| 10/4 Sun | 11 | 9 | −2 | 4.2 |
+| 10/5 Mon | 20 | 21 | +1 | 10 |
+| 10/6 Tue | 18 | 18 | 0 | 8.7 |
+| 10/7 Wed | 9 | 9 | 0 | 3.4 |
+| 10/11 Sun | 16 | 17 | +1 | 7.4 |
+| 10/12 Mon | 19 | 19.7 | +0.7 | 9.4 |
+| 10/13 Tue | 10 | 12.4 | +2.4 | 3.5 |
+| 10/16 Fri | 9 | 9 | 0 | 3.4 |
+| 10/18 Sun | 16 | 16 | 0 | 7.4 |
+
+The only reading inside T-6 that crossed the yardstick: 10/8 (Thu),
+T-5.7 total 8 to golden ticket 0, against an allowance of 3.4. Every
+cabin went full.
+
+Thursday has run tightest since late August: Y fell below 9 only on
+10/8 and 10/15, both Thursdays (10/15 has no golden ticket), and the
+Thursdays before them (8/27, 10/1) held Y but had C+ at 0–2. In late
+July and early August, Y fell to 0–4 on Mon through Fri alike.
+
+**Assumptions / caveats**: 9 paired flights, all from 10/4 to 10/18.
+No Thursday has both a T-3 reading and a golden ticket, so whether T-3
+sees a Thursday collapse coming is untested.
+
 ## 2026-10-13 — Late drops after T-1.5 are mostly First
 
 **Question**: when a flight changes for the worse after T-1.5, is it
