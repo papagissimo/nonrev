@@ -32,7 +32,7 @@ import re
 
 from SeatLoggingDialog import minutes_to_12h
 from Pools import snapshot as pool_snapshot
-from timezones import get_confirmed_timezone, UnconfirmedAirportError
+from timezones import lookup_airport, unconfirmed_codes
 
 BOGUS_RE = re.compile(r'^bogus(\d+)$', re.IGNORECASE)
 DOW_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -140,25 +140,11 @@ def save_schedule_for_route_day(conn, payload):
     dest = str(payload['dest']).strip().lower()
     dow = normalize_dow(payload['dow'])
 
-    # Same confirm-before-trusting-a-timezone gate the logging flow
-    # already enforces (see timezones.py) - this is the more natural
-    # place a genuinely new airport first gets typed in, so it should
-    # fail loudly here too rather than only surfacing later when
-    # SeatLoggingDialog tries to compute a departure time against it.
-    # Checked before any writes below - a schedule can't be half-saved
-    # with an unconfirmed code baked in.
-    unconfirmed_codes = set()
-    for code in (org, dest):
-        try:
-            get_confirmed_timezone(conn, code)
-        except UnconfirmedAirportError:
-            unconfirmed_codes.add(code)
-    if unconfirmed_codes:
-        codes = ', '.join(sorted(unconfirmed_codes))
-        raise UnconfirmedAirportError(
-            f"Can't save this route - these airport code(s) aren't confirmed yet: "
-            f"{codes}. Run `python confirm_airports.py`, then try again."
-        )
+    pending = unconfirmed_codes(conn, (org, dest))
+    if pending:
+        return {'unconfirmedAirports': [
+            lookup_airport(code) or {'code': code} for code in pending
+        ]}
 
     for entry in payload['rows']:
         if not entry.get('scheduleRow') or entry.get('deleted'):

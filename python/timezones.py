@@ -5,27 +5,30 @@ heuristic.
 
 Any code not yet in confirmedAirports - whether a genuinely new airport
 or a typo - fails loudly and identically: UnconfirmedAirportError naming
-the code and pointing at confirm_airports.py. There's no silent
-fallback to airportsdata at request time; airportsdata is only consulted
-by confirm_airports.py, at the one moment a human is actually looking at
-the result before it's trusted.
+the code. There's no silent fallback to airportsdata at request time;
+airportsdata is only consulted at the moment a human is looking at the
+result before it's trusted - the Edit Schedule dialog's confirm prompt
+when a route with a new airport is saved, or confirm_airports.py.
 
 zoneinfo (Python stdlib) still does the actual date-dependent, DST-aware
-UTC offset math once a zone name is known - that part was never in
-question, see the confirm_airports.py docstring for the full split.
+UTC offset math once a zone name is known.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import airportsdata
+
 _ET_ZONE = ZoneInfo('America/New_York')
+_AIRPORTS = None
 
 
 class UnconfirmedAirportError(Exception):
     """
     Raised when a code isn't in confirmedAirports yet - covers both a
     genuinely new airport and a fat-fingered code identically, since
-    from here they're indistinguishable. Fix: run confirm_airports.py.
+    from here they're indistinguishable. Fix: save the route in Edit
+    Schedule and confirm the airport there.
     """
     pass
 
@@ -46,7 +49,7 @@ def ensure_table(conn):
 def get_confirmed_timezone(conn, airport_code):
     """
     Returns the IANA time zone name for a 3-letter code, but ONLY if
-    it's already been explicitly confirmed (see confirm_airports.py).
+    it's already been explicitly confirmed.
     Raises UnconfirmedAirportError otherwise - no fallback lookup here.
     """
     ensure_table(conn)
@@ -57,10 +60,55 @@ def get_confirmed_timezone(conn, airport_code):
     if row is None:
         raise UnconfirmedAirportError(
             f"'{code}' hasn't been confirmed yet (new airport or a typo - "
-            f"can't tell which from here). Run `python confirm_airports.py` "
-            f"to review and confirm it, then try again."
+            f"can't tell which from here). Save a route using it in Edit "
+            f"Schedule to review and confirm it, then try again."
         )
     return row[0]
+
+
+def lookup_airport(airport_code):
+    """
+    What airportsdata says a code is, as {code, name, city, country, tz},
+    or None if it isn't a real IATA code. Never trusted on its own -
+    only shown to a human, who then calls confirm_airport.
+    """
+    global _AIRPORTS
+    if _AIRPORTS is None:
+        _AIRPORTS = airportsdata.load('IATA')
+    code = airport_code.strip().upper()
+    rec = _AIRPORTS.get(code)
+    if rec is None:
+        return None
+    return {'code': code, 'name': rec['name'], 'city': rec['city'],
+            'country': rec['country'], 'tz': rec['tz']}
+
+
+def unconfirmed_codes(conn, airport_codes):
+    ensure_table(conn)
+    pending = []
+    for code in sorted({c.strip().upper() for c in airport_codes}):
+        row = conn.execute(
+            "SELECT 1 FROM confirmedAirports WHERE code = ?", (code,)
+        ).fetchone()
+        if row is None:
+            pending.append(code)
+    return pending
+
+
+def confirm_airport(conn, airport_code):
+    ensure_table(conn)
+    rec = lookup_airport(airport_code)
+    if rec is None:
+        raise ValueError(f"'{airport_code.strip().upper()}' isn't a real airport code "
+                         f"as far as airportsdata knows - check the spelling.")
+    conn.execute(
+        """INSERT OR IGNORE INTO confirmedAirports (code, name, country, tz, confirmedAt)
+           VALUES (?,?,?,?,?)""",
+        (rec['code'], rec['name'], rec['country'], rec['tz'],
+         datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')),
+    )
+    conn.commit()
+    return rec
 
 
 def et_equivalent_datetime(conn, dep_minutes, airport_code, on_date):

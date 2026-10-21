@@ -29,6 +29,7 @@ import Scenarios
 import Grading
 import InsiderReadings
 import settings as settings_module
+import timezones
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nonrev.db')
 STATIC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -282,6 +283,18 @@ def api_save_schedule_for_route_day():
     conn = get_conn()
     try:
         return jsonify(FlightScheduleDialog.save_schedule_for_route_day(conn, payload))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/confirmAirport', methods=['POST'])
+def api_confirm_airport():
+    body = request.get_json(force=True)
+    conn = get_conn()
+    try:
+        return jsonify(timezones.confirm_airport(conn, body['code']))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
