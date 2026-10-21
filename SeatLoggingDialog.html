@@ -661,14 +661,16 @@
           ', full ' + (row.openFull ? row.openFull.fullDisplay : '?'));
         lines.push('  pool: ' + (row.pool ? row.pool.label : '-') + ', cadence: ' + (row.cadence || '-'));
 
+        var cabins = row.hasD1 ? ['y', 'cplus', 'onePS', 'd1'] : ['y', 'cplus', 'onePS'];
+        function cabinTerms(values, format) {
+          return cabins.map(function (c) { return c + '=' + format(values[c]); }).join(' ');
+        }
         var cur = {};
-        ['y', 'cplus', 'onePS', 'd1'].forEach(function (f) {
-          var el = document.querySelector('input[data-field="' + f + '"][data-i="' + i + '"]');
-          cur[f] = el ? el.value : '';
-        });
-        lines.push('  current input (unsaved): y=' + blankDash(cur.y) + ' cplus=' + blankDash(cur.cplus) +
-          ' onePS=' + blankDash(cur.onePS) + ' d1=' + blankDash(cur.d1));
-        lines.push('  current glance input (unsaved): ' + glanceFields().map(function (f) {
+        cabins.forEach(function (f) { cur[f] = fieldValue(f, i); });
+        lines.push('  current input (unsaved): ' + cabinTerms(cur, blankDash));
+        lines.push('  current glance input (unsaved): ' + glanceFields().filter(function (f) {
+          return row.hasD1 || f !== 'glanceD1';
+        }).map(function (f) {
           return f + '=' + blankDash(fieldValue(f, i));
         }).join(' '));
         var seatMapTyped = seatMapFields().filter(function (f) { return fieldValue(f, i) !== ''; })
@@ -676,11 +678,10 @@
         lines.push('  current seat-map input (unsaved): ' + (seatMapTyped.length ? seatMapTyped.join(' ') : '-'));
 
         var hr = row.historyRange || {};
-        lines.push('  history range at this hour: y=' + formatHistoryRange(hr.y) + ' cplus=' + formatHistoryRange(hr.cplus) +
-          ' onePS=' + formatHistoryRange(hr.onePS) + ' d1=' + formatHistoryRange(hr.d1));
+        lines.push('  history range at this hour: ' + cabinTerms(hr, formatHistoryRange));
 
         var rc = row.resolvedCoefficients || {};
-        ['y', 'cplus', 'onePS', 'd1'].forEach(function (cabin) {
+        cabins.forEach(function (cabin) {
           var r = rc[cabin] || {};
           lines.push('  resolved coefficients [' + cabin + ']: c1=' + blankDash(round2(r.c1)) + ' (' + blankDash(r.c1Tier) + ')' +
             '  slope=' + blankDash(round2(r.slope)) + ' (' + blankDash(r.slopeTier) + ')' +
@@ -697,16 +698,13 @@
           var estimated = (rd.estimated || []).length ? '  (glance floor estimate: ' + rd.estimated.join(' ') + ')' : '';
           var solo = rd.solo || {};
           lines.push('    hrs=' + rd.hrs.toFixed(2) +
-            '  y=' + blankDash(rd.y) + ' cplus=' + blankDash(rd.cplus) +
-            ' onePS=' + blankDash(rd.onePS) + ' d1=' + blankDash(rd.d1) +
+            '  ' + cabinTerms(rd, blankDash) +
             '  t1=' + blankDash(round2(rd.t1)) +
             (rd.t1Range ? ' range=' + round2(rd.t1Range.lo) + '-' + round2(rd.t1Range.hi) +
               ' wide=' + round2(rd.t1Range.wideLo) + '-' + round2(rd.t1Range.wideHi) : '') +
             (rd.goldenTicket ? ' (golden ticket)' : '') +
-            '  steps: y=' + blankDash(steps.y) + ' cplus=' + blankDash(steps.cplus) +
-            ' onePS=' + blankDash(steps.onePS) + ' d1=' + blankDash(steps.d1) +
-            '  solo select: y=' + blankDash(solo.y) + ' cplus=' + blankDash(solo.cplus) +
-            ' onePS=' + blankDash(solo.onePS) + ' d1=' + blankDash(solo.d1) +
+            '  steps: ' + cabinTerms(steps, blankDash) +
+            '  solo select: ' + cabinTerms(solo, blankDash) +
             '  X=' + blankDash(rd.blocked) +
             (rd.insider ? '  insider: ' + insiderFields().concat(['verdict']).map(function (k) {
               return k + '=' + blankDash(rd.insider[k]);
@@ -1389,20 +1387,20 @@
           glanceY: glanceInputHtml('glanceY', i, seatDisabled),
           glanceCplus: glanceInputHtml('glanceCplus', i, seatDisabled),
           glanceOnePS: glanceInputHtml('glanceOnePS', i, seatDisabled),
-          glanceD1: glanceInputHtml('glanceD1', i, seatDisabled),
+          glanceD1: row.hasD1 ? glanceInputHtml('glanceD1', i, seatDisabled) : '',
           y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.y) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.y) + '</div>',
           cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',
-          d1: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.d1) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.d1) + '</div>',
+          d1: row.hasD1 ? '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="d1" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.d1) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.d1) + '</div>' : '',
           soloY: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'y') + '</div>',
           soloCplus: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'cplus') + '</div>',
           soloOnePS: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'onePS') + '</div>',
-          soloD1: '<div class="prev">' + formatSoloColumn(row.previousReadings, 'd1') + '</div>',
+          soloD1: row.hasD1 ? '<div class="prev">' + formatSoloColumn(row.previousReadings, 'd1') + '</div>' : '',
           blocked: '<div class="prev">' + formatBlockedColumn(row.previousReadings) + '</div>',
           insY: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'standbyY') + '</div>',
           insCplus: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'standbyCPlus') + '</div>',
           insOnePS: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'standbyFirstOrPS') + '</div>',
-          insD1: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'standbyD1') + '</div>',
+          insD1: row.hasD1 ? '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'standbyD1') + '</div>' : '',
           insTotal: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'standbyTotal') + '</div>',
           insListed: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'numListed') + '</div>',
           insPosition: '<div class="prev">' + formatInsiderColumn(row.previousReadings, 'ourPosition') + '</div>',
