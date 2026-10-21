@@ -20,7 +20,14 @@
     td { padding: 3px 4px; vertical-align: middle; }
     input.car { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; text-transform: lowercase; }
     input.dep { font-weight: bold; font-size: 14px; width: 100%; box-sizing: border-box; }
-    input.flt, input.airc { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; }
+    input.flt { font-size: 12px; color: #666; width: 100%; box-sizing: border-box; }
+    select.airc { font-size: 12px; width: 100%; box-sizing: border-box; }
+    .acLine { font-size: 11px; color: #666; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .acLink { color: #1a73e8; cursor: pointer; margin-left: 6px; }
+    .aircraftForm { border: 1px solid #ddd; border-radius: 4px; padding: 6px 8px; margin: 2px 0 6px; background: #fff; font-size: 12px; }
+    .aircraftForm input { font-size: 13px; margin-right: 6px; }
+    .aircraftForm input.afSize { width: 40px; text-align: center; }
+    .afStatus { color: #c5221f; margin-left: 8px; }
     .delBtn { cursor: pointer; color: #888; font-size: 14px; background: none; border: none; }
     .delBtn:hover { color: #c5221f; }
     #addBtn { margin-top: 8px; font-size: 12px; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
@@ -68,7 +75,7 @@
       <col style="width:44px;">
       <col style="width:90px;">
       <col style="width:100px;">
-      <col style="width:110px;">
+      <col style="width:200px;">
       <col style="width:78px;">
       <col style="width:28px;">
       <col style="width:28px;">
@@ -87,21 +94,19 @@
     <tbody id="rows"></tbody>
   </table>
 
-  <datalist id="aircraftOptions"></datalist>
-
   <button id="addBtn" style="display:none;" onclick="addRow()">+ add flight</button>
 
   <div class="btnRow" style="display:none;" id="btnRow">
     <span id="status"></span>
     <span>
       <button id="copyBtn" onclick="copyToOtherDays()" title="Overwrites the other 6 days with what's currently saved for this route/day">Copy to other days</button>
-      <button id="saveBtn" onclick="saveSchedule()">save</button>
+      <button id="saveBtn" onclick="saveSchedule()" disabled>save</button>
     </span>
   </div>
 
   <script>
     var current = null; // { org, dest, dow, rows: [...] }
-    var aircraftOptionsRendered = false;
+    var PLACEHOLDER_AIRCRAFT = ['', 'tbd'];
     var DOW_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
     // Tracks unsaved edits so we can confirm before they'd be silently
@@ -110,6 +115,11 @@
     // Save clears this BEFORE its own internal reload runs, so a normal
     // save-then-refresh cycle never spuriously trips this guard.
     var isDirty = false;
+
+    function setDirty(flag) {
+      isDirty = flag;
+      document.getElementById('saveBtn').disabled = !flag;
+    }
 
     window.addEventListener('beforeunload', function (e) {
       if (!isDirty) return;
@@ -167,10 +177,19 @@
     // car/flight/dep/aircraft (input) and ignore (checkbox, via change).
     var rowsBody = document.getElementById('rows');
     rowsBody.addEventListener('input', function (e) {
-      if (e.target.matches('input.car, input.flt, input.dep, input.airc')) isDirty = true;
+      if (e.target.matches('input.car, input.flt, input.dep')) setDirty(true);
     });
     rowsBody.addEventListener('change', function (e) {
-      if (e.target.matches('input.ignore')) isDirty = true;
+      if (e.target.matches('input.ignore')) setDirty(true);
+      else if (e.target.matches('select.airc')) onAircraftChange(parseInt(e.target.getAttribute('data-i'), 10), e.target);
+    });
+    rowsBody.addEventListener('click', function (e) {
+      var el = e.target;
+      if (!el.classList) return;
+      var i = parseInt(el.getAttribute('data-i'), 10);
+      if (el.classList.contains('acEdit')) openAircraftForm(i, 'edit');
+      else if (el.classList.contains('afCancel')) closeAircraftForm(i);
+      else if (el.classList.contains('afSave')) saveAircraftForm(i);
     });
     // Click-to-select-all on the dep-time field, same trick used by the
     // seat-logging dialogue's fields: focus alone isn't enough, since the
@@ -186,7 +205,7 @@
       if (e.target.matches('input.dep')) e.preventDefault();
     });
     document.getElementById('durationInput').addEventListener('input', function () {
-      isDirty = true;
+      setDirty(true);
     });
 
     function swapOrgDest() {
@@ -205,15 +224,147 @@
       if (org && dest) loadSchedule();
     }
 
-    function renderAircraftOptions(options) {
-      if (aircraftOptionsRendered) return;
-      var dl = document.getElementById('aircraftOptions');
-      (options || []).forEach(function (opt) {
-        var o = document.createElement('option');
-        o.value = opt;
-        dl.appendChild(o);
+    function escapeHtml(text) {
+      return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function findAircraft(key) {
+      var lower = String(key || '').toLowerCase();
+      return (current.aircraftList || []).find(function (a) { return a.key.toLowerCase() === lower; }) || null;
+    }
+
+    function formatAircraftSizes(aircraft) {
+      var sizes = aircraft ? [aircraft.d1, aircraft.first, aircraft.comfortPlus, aircraft.main] : [];
+      if (sizes.length === 0 || sizes.some(function (n) { return n === null || n === undefined; })) {
+        return 'sizes unknown';
+      }
+      var parts = [];
+      if (aircraft.d1 > 0) parts.push(aircraft.d1 + ' D1');
+      if (aircraft.first > 0) parts.push(aircraft.first + ' 1st');
+      if (aircraft.comfortPlus > 0) parts.push(aircraft.comfortPlus + ' C+');
+      parts.push(aircraft.main + ' Y');
+      return parts.join(' \u00b7 ') + ' = ' + aircraft.total + (aircraft.confirmed ? ' \u2713' : '');
+    }
+
+    function aircraftOptionsHtml(currentKey) {
+      var currentLower = String(currentKey || '').toLowerCase();
+      var found = false;
+      var html = (current.aircraftList || []).map(function (a) {
+        var selected = a.key.toLowerCase() === currentLower;
+        if (selected) found = true;
+        return '<option value="' + escapeHtml(a.key) + '"' + (selected ? ' selected' : '') + '>' +
+          escapeHtml(a.key) + ' \u2014 ' + escapeHtml(a.name) + '</option>';
+      }).join('');
+      if (!found) {
+        html = (currentKey
+          ? '<option value="' + escapeHtml(currentKey) + '" selected>' + escapeHtml(currentKey) + ' (no cabin sizes yet)</option>'
+          : '<option value="" selected>\u2014</option>') + html;
+      }
+      return html + '<option value="__new__">+ new aircraft\u2026</option>';
+    }
+
+    function aircraftCellHtml(idx, key) {
+      return '<select class="airc" data-i="' + idx + '">' + aircraftOptionsHtml(key) + '</select>' +
+        '<div class="acLine"><span class="acSizes" data-i="' + idx + '"></span>' +
+        '<a class="acLink acEdit" data-i="' + idx + '"></a></div>';
+    }
+
+    function aircraftFormRowHtml(idx) {
+      return '<td colspan="7"><div class="aircraftForm">' +
+        'key <input class="afKey" size="9"> name <input class="afName" size="24"> ' +
+        'D1 <input class="afSize" data-size="d1" maxlength="3"> 1st <input class="afSize" data-size="first" maxlength="3"> ' +
+        'C+ <input class="afSize" data-size="comfortPlus" maxlength="3"> Y <input class="afSize" data-size="main" maxlength="3"> ' +
+        '<button class="afSave" data-i="' + idx + '">Save aircraft</button> ' +
+        '<a class="acLink afCancel" data-i="' + idx + '">cancel</a><span class="afStatus"></span></div></td>';
+    }
+
+    function aircraftFormRow(i) { return document.querySelector('tr.afRow[data-i="' + i + '"]'); }
+
+    function updateAircraftLabels(i) {
+      var key = current.rows[i].aircraftConfig;
+      var aircraft = findAircraft(key);
+      var isPlaceholder = PLACEHOLDER_AIRCRAFT.indexOf(String(key || '').toLowerCase()) !== -1;
+      document.querySelector('.acSizes[data-i="' + i + '"]').textContent = isPlaceholder ? '' : formatAircraftSizes(aircraft);
+      var edit = document.querySelector('.acEdit[data-i="' + i + '"]');
+      edit.textContent = aircraft ? 'edit sizes' : 'add sizes';
+      edit.style.display = isPlaceholder ? 'none' : '';
+    }
+
+    function refreshAircraftSelects() {
+      document.querySelectorAll('select.airc').forEach(function (sel) {
+        var i = parseInt(sel.getAttribute('data-i'), 10);
+        sel.innerHTML = aircraftOptionsHtml(current.rows[i].aircraftConfig);
+        updateAircraftLabels(i);
       });
-      aircraftOptionsRendered = true;
+    }
+
+    function onAircraftChange(i, sel) {
+      if (sel.value === '__new__') {
+        sel.innerHTML = aircraftOptionsHtml(current.rows[i].aircraftConfig);
+        openAircraftForm(i, 'new');
+        return;
+      }
+      current.rows[i].aircraftConfig = sel.value;
+      updateAircraftLabels(i);
+      setDirty(true);
+    }
+
+    function openAircraftForm(i, mode) {
+      var key = current.rows[i].aircraftConfig;
+      var formRow = aircraftFormRow(i);
+      var form = formRow.querySelector('.aircraftForm');
+      var aircraft = mode === 'edit' ? findAircraft(key) : null;
+      var keyInput = form.querySelector('.afKey');
+      form.setAttribute('data-mode', mode);
+      keyInput.value = mode === 'edit' ? String(key).toLowerCase() : '';
+      keyInput.readOnly = mode === 'edit';
+      form.querySelector('.afName').value = aircraft ? aircraft.name : '';
+      form.querySelectorAll('.afSize').forEach(function (input) {
+        var size = aircraft ? aircraft[input.getAttribute('data-size')] : null;
+        input.value = (size === null || size === undefined) ? '' : size;
+      });
+      form.querySelector('.afStatus').textContent = '';
+      formRow.style.display = '';
+      (mode === 'edit' ? form.querySelector('.afName') : keyInput).focus();
+    }
+
+    function closeAircraftForm(i) {
+      aircraftFormRow(i).style.display = 'none';
+    }
+
+    function saveAircraftForm(i) {
+      var form = aircraftFormRow(i).querySelector('.aircraftForm');
+      var mode = form.getAttribute('data-mode');
+      var payload = {
+        mode: mode,
+        configKey: form.querySelector('.afKey').value,
+        aircraft: form.querySelector('.afName').value,
+        scheduleRow: null
+      };
+      form.querySelectorAll('.afSize').forEach(function (input) {
+        payload[input.getAttribute('data-size')] = input.value;
+      });
+      var status = form.querySelector('.afStatus');
+      status.textContent = 'Saving\u2026';
+      fetch('/api/saveAircraft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
+          current.aircraftList = result.aircraftList;
+          if (mode === 'new') {
+            current.rows[i].aircraftConfig = result.configKey;
+            setDirty(true);
+          }
+          refreshAircraftSelects();
+          closeAircraftForm(i);
+        })
+        .catch(function (err) {
+          status.textContent = err.message;
+        });
     }
 
     function loadSchedule() {
@@ -242,10 +393,9 @@
           if (result.error) throw new Error(result.error);
           current = result;
           current.rows.forEach(function (r) { r.deleted = false; });
-          renderAircraftOptions(current.aircraftOptions);
           renderRows();
           renderDuration();
-          isDirty = false;
+          setDirty(false);
         })
         .catch(function (err) {
           btn.disabled = false;
@@ -289,13 +439,20 @@
           '<td><input class="car" data-i="' + idx + '" value="' + (row.carrier || 'dl') + '"></td>' +
           '<td><input class="flt" data-i="' + idx + '" value="' + (row.flightNumber || '') + '"></td>' +
           '<td><input class="dep" data-i="' + idx + '" value="' + (row.depDisplay || '') + '"></td>' +
-          '<td><input class="airc" list="aircraftOptions" data-i="' + idx + '" value="' + (row.aircraftConfig || '') + '"></td>' +
+          '<td>' + aircraftCellHtml(idx, row.aircraftConfig) + '</td>' +
           '<td class="ofCell">open ' + (row.openFull ? row.openFull.openDisplay : '\u2014') +
             '<br>full ' + (row.openFull ? row.openFull.fullDisplay : '\u2014') + '</td>' +
           '<td><input type="checkbox" class="ignore" data-i="' + idx + '" title="Never offer this flight for logging"' +
             (row.ignore ? ' checked' : '') + '></td>' +
           '<td><button class="delBtn" data-i="' + idx + '" onclick="deleteRow(' + idx + ')" title="delete row">\u2716</button></td>';
         tbody.appendChild(tr);
+        var formTr = document.createElement('tr');
+        formTr.className = 'afRow';
+        formTr.setAttribute('data-i', idx);
+        formTr.style.display = 'none';
+        formTr.innerHTML = aircraftFormRowHtml(idx);
+        tbody.appendChild(formTr);
+        updateAircraftLabels(idx);
       });
 
       document.getElementById('schedTable').style.display = visibleRows.length > 0 ? '' : 'none';
@@ -319,7 +476,7 @@
         openFull: { measured: 0, openDisplay: '\u2014', fullDisplay: '\u2014' }
       });
       current.nextBogusNumber++;
-      isDirty = true;
+      setDirty(true);
       renderRows();
     }
 
@@ -330,7 +487,7 @@
       } else {
         current.rows.splice(idx, 1); // never-saved row - just drop it
       }
-      isDirty = true;
+      setDirty(true);
       renderRows();
     }
 
@@ -390,7 +547,7 @@
       var cars = document.querySelectorAll('input.car');
       var flts = document.querySelectorAll('input.flt');
       var deps = document.querySelectorAll('input.dep');
-      var aircs = document.querySelectorAll('input.airc');
+      var aircs = document.querySelectorAll('select.airc');
 
       var badTime = null;
       deps.forEach(function (el) {
@@ -451,14 +608,14 @@
       })
         .then(function (res) { return res.json(); })
         .then(function (result) {
-          btn.disabled = false;
+          btn.disabled = !isDirty;
           if (result.error) throw new Error(result.error);
           if (result.unconfirmedAirports) {
             confirmNewAirports(result.unconfirmedAirports, payload);
             return;
           }
           status.textContent = 'Saved.';
-          isDirty = false;
+          setDirty(false);
           if (window.parent && window.parent !== window &&
               typeof window.parent.onFlightScheduleSaved === 'function') {
             window.parent.onFlightScheduleSaved();
@@ -467,7 +624,7 @@
           loadSchedule();
         })
         .catch(function (err) {
-          btn.disabled = false;
+          btn.disabled = !isDirty;
           status.textContent = 'Error: ' + err.message;
         });
     }

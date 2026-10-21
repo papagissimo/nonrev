@@ -32,6 +32,7 @@ import re
 
 from SeatLoggingDialog import minutes_to_12h
 from Pools import snapshot as pool_snapshot
+from AircraftConfigs import load_aircraft_list
 from timezones import lookup_airport, unconfirmed_codes
 
 BOGUS_RE = re.compile(r'^bogus(\d+)$', re.IGNORECASE)
@@ -44,12 +45,6 @@ def normalize_dow(dow):
     strftime('%a')), not the lowercase convention the old Sheets version used."""
     s = str(dow or '').strip()
     return s[:3].capitalize()
-
-
-def load_aircraft_options(conn):
-    return [r[0] for r in conn.execute(
-        "SELECT configKey FROM aircraftConfigs ORDER BY rowid"
-    ).fetchall()]
 
 
 def get_next_bogus_number(conn):
@@ -121,7 +116,7 @@ def get_schedule_for_route_day(conn, org, dest, dow):
         'rows': row_dicts,
         'isNewRoute': len(row_dicts) == 0 and not any_other_day,
         'nextBogusNumber': get_next_bogus_number(conn),
-        'aircraftOptions': load_aircraft_options(conn),
+        'aircraftList': load_aircraft_list(conn),
         'durationMinutes': duration_minutes if duration_minutes is not None else '',
     }
 
