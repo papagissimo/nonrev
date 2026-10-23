@@ -453,15 +453,6 @@ def recent_observations(conn, limit=9):
     return list(reversed(result))
 
 
-def get_flight_day_flag(conn, carrier, dep_time, org, dest, flight_date):
-    row = conn.execute(
-        """SELECT flag FROM flightDayFlag
-           WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?""",
-        (carrier, dep_time, org, dest, flight_date),
-    ).fetchone()
-    return row[0] if row else ''
-
-
 def get_route_day_flag(conn, carrier, org, dest, flight_date):
     row = conn.execute(
         """SELECT flag FROM routeDayFlag
@@ -469,18 +460,6 @@ def get_route_day_flag(conn, carrier, org, dest, flight_date):
         (carrier, org, dest, flight_date),
     ).fetchone()
     return row[0] if row else ''
-
-
-def save_flight_day_flag(conn, carrier, dep_time, org, dest, flight_date, flag_text):
-    conn.execute(
-        """INSERT INTO flightDayFlag (carrier, depTime, org, dest, flightDate, flag)
-           VALUES (?,?,?,?,?,?)
-           ON CONFLICT(carrier, org, dest, depTime, flightDate)
-           DO UPDATE SET flag=excluded.flag""",
-        (carrier, dep_time, org, dest, flight_date, flag_text),
-    )
-    conn.commit()
-    return {'saved': True}
 
 
 def save_route_day_flag(conn, carrier, org, dest, flight_date, flag_text):
@@ -736,7 +715,6 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
             ),
             'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
-            'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
             'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
             'openFull': pools.own_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
             **pool_and_cadence(conn, trust, settings, c, prev_readings, last_chance_hours, now),
@@ -764,7 +742,6 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                     conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
                 ),
                 'coefficientsHint': resolved_coefficients_for_row(conn, c['org'], c['dest'], c['dow'], c['dep']),
-                'flag': get_flight_day_flag(conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate']),
                 'grade': grades.text_for(c['org'], c['dest'], c['dow'], c['dep']),
                 'openFull': pools.own_record(conn, c['org'], c['dest'], c['dow'], c['dep']),
                 'pool': trust.pool_record(conn, c['org'], c['dest'], c['dow'], c['dep']),

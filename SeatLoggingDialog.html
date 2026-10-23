@@ -98,11 +98,24 @@
     .t1glyph .golden { position: absolute; z-index: 1; top: 0.1em; width: 3px; height: 1.2em; border-radius: 2px; transform: translateX(-50%); }
     .t1glyph .num { position: absolute; z-index: 2; opacity: 1; top: 0; bottom: 0; display: flex; align-items: center; line-height: 1; font-size: 12px; transform: translateX(-50%); }
     td.col-flt { padding-right: 2px; }
-    td.col-flag { padding-left: 2px; }
-    .flagCell input { font-size: 15px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 3px; padding: 5px 7px; }
-    #routeFlagRow { margin: 4px 0 8px; }
-    #routeFlagRow input { font-size: 14px; width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; padding: 5px 8px; color: #555; }
-    #routeFlagRow input::placeholder { color: #aaa; }
+    #routeNoteBtn { cursor: pointer; margin-left: 8px; font-size: 15px; opacity: 0.3; }
+    #routeNoteBtn.hasNote { opacity: 1; }
+    #routeNoteOverlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000;
+    }
+    #routeNoteBox {
+      background: #fff; margin: 80px auto; max-width: 520px; padding: 14px 16px;
+      border-radius: 6px; box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    }
+    #routeNoteTitle { font-size: 15px; font-weight: bold; color: #444; margin-bottom: 8px; }
+    #routeNoteText {
+      width: 100%; height: 140px; box-sizing: border-box; font-family: inherit; font-size: 15px;
+      border: 1px solid #ccc; border-radius: 4px; padding: 6px 8px; resize: vertical;
+    }
+    #routeNoteButtons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+    #routeNoteButtons button { font-size: 14px; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+    #routeNoteSave { background: #1a73e8; color: white; border: none; }
+    #routeNoteCancel { background: #fff; color: #444; border: 1px solid #ccc; }
     .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
     #getNextBtn, #logBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 10px 18px; font-size: 16px; cursor: pointer; }
     #getNextBtn:disabled, #logBtn:disabled { background: #a9c6f2; }
@@ -238,10 +251,7 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub" onclick="confirmDate()"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="backAt">Back at <input type="time" id="backAtInput" onchange="setBackAt()"><span class="clearBackAt" title="Not away" onclick="clearBackAt()">&#10005;</span></span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" checked onchange="setColumnMode(this.value)">Glance</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
-    </div>
-    <div id="routeFlagRow">
-      <input type="text" id="routeFlagInput" placeholder="Flag this route today (e.g. wide open all day, looks off)…">
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub" onclick="confirmDate()"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="routeNoteBtn" title="Note on this route today" onclick="openRouteNote()">&#128466;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="backAt">Back at <input type="time" id="backAtInput" onchange="setBackAt()"><span class="clearBackAt" title="Not away" onclick="clearBackAt()">&#10005;</span></span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" checked onchange="setColumnMode(this.value)">Glance</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
     </div>
     <div class="wait" id="wait" style="display:none;"></div>
     <table id="flightTable" style="display:none;">
@@ -260,6 +270,17 @@
     <div id="scheduleModalBox">
       <button id="scheduleModalClose" onclick="closeScheduleModal()" title="close">&#10006;</button>
       <iframe id="scheduleModalFrame" src=""></iframe>
+    </div>
+  </div>
+
+  <div id="routeNoteOverlay">
+    <div id="routeNoteBox">
+      <div id="routeNoteTitle"></div>
+      <textarea id="routeNoteText" placeholder="Equipment swap, cancellation, anything the readings can't show..."></textarea>
+      <div id="routeNoteButtons">
+        <button id="routeNoteCancel" onclick="closeRouteNote()">Cancel</button>
+        <button id="routeNoteSave" onclick="saveRouteNote()">Save</button>
+      </div>
     </div>
   </div>
 
@@ -366,7 +387,7 @@
       var dateEl = document.getElementById('dateSub');
       dateEl.classList.toggle('dateLocked', locked);
       dateEl.title = locked ? 'New date - click once you have Delta on this date' : '';
-      ['flightTable', 'routeFlagRow'].forEach(function (id) {
+      ['flightTable', 'routeNoteBtn'].forEach(function (id) {
         var el = document.getElementById(id);
         el.inert = locked;
         el.classList.toggle('lockedForDate', locked);
@@ -497,7 +518,7 @@
       // shrank, to give other columns more room.
       cols.push({ key: 'hrs', label: 'Hrs', width: 90 });
       cols.push({ key: 'gap', label: '', width: 0 });
-      cols.push({ key: 'prev', label: 'Prev', width: 136 });
+      cols.push({ key: 'prev', label: 'Prev', width: 176 });
       cols.push({ key: 'soloY', label: 'Y', width: 34, group: 'select' });
       cols.push({ key: 'soloCplus', label: 'C+', width: 34, group: 'select' });
       cols.push({ key: 'soloOnePS', label: '1/PS', width: 34, group: 'select' });
@@ -517,10 +538,8 @@
       // had room for doesn't wrap, it just overflows the table). Narrow
       // on purpose - a short number, nothing else lives here.
       cols.push({ key: 't1', label: 'T\u20111', width: 180 });
-      cols.push({ key: 'openFull', label: 'O/F', width: 150 });
-      cols.push({ key: 'flt', label: 'Flight', width: 68 });
-      cols.push({ key: 'gap2', label: '', width: 10 });
-      cols.push({ key: 'flag', label: 'Flag', width: 115 });
+      cols.push({ key: 'openFull', label: 'O/F', width: 72 });
+      cols.push({ key: 'flt', label: 'Flight', width: 56 });
       return cols;
     }
 
@@ -647,6 +666,7 @@
       lines.push('SeatLoggingDialog snapshot - ' + batch.routeOrg + ' \u2192 ' + batch.routeDest +
         ', ' + batch.dowDisplay + ' ' + batch.dateDisplay + ' (' + batch.flightDate + ')');
       lines.push('generated ' + new Date().toString());
+      lines.push('route note: ' + blankDash(batch.routeFlag));
       lines.push('');
 
       batch.rows.forEach(function (row, i) {
@@ -655,7 +675,6 @@
           '  aircraftConfig=' + row.aircraftConfig + '  hasD1=' + row.hasD1 +
           '  departed=' + row.departed + ' ===');
         lines.push('  ' + (row.nextReading ? row.nextReading.label + ': ' + formatNextReadingWhen(row.nextReading) : 'next rdg: -'));
-        lines.push('  flag: ' + blankDash(row.flag));
         lines.push('  grade: ' + blankDash(row.grade));
         lines.push('  openFull: open ' + (row.openFull ? row.openFull.openDisplay : '?') +
           ', full ' + (row.openFull ? row.openFull.fullDisplay : '?'));
@@ -1328,7 +1347,7 @@
 
       document.getElementById('routeTitle').textContent = batch.routeOrg + ' \u2192 ' + batch.routeDest;
       document.getElementById('summary').textContent = batch.summaryText || '';
-      document.getElementById('routeFlagInput').value = batch.routeFlag || '';
+      showRouteNoteState();
       waitEl.style.display = 'none';
       table.style.display = '';
       btnRow.style.display = 'flex';
@@ -1411,12 +1430,9 @@
             (row.nextReading ? '<div class="nextReading">' + escapeHtml(row.nextReading.label) + '<br>' +
               escapeHtml(formatNextReadingWhen(row.nextReading)) + '</div>' : ''),
           gap: '',
-          gap2: '',
           openFull: formatOpenFullCell(row),
           flt:
-            '<span class="flt" data-i="' + i + '">' + row.flightNumber + '</span>',
-          flag: '<span class="flagCell"><input type="text" data-i="' + i + '" id="flagInput' + i +
-            '" value="' + (row.flag || '').replace(/"/g, '&quot;') + '" placeholder="\u2014"></span>'
+            '<span class="flt" data-i="' + i + '">' + row.flightNumber + '</span>'
         };
 
         tr.innerHTML = columns.map(function (c) {
@@ -1438,13 +1454,6 @@
           panelTr.style.display = 'none';
           panelTr.innerHTML = '<td colspan="' + visibleColumnCount(columns) + '">' + buildSeatMapPanel(row, i) + '</td>';
           tbody.appendChild(panelTr);
-        }
-
-        var flagInput = tr.querySelector('#flagInput' + i);
-        if (flagInput) {
-          flagInput.addEventListener('blur', function () {
-            saveFlightDayFlag(row, flagInput.value);
-          });
         }
       });
 
@@ -1726,36 +1735,47 @@
         });
     }
 
-    function saveFlightDayFlag(row, flagText) {
-      fetch('/api/saveFlightDayFlag', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          carrier: row.car, depTime: row.dep, org: row.org, dest: row.dest,
-          flightDate: batch.flightDate, flag: flagText
-        })
-      }).then(function (res) { return res.json(); })
-        .then(function (result) { if (result.error) console.error(result.error); })
-        .catch(function (err) { console.error(err); });
+    function showRouteNoteState() {
+      var btn = document.getElementById('routeNoteBtn');
+      var note = (batch && batch.routeFlag) || '';
+      btn.classList.toggle('hasNote', note.trim() !== '');
+      btn.title = note.trim() !== '' ? note : 'Note on this route today';
     }
 
-    function saveRouteDayFlag(flagText) {
+    function openRouteNote() {
       if (!batch || !batch.routeOrg) return;
+      document.getElementById('routeNoteTitle').textContent =
+        batch.routeOrg + ' \u2192 ' + batch.routeDest + ', ' + batch.dowDisplay + ' ' + batch.dateDisplay;
+      document.getElementById('routeNoteText').value = batch.routeFlag || '';
+      document.getElementById('routeNoteOverlay').style.display = 'block';
+      document.getElementById('routeNoteText').focus();
+    }
+
+    function closeRouteNote() {
+      document.getElementById('routeNoteOverlay').style.display = 'none';
+    }
+
+    function saveRouteNote() {
+      var noteText = document.getElementById('routeNoteText').value;
+      var saveBtn = document.getElementById('routeNoteSave');
+      saveBtn.disabled = true;
       fetch('/api/saveRouteDayFlag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           carrier: batch.carrier, org: batch.routeOrg, dest: batch.routeDest,
-          flightDate: batch.flightDate, flag: flagText
+          flightDate: batch.flightDate, flag: noteText
         })
       }).then(function (res) { return res.json(); })
-        .then(function (result) { if (result.error) console.error(result.error); })
-        .catch(function (err) { console.error(err); });
+        .then(function (result) {
+          if (result.error) throw new Error(result.error);
+          batch.routeFlag = noteText;
+          showRouteNoteState();
+          closeRouteNote();
+        })
+        .catch(function (err) { alert('Note not saved: ' + err.message); })
+        .finally(function () { saveBtn.disabled = false; });
     }
-
-    document.getElementById('routeFlagInput').addEventListener('blur', function (e) {
-      saveRouteDayFlag(e.target.value);
-    });
 
     loadBatch();
   </script>
