@@ -44,7 +44,7 @@ SPLIT_BAR = 0.01
 SHUFFLES = 9999
 MIN_POOL_FLIGHTS = 30
 CURVE_HOURS = [48, 24, 12, 8, 6, 4, 3, 2]
-TOTAL_CABINS = ('y', 'cPlus', 'firstOrPS')
+CORE_CABINS = ('y', 'cPlus', 'firstOrPS')
 T1_RANGE_QUANTILES = (0.1, 0.9)
 T1_WIDE_RANGE_QUANTILES = (0.05, 0.95)
 T1_RANGE_LEVEL_SPREAD = 3.0
@@ -58,9 +58,9 @@ ATTRIBUTES = {
 }
 
 
-def reading_total(floor_model, values):
+def reading_total(floor_model, values, cabins):
     total = 0.0
-    for cabin in TOTAL_CABINS:
+    for cabin in cabins:
         seats, _ = cabin_seats(floor_model, cabin, values[cabin])
         if seats is None:
             return None
@@ -115,8 +115,11 @@ def settled_flights(conn, golden_ticket_hours, yardstick):
     dep_time_to_service, service_info = build_service_map(rows)
     readings_by_flight = defaultdict(list)
     for flight_rows in flight_groups(rows):
-        for row, values in zip(flight_rows, reading_values(flight_rows)):
-            total = reading_total(floor_model, values)
+        flight_values = reading_values(flight_rows)
+        has_d1 = any(cabin_seats(floor_model, 'd1', values['d1'])[0] is not None for values in flight_values)
+        cabins = CORE_CABINS + ('d1',) if has_d1 else CORE_CABINS
+        for row, values in zip(flight_rows, flight_values):
+            total = reading_total(floor_model, values, cabins)
             service_id = dep_time_to_service.get((row['org'], row['dest'], row['dayOfWeek'], row['depTime']))
             if total is None or service_id is None:
                 continue

@@ -75,6 +75,7 @@
     #flightTable:not(.mode-floor) .grp-floor, #flightTable:not(.mode-insider) .grp-insider { display: none; }
     td.col-floorY { border-left: 2px solid #ddd; }
     input.seat.floor { border-color: #a8c7fa; }
+    .totalUncertainty { font-size: 15px; font-weight: bold; color: #1a73e8; margin-top: 2px; }
     .searchedRow { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; font-size: 14px; color: #555; }
     .searchTick {
       width: 34px; height: 30px; font-size: 16px; border: 1px solid #a8c7fa; border-radius: 4px;
@@ -1441,6 +1442,7 @@
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           t1: '<div class="prev">' + formatT1Column(row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatTimeUntil(row) + '</span>' +
+            '<div class="totalUncertainty" data-i="' + i + '"></div>' +
             (row.nextReading ? '<div class="nextReading">' + escapeHtml(row.nextReading.label) + '<br>' +
               escapeHtml(formatNextReadingWhen(row.nextReading)) + '</div>' : ''),
           gap: '',
@@ -1488,8 +1490,7 @@
 
     function floorInputHtml(field, i, seatDisabled) {
       return '<div class="seatCellWrap"><input class="seat floor" data-i="' + i + '" data-field="' + field +
-        '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>' +
-        '<div class="estimateLine" data-spread-i="' + i + '" data-spread-field="' + field + '"></div></div>';
+        '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '></div>';
     }
 
     // The searched numbers bound every floor: a cabin's ceiling is the next
@@ -1523,43 +1524,67 @@
       return dist.seats.reduce(function (sum, s, k) { return sum + s * dist.probs[k]; }, 0);
     }
 
-    var LIKELY_RANGE_SHARE = 0.8;
+    var TOTAL_SHARE = 0.8;
 
-    // The narrowest run of seat counts holding LIKELY_RANGE_SHARE of the
-    // probability; between equally narrow runs, the one holding more.
-    function likelyRange(dist) {
-      var best = null;
-      for (var start = 0; start < dist.seats.length; start++) {
-        var mass = 0;
-        for (var end = start; end < dist.seats.length; end++) {
-          mass += dist.probs[end];
-          if (mass >= LIKELY_RANGE_SHARE - 1e-9) {
-            var width = end - start;
-            if (!best || width < best.width || (width === best.width && mass > best.mass)) {
-              best = { lo: dist.seats[start], hi: dist.seats[end], width: width, mass: mass };
-            }
-            break;
-          }
-        }
+    // How far the summed can-buy total's estimate could be off if he stops
+    // now: the smallest distance from the estimate that TOTAL_SHARE of the
+    // total's probability lies within, the cabins taken as independent.
+    // Null while any cabin of the total has neither a floor nor an actual.
+    function totalUncertainty(i) {
+      var sum = { seats: [0], probs: [1] };
+      var fields = batch.rows[i].hasD1 ? ['y', 'cplus', 'onePS', 'd1'] : ['y', 'cplus', 'onePS'];
+      for (var c = 0; c < fields.length; c++) {
+        var field = fields[c];
+        var floorField = Object.keys(floorActualField()).filter(function (f) {
+          return floorActualField()[f] === field;
+        })[0];
+        var typed = fieldValue(field, i);
+        var dist = typed !== '' ? { seats: [parseInt(typed, 10)], probs: [1] } : floorDistribution(floorField, i);
+        if (!dist) return null;
+        sum = convolve(sum, dist);
       }
-      return best.lo === best.hi ? '\u2248' + best.lo : best.lo + '\u2013' + best.hi;
+      var mean = distributionMean(sum);
+      var byDistance = sum.seats.map(function (s, k) { return { off: Math.abs(s - mean), p: sum.probs[k] }; })
+        .sort(function (a, b) { return a.off - b.off; });
+      var mass = 0;
+      for (var k = 0; k < byDistance.length; k++) {
+        mass += byDistance[k].p;
+        if (mass >= TOTAL_SHARE - 1e-9) return byDistance[k].off;
+      }
+      return byDistance[byDistance.length - 1].off;
+    }
+
+    function convolve(a, b) {
+      var byTotal = {};
+      a.seats.forEach(function (sa, ka) {
+        b.seats.forEach(function (sb, kb) {
+          byTotal[sa + sb] = (byTotal[sa + sb] || 0) + a.probs[ka] * b.probs[kb];
+        });
+      });
+      var seats = Object.keys(byTotal).map(Number).sort(function (x, y) { return x - y; });
+      return { seats: seats, probs: seats.map(function (s) { return byTotal[s]; }) };
+    }
+
+    function showTotalUncertainty(i) {
+      var el = document.querySelector('.totalUncertainty[data-i="' + i + '"]');
+      if (!el) return;
+      var off = totalUncertainty(i);
+      el.textContent = off === null ? '' : '\u00b1' + off.toFixed(1);
     }
 
     // Closed floor: Actual fills and locks with the exact count. Open
-    // floor: Actual's placeholder is the estimate, one decimal, and under
-    // the floor sits the likely range.
+    // floor: Actual's placeholder is the estimate, one decimal.
     function syncActualFromFloor(floorField, i) {
       var actualField = floorActualField()[floorField];
       var actual = inputFor(actualField, i);
       if (!actual) return;
       var dist = floorDistribution(floorField, i);
-      var spread = document.querySelector('[data-spread-i="' + i + '"][data-spread-field="' + floorField + '"]');
-      if (spread) spread.textContent = dist && dist.seats.length > 1 ? likelyRange(dist) : '';
       if (dist && dist.seats.length === 1) {
         actual.value = String(dist.seats[0]);
         markAuto(actual);
         actual.disabled = true;
         actual.placeholder = '-';
+        showTotalUncertainty(i);
         return;
       }
       if (isAutoFilled(actualField, i)) {
@@ -1568,6 +1593,7 @@
         actual.disabled = !!batch.rows[i].departed;
       }
       actual.placeholder = dist ? distributionMean(dist).toFixed(1) : '-';
+      showTotalUncertainty(i);
     }
 
     function syncAllFloors() {
@@ -1615,6 +1641,7 @@
         if (row.departed) continue;
         if ((row.previousReadings || []).some(function (rd) { return rd.goldenTicket; })) continue;
         var open = floorFields().filter(function (f) { return row.hasD1 || f !== 'floorD1'; })
+          .filter(function (f) { return isAutoFilled(floorActualField()[f], i) || fieldValue(floorActualField()[f], i) === ''; })
           .map(function (f) { return floorDistribution(f, i); })
           .filter(function (dist) { return dist && dist.seats.length > 1; });
         if (open.length === 0) continue;
@@ -1671,6 +1698,10 @@
       if (!isCanBuy && !isSeatMap) return;
       var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, isCanBuy ? 1 : 3);
       if (cleaned !== el.value) el.value = cleaned;
+      if (isCanBuy && !el.classList.contains('floor')) {
+        showTotalUncertainty(parseInt(el.getAttribute('data-i'), 10));
+        updateSearchHint();
+      }
       if (el.classList.contains('floor')) {
         var implied = { '0': 1, '1': 1, '9': 9 }[el.value];
         if (implied !== undefined && searchedNumbers.indexOf(implied) === -1) {

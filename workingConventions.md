@@ -100,6 +100,9 @@ TODO.md; dated analysis results belong in findings.md.
 
 - NULL (didn't observe) and 0 (observed, none) stay distinct everywhere,
   in every observation field.
+- D1 is a cabin like any other: no total, pool or analysis leaves it
+  out. A plane without D1 has NULL there, which counts as zero in a sum
+  and is skipped where only observed cabins matter.
 - Everything gathered in one sitting is one observation, not split
   across a type tag. No organizational layers that serve no purpose.
 - Flight number never identifies a flight across dates. Identity is
@@ -128,12 +131,13 @@ TODO.md; dated analysis results belong in findings.md.
 - Floors: he ticks each number he searches in the Searched row (1-9, one
   per route) and types each cabin's floor. Actual fills with the exact
   count, locked, once the range closes; otherwise it shows the estimate to
-  one decimal, with the narrowest range holding 80% of the probability
-  under the floor. Un-ticking reopens ranges; a floor of 0 or 1 ticks 1, a
-  floor of 9 ticks 9. Submitting saves the ticks on every row logged and
-  clears them. The highlighted
-  tick is the search to do next: 9, then 1, then whichever most narrows
-  the next departing flight that has no golden ticket and an open cabin.
+  one decimal. Under each flight's hours, a ± says how far the estimated
+  total, summed over every cabin the plane has, could be off if he stops
+  now: 80% of the total's probability lies within it. Un-ticking reopens
+  ranges; a floor of 0 or 1 ticks 1, a floor of 9 ticks 9. Submitting saves the ticks on every row
+  logged and clears them. The highlighted tick is the search to do next:
+  9, then 1, then whichever most narrows the next departing flight that
+  has no golden ticket and an open cabin.
 - Cadence practice: the leadoff (first reading of a flight) is a full
   count; readings in between are usually floor readings; the golden
   ticket, or the last reading he knows he'll get, is a full count. Seat

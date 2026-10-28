@@ -33,7 +33,8 @@ TRUTH_WINDOW_HOURS = 1.55
 TRUST_TOLERANCE = 1 / 50
 TRUST_BAR = 0.01
 GOLD_MAX_FULL_RATE = 0.05
-TRUST_CABINS = ['y', 'cPlus', 'firstOrPS']
+CORE_CABINS = ['y', 'cPlus', 'firstOrPS']
+TRUST_CABINS = CORE_CABINS + ['d1']
 HISTORY_CABIN_COLUMNS = {'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': 'd1'}
 HISTORY_EDGE_TOLERANCE_HOURS = 1.0
 WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -202,10 +203,10 @@ def latest_known(readings, hours):
 def open_readings_by_leaf(conn, tree, thresholds):
     rows, _dropped = load_observations(conn)
     dep_time_to_service, service_info = build_service_map(rows)
-    instances_by_cabin = [gather_instances(rows, dep_time_to_service, cabin) for cabin in TRUST_CABINS]
+    instances_by_cabin = {cabin: gather_instances(rows, dep_time_to_service, cabin) for cabin in TRUST_CABINS}
     finders = {}
     readings_by_leaf = defaultdict(list)
-    for key in set.intersection(*(set(instances) for instances in instances_by_cabin)):
+    for key in set.intersection(*(set(instances_by_cabin[cabin]) for cabin in CORE_CABINS)):
         service_id, _flight_date = key
         org, dest, day, rep_minutes, _size = service_info[service_id]
         if (org, dest, day) not in finders:
@@ -216,7 +217,7 @@ def open_readings_by_leaf(conn, tree, thresholds):
         leaf = classify(tree, flight)
         if leaf is None:
             continue
-        per_cabin = [instances[key]['readings'] for instances in instances_by_cabin]
+        per_cabin = [instances[key]['readings'] for instances in instances_by_cabin.values() if key in instances]
         truths = [nearest_reading(readings, 1.0) for readings in per_cabin]
         if any(truth is None or truth[0] > TRUTH_WINDOW_HOURS for truth in truths):
             continue
