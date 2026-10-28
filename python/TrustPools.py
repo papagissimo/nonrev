@@ -34,7 +34,7 @@ from lifelines import NelsonAalenFitter
 
 from DeclineCurveFit import build_service_map
 from DriftCurve import drift_points
-from FloorEstimates import load_floor_estimates, seats_from_glance
+from FloorEstimates import FLOOR_COLUMN_FOR, cabin_seats, flight_groups, load_floor_model, reading_values
 from PoolingSettingsDialog import excluded_date_where_clause
 from T1GridReport import format_minutes, scheduled_service_finder
 from observation_filters import not_seat_map_only_where_clause
@@ -44,7 +44,7 @@ SPLIT_BAR = 0.01
 SHUFFLES = 9999
 MIN_POOL_FLIGHTS = 30
 CURVE_HOURS = [48, 24, 12, 8, 6, 4, 3, 2]
-GLANCE_COLUMNS = {'y': 'cheapY', 'cPlus': 'cheapCPlus', 'firstOrPS': 'cheapFirstOrPS'}
+TOTAL_CABINS = ('y', 'cPlus', 'firstOrPS')
 T1_RANGE_QUANTILES = (0.1, 0.9)
 T1_WIDE_RANGE_QUANTILES = (0.05, 0.95)
 T1_RANGE_LEVEL_SPREAD = 3.0
@@ -58,31 +58,20 @@ ATTRIBUTES = {
 }
 
 
-def seat_value(value):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def reading_total(row, floor_estimates):
+def reading_total(floor_model, values):
     total = 0.0
-    for actual_col, glance_col in GLANCE_COLUMNS.items():
-        actual = seat_value(row[actual_col])
-        glance = seat_value(row[glance_col])
-        if actual is not None:
-            total += actual
-        elif glance is not None:
-            total += seats_from_glance(floor_estimates, actual_col, int(glance))
-        else:
+    for cabin in TOTAL_CABINS:
+        seats, _ = cabin_seats(floor_model, cabin, values[cabin])
+        if seats is None:
             return None
+        total += seats
     return total
 
 
 def load_rows(conn):
     cursor = conn.execute(
-        f"""SELECT org, dest, flightDate, depTime, hoursBeforeDep,
-                   y, cPlus, firstOrPS, cheapY, cheapCPlus, cheapFirstOrPS
+        f"""SELECT carrier, org, dest, flightDate, depTime, checkTimestamp, hoursBeforeDep, searched,
+                   {', '.join(FLOOR_COLUMN_FOR)}, {', '.join(FLOOR_COLUMN_FOR.values())}
             FROM observations
             WHERE depTime IS NOT NULL AND hoursBeforeDep IS NOT NULL
               AND {excluded_date_where_clause()} AND {not_seat_map_only_where_clause()}"""
@@ -122,15 +111,16 @@ def settling(readings, golden_ticket_hours, yardstick):
 
 def settled_flights(conn, golden_ticket_hours, yardstick):
     rows = load_rows(conn)
-    floor_estimates = load_floor_estimates(conn)
+    floor_model = load_floor_model(conn)
     dep_time_to_service, service_info = build_service_map(rows)
     readings_by_flight = defaultdict(list)
-    for row in rows:
-        total = reading_total(row, floor_estimates)
-        service_id = dep_time_to_service.get((row['org'], row['dest'], row['dayOfWeek'], row['depTime']))
-        if total is None or service_id is None:
-            continue
-        readings_by_flight[(service_id, row['flightDate'])].append((float(row['hoursBeforeDep']), total))
+    for flight_rows in flight_groups(rows):
+        for row, values in zip(flight_rows, reading_values(flight_rows)):
+            total = reading_total(floor_model, values)
+            service_id = dep_time_to_service.get((row['org'], row['dest'], row['dayOfWeek'], row['depTime']))
+            if total is None or service_id is None:
+                continue
+            readings_by_flight[(service_id, row['flightDate'])].append((float(row['hoursBeforeDep']), total))
 
     finders = {}
     flights = []

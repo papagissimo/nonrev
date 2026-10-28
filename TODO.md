@@ -231,10 +231,6 @@ to watch:
   selectable coach seats (soloY, already logged) tells which: near 9 is
   barely open, dozens is wide open. Judge coach on its own. Open: the
   threshold, whether it scales with aircraft size, and where it shows.
-- **Sharper glance-floor estimate.** He has ideas beyond the per-cabin
-  mean (per service, a plus/minus band). The estimate feeds the dialog's
-  Prev and T-1 columns and every glance reading in the trust pools'
-  settling, so a better one sharpens the pools too.
 
 ## Someday / not started, low priority
 

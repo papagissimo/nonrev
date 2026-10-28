@@ -164,8 +164,9 @@ net-coverage win, on this snapshot.
 - Slope is seats/hour everywhere, never minutes/seat.
 - Slope accuracy matters most. C1 matters little: it only counts before a
   flight has any real reading.
-- The curve fit never reads glance (cheap*) columns. Glance floors feed
-  only the logging dialog's Prev and T-1 columns, through FloorEstimates.py.
+- The curve fit never reads the floor* columns. Floor readings feed the
+  logging dialog's Prev and T-1 columns and the trust pools' settling,
+  through FloorEstimates.py.
 
 ## Open questions / backlog
 

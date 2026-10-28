@@ -72,9 +72,16 @@
     .prev { font-size: 15px; font-weight: bold; color: #555; line-height: 1.4; }
     .prev .row { white-space: nowrap; min-height: 1.4em; }
     #flightTable:not(.mode-select) .grp-select,
-    #flightTable:not(.mode-glance) .grp-glance, #flightTable:not(.mode-insider) .grp-insider { display: none; }
-    td.col-glanceY { border-left: 2px solid #ddd; }
-    input.seat.glance { border-color: #a8c7fa; }
+    #flightTable:not(.mode-floor) .grp-floor, #flightTable:not(.mode-insider) .grp-insider { display: none; }
+    td.col-floorY { border-left: 2px solid #ddd; }
+    input.seat.floor { border-color: #a8c7fa; }
+    .searchedRow { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; font-size: 14px; color: #555; }
+    .searchTick {
+      width: 34px; height: 30px; font-size: 16px; border: 1px solid #a8c7fa; border-radius: 4px;
+      background: #fff; color: #333; cursor: pointer; padding: 0;
+    }
+    .searchTick.on { background: #1a73e8; border-color: #1a73e8; color: #fff; font-weight: bold; }
+    .searchTick.hint { box-shadow: 0 0 0 3px #f9ab00; border-color: #f9ab00; }
     input.seat.auto { color: #999; background: #f2f2f2; }
     .modeRadios { margin-left: 12px; font-size: 13px; color: #666; }
     .modeRadios label { margin-right: 8px; cursor: pointer; white-space: nowrap; }
@@ -251,9 +258,10 @@
       <span id="settingsStatus" style="margin-left:8px; color:#666;"></span>
     </div>
     <div class="subhead">
-      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub" onclick="confirmDate()"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="routeNoteBtn" title="Note on this route today" onclick="openRouteNote()">&#128466;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="backAt">Back at <input type="time" id="backAtInput" onchange="setBackAt()"><span class="clearBackAt" title="Not away" onclick="clearBackAt()">&#10005;</span></span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="glance" checked onchange="setColumnMode(this.value)">Glance</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
+      <span class="routeTitle" id="routeTitle"></span><span class="dateSub" id="dateSub" onclick="confirmDate()"></span><span class="summary" id="summary"></span><span id="showDepartedToggle" class="eyeToggle" title="Show flights that already left today" onclick="toggleShowDeparted()">&#128065;</span><span class="pencil routePencil" title="edit schedule" onclick="openScheduleModal()">&#9998;</span><span id="routeNoteBtn" title="Note on this route today" onclick="openRouteNote()">&#128466;</span><span id="copySnapshotBtn" class="pencil" title="Copy full dialog data as plain text - route, every row's readings, hints, step changes, current unsaved input, and resolved coefficients" onclick="copyDialogSnapshot()">&#128203;</span><span class="backAt">Back at <input type="time" id="backAtInput" onchange="setBackAt()"><span class="clearBackAt" title="Not away" onclick="clearBackAt()">&#10005;</span></span><span class="modeRadios"><label><input type="radio" name="columnMode" value="select" onchange="setColumnMode(this.value)">Seat map</label><label><input type="radio" name="columnMode" value="floor" checked onchange="setColumnMode(this.value)">Floors</label><label><input type="radio" name="columnMode" value="insider" onchange="setColumnMode(this.value)">Insider</label></span>
     </div>
     <div class="wait" id="wait" style="display:none;"></div>
+    <div class="searchedRow" id="searchedRow" style="display:none;">Searched</div>
     <table id="flightTable" style="display:none;">
       <colgroup id="colgroup"></colgroup>
       <thead><tr id="groupHeaderRow"></tr><tr id="headerRow"></tr></thead>
@@ -287,7 +295,8 @@
   <script>
     var batch = null;
     var showDeparted = false;
-    var columnMode = 'glance';
+    var columnMode = 'floor';
+    var searchedNumbers = [];
     var currentColumns = [];
     var CABIN_SIZE_KEYS = { Y: 'main', CPlus: 'comfortPlus', FirstOrPS: 'first', D1: 'd1' };
     var CABIN_LABELS = { Y: 'Y', CPlus: 'C+', FirstOrPS: '1/PS', D1: 'D1' };
@@ -295,9 +304,9 @@
 
     function canBuyFields() { return (batch && batch.canBuyFields) || []; }
     function seatMapFields() { return (batch && batch.seatMapFields) || []; }
-    function glanceActualField() { return (batch && batch.glanceActualField) || {}; }
-    function glanceFields() { return Object.keys(glanceActualField()); }
-    function dataFields() { return canBuyFields().concat(glanceFields(), seatMapFields()); }
+    function floorActualField() { return (batch && batch.floorActualField) || {}; }
+    function floorFields() { return Object.keys(floorActualField()); }
+    function dataFields() { return canBuyFields().concat(floorFields(), seatMapFields()); }
     function insiderFields() { return (batch && batch.insiderFields) || []; }
     function insiderKeys() { return insiderFields().concat(['verdict', 'checkTime']); }
     function insiderEl(key, i) {
@@ -348,7 +357,7 @@
         dep: row.dep, aircraftConfig: row.aircraftConfig, flightNumber: row.flightNumber,
         hoursUntilDep: row.hoursUntilDep, depDisplay: row.depDisplay
       };
-      canBuyFields().concat(glanceFields()).forEach(function (f) { entry[f] = fieldValue(f, i); });
+      canBuyFields().concat(floorFields()).forEach(function (f) { entry[f] = fieldValue(f, i); });
       var typedSeatMapValue = seatMapFields().some(function (f) {
         return fieldValue(f, i) !== '' && !isAutoFilled(f, i);
       });
@@ -387,7 +396,7 @@
       var dateEl = document.getElementById('dateSub');
       dateEl.classList.toggle('dateLocked', locked);
       dateEl.title = locked ? 'New date - click once you have Delta on this date' : '';
-      ['flightTable', 'routeNoteBtn'].forEach(function (id) {
+      ['flightTable', 'searchedRow', 'routeNoteBtn'].forEach(function (id) {
         var el = document.getElementById(id);
         el.inert = locked;
         el.classList.toggle('lockedForDate', locked);
@@ -503,10 +512,10 @@
       var cols = [
         { key: 'dep', label: 'Dep', width: 92 }
       ];
-      cols.push({ key: 'glanceY', label: 'Y', width: 48, group: 'glance' });
-      cols.push({ key: 'glanceCplus', label: 'C+', width: 48, group: 'glance' });
-      cols.push({ key: 'glanceOnePS', label: '1/PS', width: 48, group: 'glance' });
-      if (anyD1) cols.push({ key: 'glanceD1', label: 'D1', width: 48, group: 'glance' });
+      cols.push({ key: 'floorY', label: 'Y', width: 48, group: 'floor' });
+      cols.push({ key: 'floorCplus', label: 'C+', width: 48, group: 'floor' });
+      cols.push({ key: 'floorOnePS', label: '1/PS', width: 48, group: 'floor' });
+      if (anyD1) cols.push({ key: 'floorD1', label: 'D1', width: 48, group: 'floor' });
       cols.push({ key: 'y', label: 'Y', width: 48 });
       cols.push({ key: 'cplus', label: 'C+', width: 48 });
       cols.push({ key: 'onePS', label: '1/PS', width: 48 });
@@ -667,6 +676,7 @@
         ', ' + batch.dowDisplay + ' ' + batch.dateDisplay + ' (' + batch.flightDate + ')');
       lines.push('generated ' + new Date().toString());
       lines.push('route note: ' + blankDash(batch.routeFlag));
+      lines.push('searched (unsaved): ' + (searchedNumbers.length ? searchedNumbers.join(',') : '-'));
       lines.push('');
 
       batch.rows.forEach(function (row, i) {
@@ -687,8 +697,8 @@
         var cur = {};
         cabins.forEach(function (f) { cur[f] = fieldValue(f, i); });
         lines.push('  current input (unsaved): ' + cabinTerms(cur, blankDash));
-        lines.push('  current glance input (unsaved): ' + glanceFields().filter(function (f) {
-          return row.hasD1 || f !== 'glanceD1';
+        lines.push('  current floor input (unsaved): ' + floorFields().filter(function (f) {
+          return row.hasD1 || f !== 'floorD1';
         }).map(function (f) {
           return f + '=' + blankDash(fieldValue(f, i));
         }).join(' '));
@@ -714,7 +724,7 @@
         }
         readings.forEach(function (rd) {
           var steps = rd.steps || {};
-          var estimated = (rd.estimated || []).length ? '  (glance floor estimate: ' + rd.estimated.join(' ') + ')' : '';
+          var estimated = (rd.estimated || []).length ? '  (floor estimate: ' + rd.estimated.join(' ') + ')' : '';
           var solo = rd.solo || {};
           lines.push('    hrs=' + rd.hrs.toFixed(2) +
             '  ' + cabinTerms(rd, blankDash) +
@@ -1234,8 +1244,9 @@
           if (result.error) throw new Error(result.error);
           document.getElementById('startState').style.display = 'none';
           document.getElementById('batchView').style.display = 'block';
-          renderBatch(result);
+          renderBatch(result, !!preserveMap);
           if (preserveMap) restoreUnsavedSeatValues(preserveMap);
+          updateSearchHint();
         })
         .catch(function (err) {
           btn.disabled = false;
@@ -1298,7 +1309,7 @@
           el.value = saved.vals[f];
           if (saved.autoFields.indexOf(f) !== -1) markAuto(el); else clearAuto(el);
         });
-        glanceFields().forEach(function (f) { syncActualFromGlance(f, i); });
+        floorFields().forEach(function (f) { syncActualFromFloor(f, i); });
         refreshSeatMapLink(i);
         if (saved.insiderOpen) insiderPanelFor(i).style.display = '';
         insiderKeys().forEach(function (k) {
@@ -1309,8 +1320,9 @@
       });
     }
 
-    function renderBatch(result) {
+    function renderBatch(result, keepSearched) {
       batch = result;
+      if (!keepSearched) searchedNumbers = [];
       if (batch.settings) populateSettingsForm(batch.settings);
       if (batch.openFullSettings) populateOpenFullSettingsForm(batch.openFullSettings);
       if (batch.gradingSettings) populateGradingSettingsForm(batch.gradingSettings);
@@ -1342,6 +1354,7 @@
         waitEl.textContent = batch.waitMessage || 'Nothing left to check today.';
         table.style.display = 'none';
         btnRow.style.display = 'none';
+        document.getElementById('searchedRow').style.display = 'none';
         return;
       }
 
@@ -1351,6 +1364,7 @@
       waitEl.style.display = 'none';
       table.style.display = '';
       btnRow.style.display = 'flex';
+      renderSearchedRow();
 
       var anyD1 = batch.rows.some(function (r) { return r.hasD1; });
       var columns = buildColumns(anyD1);
@@ -1367,18 +1381,18 @@
         return '<th class="' + groupClass(c) + '"' + (c.title ? ' title="' + c.title + '"' : '') + '>' + c.label + '</th>';
       }).join('');
 
-      var glanceCount = anyD1 ? 4 : 3;
+      var floorCount = anyD1 ? 4 : 3;
       var actualCount = anyD1 ? 4 : 3;
       var midCount = 3; // hrs, gap, prev
       var selectCount = anyD1 ? 4 : 3;
       var blockedCount = 1;
       var insiderAvailCount = (anyD1 ? 4 : 3) + 1;
       var insiderListCount = 3;
-      var restCount = columns.length - 1 - glanceCount - actualCount - midCount - selectCount - blockedCount -
+      var restCount = columns.length - 1 - floorCount - actualCount - midCount - selectCount - blockedCount -
         insiderAvailCount - insiderListCount;
       document.getElementById('groupHeaderRow').innerHTML =
         '<th></th>' +
-        '<th class="groupHead grp-glance" colspan="' + glanceCount + '">Glance</th>' +
+        '<th class="groupHead grp-floor" colspan="' + floorCount + '">Floors</th>' +
         '<th class="groupHead" colspan="' + actualCount + '">Actual</th>' +
         '<th colspan="' + midCount + '"></th>' +
         '<th class="groupHead grp-select" colspan="' + selectCount + '">Solo select</th>' +
@@ -1403,10 +1417,10 @@
             (row.grade ? '<div class="gradeLine">' + escapeHtml(row.grade) + '</div>' : '') +
             '<div class="panelLinks"><a class="insiderLink" data-i="' + i + '">insider</a>' +
             (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>') + '</div>',
-          glanceY: glanceInputHtml('glanceY', i, seatDisabled),
-          glanceCplus: glanceInputHtml('glanceCplus', i, seatDisabled),
-          glanceOnePS: glanceInputHtml('glanceOnePS', i, seatDisabled),
-          glanceD1: row.hasD1 ? glanceInputHtml('glanceD1', i, seatDisabled) : '',
+          floorY: floorInputHtml('floorY', i, seatDisabled),
+          floorCplus: floorInputHtml('floorCplus', i, seatDisabled),
+          floorOnePS: floorInputHtml('floorOnePS', i, seatDisabled),
+          floorD1: row.hasD1 ? floorInputHtml('floorD1', i, seatDisabled) : '',
           y: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="y" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.y) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.y) + '</div>',
           cplus: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="cplus" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.cplus) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.cplus) + '</div>',
           onePS: '<div class="seatCellWrap"><input class="seat" data-i="' + i + '" data-field="onePS" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '><div class="estimateLine">' + formatHistoryRange(row.historyRange && row.historyRange.onePS) + '</div>' + formatCoefficientsHint(row.coefficientsHint && row.coefficientsHint.onePS) + '</div>',
@@ -1469,33 +1483,147 @@
       tbody.addEventListener('change', handleSeatMapChange);
       tbody.removeEventListener('focusin', selectSeatMapInputOnFocus);
       tbody.addEventListener('focusin', selectSeatMapInputOnFocus);
+      updateSearchHint();
     }
 
-    function glanceInputHtml(field, i, seatDisabled) {
-      return '<div class="seatCellWrap"><input class="seat glance" data-i="' + i + '" data-field="' + field +
+    function floorInputHtml(field, i, seatDisabled) {
+      return '<div class="seatCellWrap"><input class="seat floor" data-i="' + i + '" data-field="' + field +
         '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '></div>';
     }
 
-    // A glance of 9 or 0 is an exact count, so it fills and locks the
-    // matching Actual box; any other glance is only a floor and leaves
-    // Actual free for the binary search, with the floor's estimate as its
-    // placeholder.
-    function syncActualFromGlance(glanceField, i) {
-      var actualField = glanceActualField()[glanceField];
+    // The searched numbers bound every floor: a cabin's ceiling is the next
+    // searched number above its floor, less one, or 9 with none above
+    // (FloorEstimates.ceiling_for). Closed - floor 0 or 9, or meeting its
+    // ceiling - is exact.
+    function floorRange(floor) {
+      if (floor === 0 || floor === 9) return { lo: floor, hi: floor };
+      var above = searchedNumbers.filter(function (n) { return n > floor; });
+      return { lo: floor, hi: above.length ? Math.min.apply(null, above) - 1 : 9 };
+    }
+
+    // {seats: [...], probs: [...]} for one cabin's typed floor, from the
+    // server's table (FloorModel.page_table); null with no floor typed.
+    function floorDistribution(floorField, i) {
+      var typed = fieldValue(floorField, i);
+      if (typed === '') return null;
+      var range = floorRange(parseInt(typed, 10));
+      var seats = [];
+      for (var s = range.lo; s <= range.hi; s++) seats.push(s);
+      if (range.lo === range.hi) return { seats: seats, probs: [1] };
+      var actualField = floorActualField()[floorField];
+      var previous = (batch.rows[i].latestExact || {})[actualField];
+      var kind = searchedNumbers.indexOf(range.lo) !== -1 ? 'searched' : 'free';
+      var probs = batch.floorDistributions[actualField][range.lo][range.hi][kind][
+        previous === null || previous === undefined ? 'none' : previous];
+      return { seats: seats, probs: probs };
+    }
+
+    function distributionMean(dist) {
+      return dist.seats.reduce(function (sum, s, k) { return sum + s * dist.probs[k]; }, 0);
+    }
+
+    // Closed floor: Actual fills and locks with the exact count. Open
+    // floor: Actual's placeholder is the estimate, one decimal.
+    function syncActualFromFloor(floorField, i) {
+      var actualField = floorActualField()[floorField];
       var actual = inputFor(actualField, i);
       if (!actual) return;
-      var glance = fieldValue(glanceField, i);
-      var estimate = ((batch.glanceEstimates || {})[actualField] || {})[glance];
-      actual.placeholder = estimate === undefined ? '-' : Number(estimate).toFixed(1);
-      if (glance === '9' || glance === '0') {
-        actual.value = glance;
+      var dist = floorDistribution(floorField, i);
+      if (dist && dist.seats.length === 1) {
+        actual.value = String(dist.seats[0]);
         markAuto(actual);
         actual.disabled = true;
-      } else if (isAutoFilled(actualField, i)) {
+        actual.placeholder = '-';
+        return;
+      }
+      if (isAutoFilled(actualField, i)) {
         actual.value = '';
         clearAuto(actual);
         actual.disabled = !!batch.rows[i].departed;
       }
+      actual.placeholder = dist ? distributionMean(dist).toFixed(1) : '-';
+    }
+
+    function syncAllFloors() {
+      batch.rows.forEach(function (row, i) {
+        floorFields().forEach(function (f) { syncActualFromFloor(f, i); });
+      });
+    }
+
+    function renderSearchedRow() {
+      var el = document.getElementById('searchedRow');
+      var html = 'Searched';
+      for (var n = 1; n <= 9; n++) {
+        html += '<button type="button" class="searchTick' + (searchedNumbers.indexOf(n) !== -1 ? ' on' : '') +
+          '" data-n="' + n + '" onclick="toggleSearched(' + n + ')">' + n + '</button>';
+      }
+      el.innerHTML = html;
+      el.style.display = 'flex';
+    }
+
+    function setSearched(n, on) {
+      var has = searchedNumbers.indexOf(n) !== -1;
+      if (on && !has) searchedNumbers.push(n);
+      if (!on && has) searchedNumbers.splice(searchedNumbers.indexOf(n), 1);
+      searchedNumbers.sort(function (a, b) { return a - b; });
+      var tick = document.querySelector('.searchTick[data-n="' + n + '"]');
+      if (tick) tick.classList.toggle('on', on);
+    }
+
+    function toggleSearched(n) {
+      setSearched(n, searchedNumbers.indexOf(n) === -1);
+      syncAllFloors();
+      updateSearchHint();
+    }
+
+    // The number to search next: 9 to open, then 1, then whichever
+    // unsearched number most narrows the next departing flight that has no
+    // golden ticket yet and still has an open cabin - the split leaving the
+    // least expected variance summed over its open cabins, which is what
+    // narrows the summed can-buy total most.
+    function nextSearch() {
+      if (searchedNumbers.length === 0) return 9;
+      if (searchedNumbers.indexOf(1) === -1) return 1;
+      for (var i = 0; i < batch.rows.length; i++) {
+        var row = batch.rows[i];
+        if (row.departed) continue;
+        if ((row.previousReadings || []).some(function (rd) { return rd.goldenTicket; })) continue;
+        var open = floorFields().filter(function (f) { return row.hasD1 || f !== 'floorD1'; })
+          .map(function (f) { return floorDistribution(f, i); })
+          .filter(function (dist) { return dist && dist.seats.length > 1; });
+        if (open.length === 0) continue;
+        var best = null;
+        for (var n = 2; n <= 9; n++) {
+          if (searchedNumbers.indexOf(n) !== -1) continue;
+          var left = open.reduce(function (sum, dist) { return sum + varianceAfterSearch(dist, n); }, 0);
+          if (best === null || left < best.left) best = { n: n, left: left };
+        }
+        var now = open.reduce(function (sum, dist) { return sum + varianceAfterSearch(dist, 0); }, 0);
+        return best && best.left < now - 1e-9 ? best.n : null;
+      }
+      return null;
+    }
+
+    function varianceAfterSearch(dist, n) {
+      function part(keep) {
+        var mass = 0, first = 0, second = 0;
+        dist.seats.forEach(function (s, k) {
+          if (!keep(s)) return;
+          mass += dist.probs[k]; first += s * dist.probs[k]; second += s * s * dist.probs[k];
+        });
+        return mass > 0 ? second - first * first / mass : 0;
+      }
+      return part(function (s) { return s >= n; }) + part(function (s) { return s < n; });
+    }
+
+    function updateSearchHint() {
+      Array.prototype.forEach.call(document.querySelectorAll('.searchTick.hint'), function (el) {
+        el.classList.remove('hint');
+      });
+      if (!batch || !batch.rows || !batch.rows.length) return;
+      var n = nextSearch();
+      var tick = n === null ? null : document.querySelector('.searchTick[data-n="' + n + '"]');
+      if (tick) tick.classList.add('hint');
     }
 
     function sanitizeSeatInput(e) {
@@ -1517,8 +1645,14 @@
       if (!isCanBuy && !isSeatMap) return;
       var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, isCanBuy ? 1 : 3);
       if (cleaned !== el.value) el.value = cleaned;
-      if (el.classList.contains('glance')) {
-        syncActualFromGlance(el.getAttribute('data-field'), parseInt(el.getAttribute('data-i'), 10));
+      if (el.classList.contains('floor')) {
+        if (el.value === '0' && searchedNumbers.indexOf(1) === -1) {
+          setSearched(1, true);
+          syncAllFloors();
+        } else {
+          syncActualFromFloor(el.getAttribute('data-field'), parseInt(el.getAttribute('data-i'), 10));
+        }
+        updateSearchHint();
       }
       if (isSeatMap) {
         clearAuto(el);
@@ -1547,8 +1681,8 @@
     function canBuyArrowTarget(el, key) {
       var i = parseInt(el.getAttribute('data-i'), 10);
       var field = el.getAttribute('data-field');
-      var isGlance = el.classList.contains('glance');
-      var gridFields = isGlance ? glanceFields() : canBuyFields();
+      var isFloor = el.classList.contains('floor');
+      var gridFields = isFloor ? floorFields() : canBuyFields();
       var order = currentColumns.map(function (c) { return c.key; })
         .filter(function (k) { return gridFields.indexOf(k) !== -1; });
       function usable(candidate) { return candidate && !candidate.disabled ? candidate : null; }
@@ -1560,7 +1694,7 @@
         return null;
       }
 
-      if (isGlance && key === 'ArrowRight') return nextEmptyGlance(i, order.indexOf(field) + 1);
+      if (isFloor && key === 'ArrowRight') return nextEmptyFloor(i, order.indexOf(field) + 1);
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         var dir = key === 'ArrowLeft' ? -1 : 1;
         for (var idx = order.indexOf(field) + dir; idx >= 0 && idx < order.length; idx += dir) {
@@ -1571,15 +1705,15 @@
       }
       var step = key === 'ArrowUp' ? -1 : 1;
       for (var row = i + step; row >= 0 && row < batch.rows.length; row += step) {
-        var vertical = isGlance ? firstUsableInRow(row) : usable(inputFor(field, row));
+        var vertical = isFloor ? firstUsableInRow(row) : usable(inputFor(field, row));
         if (vertical) return vertical;
       }
       return null;
     }
 
-    function nextEmptyGlance(i, startCol) {
+    function nextEmptyFloor(i, startCol) {
       var order = currentColumns.map(function (c) { return c.key; })
-        .filter(function (k) { return glanceFields().indexOf(k) !== -1; });
+        .filter(function (k) { return floorFields().indexOf(k) !== -1; });
       for (var row = i; row < batch.rows.length; row++) {
         for (var c = (row === i ? startCol : 0); c < order.length; c++) {
           var candidate = inputFor(order[c], row);
@@ -1715,7 +1849,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          payload: { flightDate: batch.flightDate, entries: entries },
+          payload: { flightDate: batch.flightDate, searched: searchedNumbers, entries: entries },
           includeDeparted: showDeparted,
           forcedRoute: currentRouteKey(),
           backAt: currentBackAt()

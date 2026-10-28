@@ -6,6 +6,45 @@ permanent fact (those go in domainKnowledge.md) and not planned work
 (that goes in TODO.md). Newest first. Re-run an analysis before relying
 on an old entry.
 
+## 2026-10-28 — Estimating a cabin from its floor
+
+**Question**: what sharpens the estimate of a cabin's true can-buy count
+from a floor reading, and how much does each extra route-wide search buy?
+
+**Answer**: the flight's previous exact count and more searches. Cabin
+size, hours before departure, route and weekly service add nothing once
+the floor is known; route and weekly service make it worse out of sample.
+
+Typical miss (RMSE, seats), Y/C+/1/PS, on 4,697 floors taken with 1 and 9
+and then counted exactly in the same sitting, cross-validated by flight:
+
+| Estimate from | RMSE |
+|---|---|
+| Cabin and floor (the old per-cabin mean) | 1.64 |
+| + previous exact count | 1.38 |
+| + one more search at the best number | 0.69 |
+
+A floor of 1 is two-humped, not fuzzy: in C+ the true count is exactly 1
+46% of the time and 6-8 34% of the time.
+
+If every floor reading ran the same searches, on 11,263 exact counts of
+1-8 with the estimate taken within each range:
+
+| Searched | RMSE | Within 1 seat |
+|---|---|---|
+| 1, 9 | 1.48 | 59% |
+| 1, 5, 9 | 0.87 | 75% |
+| 1, 4, 7, 9 | 0.66 | 89% |
+| 1, 3, 6, 9 | 0.59 | 92% |
+| 1, 3, 5, 7, 9 | 0.46 | 100% |
+
+**Assumptions / caveats**: the same-sitting pairs sit closer in (median
+T-6) than floor-only readings (median T-16); hours showed no effect, so
+this shouldn't skew the result. The fixed-search table assumes no free
+"N left" floor beyond the search results. The training pairs are flights
+he chose to count in full, not a random sample; the leadoff and
+golden-ticket full counts keep that supply flowing.
+
 ## 2026-10-20 — LAX→CVG red-eye: a T-3 reading calls the golden ticket
 
 **Question**: on the LAX→CVG red-eye, is a reading around T-3 enough to
@@ -290,7 +329,7 @@ same four pools come out on every shuffle seed tried.
 **Assumptions / caveats**: about 20 flights per pool were read as far
 out as T-48, so the left end of each curve is rough; T-8 inward rests on
 95-180 flights per pool. Most weekly services have 1-3 flights, so a
-single service's placement is thin. Glance readings enter at the
+single service's placement is thin. Floor readings enter at the
 dialog's floor estimates.
 
 ## 2026-10-03 — Settling measures that don't separate flights

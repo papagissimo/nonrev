@@ -87,9 +87,12 @@ CREATE TABLE excludedDateRanges (
 -- a real binary-search result). solo*/pair* are the seat-map selectable
 -- counts (single seats / adjacent pairs); blockedTotal is the seat map's X
 -- seats across all cabins.
--- cheapY/cheapCPlus/cheapFirstOrPS/cheapD1 are the glance: can 9 be bought,
--- can 1 be bought. 9 and 0 are exact and are logged in the actual column
--- too; any other value is a floor. NULL means no glance was taken.
+-- floorY/floorCPlus/floorFirstOrPS/floorD1 are the floors: the most that
+-- could be bought in that cabin on the sitting's searches. searched lists
+-- the numbers searched for, route-wide ("1,3,6,9"); empty means none, NULL
+-- means the row predates the list (1 and 9 were searched). A floor of 9 or
+-- 0, or one the searches close, is exact and is logged in the actual
+-- column too. See python/FloorEstimates.py.
 CREATE TABLE observations (
     observationId   INTEGER PRIMARY KEY AUTOINCREMENT,
     carrier         TEXT NOT NULL,
@@ -113,11 +116,12 @@ CREATE TABLE observations (
     pairFirstOrPS   INTEGER,
     pairD1          INTEGER,
     blockedTotal    INTEGER,
-    cheapY          INTEGER,
-    cheapCPlus      INTEGER,
-    cheapFirstOrPS  INTEGER,
-    cheapD1         INTEGER,
-    nextDesiredLog  TEXT
+    floorY          INTEGER,
+    floorCPlus      INTEGER,
+    floorFirstOrPS  INTEGER,
+    floorD1         INTEGER,
+    nextDesiredLog  TEXT,
+    searched        TEXT
 );
 
 CREATE INDEX idxObservationsFlightDay

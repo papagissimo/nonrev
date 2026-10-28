@@ -60,7 +60,7 @@ from Scenarios import studied_cells
 from Grading import FlightGrades, load_grading_settings, settings_form
 from AircraftConfigs import load_aircraft_list
 from observation_filters import SEAT_MAP_COLUMNS, not_seat_map_only_where_clause
-from FloorEstimates import load_floor_estimates, seats_from_glance
+from FloorEstimates import cabin_seats, format_searched, load_floor_model, reading_values
 import InsiderReadings
 
 DEP_CUTOFF_MINUTES = 45
@@ -86,31 +86,40 @@ def minutes_to_12h(dep_minutes):
 CAN_BUY_ENTRY_COLUMNS = {
     'y': 'y', 'cplus': 'cPlus', 'onePS': 'firstOrPS', 'd1': 'd1',
 }
-GLANCE_ENTRY_COLUMNS = {
-    'glanceY': 'cheapY', 'glanceCplus': 'cheapCPlus', 'glanceOnePS': 'cheapFirstOrPS', 'glanceD1': 'cheapD1',
+FLOOR_ENTRY_COLUMNS = {
+    'floorY': 'floorY', 'floorCplus': 'floorCPlus', 'floorOnePS': 'floorFirstOrPS', 'floorD1': 'floorD1',
 }
-GLANCE_ACTUAL_FIELD = {'glanceY': 'y', 'glanceCplus': 'cplus', 'glanceOnePS': 'onePS', 'glanceD1': 'd1'}
+FLOOR_ACTUAL_FIELD = {'floorY': 'y', 'floorCplus': 'cplus', 'floorOnePS': 'onePS', 'floorD1': 'd1'}
 SEAT_MAP_ENTRY_COLUMNS = {column: column for column in SEAT_MAP_COLUMNS}
-ENTRY_COLUMNS = {**CAN_BUY_ENTRY_COLUMNS, **GLANCE_ENTRY_COLUMNS, **SEAT_MAP_ENTRY_COLUMNS}
+ENTRY_COLUMNS = {**CAN_BUY_ENTRY_COLUMNS, **FLOOR_ENTRY_COLUMNS, **SEAT_MAP_ENTRY_COLUMNS}
 
 
 def entry_field_config():
     return {
         'canBuyFields': list(CAN_BUY_ENTRY_COLUMNS),
-        'glanceActualField': GLANCE_ACTUAL_FIELD,
+        'floorActualField': FLOOR_ACTUAL_FIELD,
         'seatMapFields': list(SEAT_MAP_ENTRY_COLUMNS),
         'insiderFields': InsiderReadings.NUMBER_FIELDS,
         'insiderVerdicts': InsiderReadings.VERDICTS,
     }
 
 
-def glance_estimates(floor_estimates):
-    """{actual field: {floor: estimated seats}} for every non-exact glance
-    floor, shown as the Actual box's placeholder once a glance is typed."""
-    return {
-        field: {floor: seats_from_glance(floor_estimates, column, floor) for floor in range(1, 9)}
-        for field, column in CAN_BUY_ENTRY_COLUMNS.items()
-    }
+def floor_distributions(floor_model):
+    """FloorModel.page_table keyed by the page's actual field, for the
+    Actual box's estimate and the next-search hint."""
+    table = floor_model.page_table()
+    return {field: table[column] for field, column in CAN_BUY_ENTRY_COLUMNS.items()}
+
+
+def latest_exact(prev_readings):
+    """Per cabin key, the flight's most recent exact count, or None."""
+    latest = {}
+    for cabin_key in CABIN_KEY_TO_COLUMN:
+        latest[cabin_key] = next(
+            (reading[cabin_key] for reading in prev_readings
+             if reading[cabin_key] is not None and cabin_key not in reading['estimated']),
+            None)
+    return latest
 
 
 def load_d1_map(conn):
@@ -192,7 +201,7 @@ def curve_estimates_for_row(conn, org, dest, dow, dep_time, hours_until_dep, dep
     return result
 
 
-def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor_estimates):
+def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor_model):
     """
     Every reading logged today for this exact flight, sorted
     most-recent-check first (ascending hoursBeforeDep, since it counts
@@ -214,10 +223,9 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
     at logging time - the one place in this file a reading's displayed
     hours-before-dep can differ from what's in the observations table.
 
-    Each cabin value is the real actual if one was logged, else the
-    glance's seat count (FloorEstimates.seats_from_glance) if one was
-    glanced, else None. 'estimated' lists the cabins whose value came from
-    a glance floor rather than an exact count.
+    Each cabin value is the exact count if the reading has one, else the
+    floor's estimate (FloorEstimates.cabin_seats) if a floor was taken,
+    else None. 'estimated' lists the cabins whose value is an estimate.
 
     A reading with only seat-map numbers (no can-buy counts) is included
     as a row of its own: its can-buy cabins are None, its 't1' is None,
@@ -285,7 +293,7 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
         rows = conn.execute(
             f"""SELECT hoursBeforeDep, checkTimestamp, y, cPlus, firstOrPS, d1,
                       soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal,
-                      cheapY, cheapCPlus, cheapFirstOrPS, cheapD1, depTime
+                      floorY, floorCPlus, floorFirstOrPS, floorD1, searched, depTime
                FROM observations
                WHERE carrier=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, org, dest, flight_date),
@@ -309,7 +317,7 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
         readings_raw = conn.execute(
             f"""SELECT hoursBeforeDep, checkTimestamp, y, cPlus, firstOrPS, d1,
                       soloY, soloCPlus, soloFirstOrPS, soloD1, blockedTotal,
-                      cheapY, cheapCPlus, cheapFirstOrPS, cheapD1
+                      floorY, floorCPlus, floorFirstOrPS, floorD1, searched
                FROM observations
                WHERE carrier=? AND depTime=? AND org=? AND dest=? AND flightDate=?""",
             (carrier, dep_time, org, dest, flight_date),
@@ -331,18 +339,26 @@ def previous_readings_for(conn, carrier, dep_time, org, dest, flight_date, floor
                 'blocked': None, 'estimated': [], 'insider': None,
                 **{cabin_key: None for cabin_key in CABIN_KEY_TO_COLUMN}}
 
+    chronological = sorted(range(len(readings_raw)), key=lambda index: readings_raw[index][1])
+    values_by_index = dict(zip(chronological, reading_values([
+        {'checkTimestamp': r[1], 'searched': r[15],
+         'y': r[2], 'cPlus': r[3], 'firstOrPS': r[4], 'd1': r[5],
+         'floorY': r[11], 'floorCPlus': r[12], 'floorFirstOrPS': r[13], 'floorD1': r[14]}
+        for r in (readings_raw[index] for index in chronological)
+    ])))
+
     readings = []
     reading_by_check = {}
-    for r in readings_raw:
+    for index, r in enumerate(readings_raw):
         reading = blank_reading(r[0])
         reading['solo'] = {'y': r[6], 'cplus': r[7], 'onePS': r[8], 'd1': r[9]}
         reading['blocked'] = r[10]
-        for cabin_key, actual, glance in zip(CABIN_KEY_TO_COLUMN, r[2:6], r[11:15]):
-            if actual is None and glance is not None:
-                actual = seats_from_glance(floor_estimates, CABIN_KEY_TO_COLUMN[cabin_key], glance)
-                if glance not in (0, 9):
-                    reading['estimated'].append(cabin_key)
-            reading[cabin_key] = actual
+        values = values_by_index[index]
+        for cabin_key, column in CABIN_KEY_TO_COLUMN.items():
+            seats, estimated = cabin_seats(floor_model, column, values[column])
+            if estimated:
+                reading['estimated'].append(cabin_key)
+            reading[cabin_key] = seats
         readings.append(reading)
         reading_by_check.setdefault(r[1], reading)
 
@@ -514,14 +530,14 @@ def last_chance_hours_for(back_at_ms, settings, now):
     return (back_at - now).total_seconds() / 3600 + settings['awayMarginHours']
 
 
-def most_pressing_route(conn, trust, settings, candidates, skip_set, floor_estimates, readings_cache,
+def most_pressing_route(conn, trust, settings, candidates, skip_set, floor_model, readings_cache,
                         last_chance_hours):
     open_candidates = [c for c in candidates if (c['org'], c['dest'], c['flightDate']) not in skip_set]
     if settings['walkInDepartureOrder']:
         return open_candidates[0] if open_candidates else None
     best = None
     for c in open_candidates:
-        prev_readings = readings_for_candidate(conn, c, floor_estimates, readings_cache)
+        prev_readings = readings_for_candidate(conn, c, floor_model, readings_cache)
         _, _, urgency = pool_and_cadence_reading(conn, trust, settings, c, prev_readings, last_chance_hours)
         rank = route_day_rank(urgency, c['hoursUntilDep']) + (urgency, c['depEtDatetime'])
         if best is None or rank < best[0]:
@@ -535,11 +551,11 @@ def route_day_rank(urgency, hours_until_dep):
     return (0, max(0, math.ceil(hours_until_dep / 24) - 1))
 
 
-def readings_for_candidate(conn, c, floor_estimates, readings_cache):
+def readings_for_candidate(conn, c, floor_model, readings_cache):
     flight = (c['scheduleRow'], c['flightDate'])
     if flight not in readings_cache:
         readings_cache[flight] = previous_readings_for(
-            conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'], floor_estimates)[0]
+            conn, c['car'], c['dep'], c['org'], c['dest'], c['flightDate'], floor_model)[0]
     return readings_cache[flight]
 
 
@@ -655,11 +671,11 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             None,
         )
     trust = trust_snapshot(conn)
-    floor_estimates = load_floor_estimates(conn)
+    floor_model = load_floor_model(conn)
     readings_cache = {}
     if next_candidate is None:
         next_candidate = most_pressing_route(conn, trust, settings, candidates, skip_set,
-                                             floor_estimates, readings_cache, last_chance_hours)
+                                             floor_model, readings_cache, last_chance_hours)
 
     if next_candidate is None:
         total_departed = sum(departed_by_route.values())
@@ -699,7 +715,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         # DEP_CUTOFF_MINUTES check above, by construction - nothing here
         # can still be departed. (departed_by_route, computed above, is
         # the one and only place that count is real.)
-        prev_readings = readings_for_candidate(conn, c, floor_estimates, readings_cache)
+        prev_readings = readings_for_candidate(conn, c, floor_model, readings_cache)
         attach_t1_ranges(conn, trust, settings, c, prev_readings)
         route_rows.append({
             'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
@@ -711,6 +727,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
             'isNext': c['scheduleRow'] == next_candidate['scheduleRow'],
             'departed': False,
             'previousReadings': prev_readings,
+            'latestExact': latest_exact(prev_readings),
             'historyRange': pools.history_ranges(
                 conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
             ),
@@ -726,7 +743,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                     or c['flightDate'] != next_candidate['flightDate']:
                 continue
             prev_readings, today_c1 = previous_readings_for(conn, c['car'], c['dep'], c['org'], c['dest'],
-                                                            c['flightDate'], floor_estimates)
+                                                            c['flightDate'], floor_model)
             attach_t1_ranges(conn, trust, settings, c, prev_readings)
             route_rows.append({
                 'scheduleRow': c['scheduleRow'], 'org': c['org'], 'dest': c['dest'], 'car': c['car'],
@@ -738,6 +755,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
                 'isNext': False,
                 'departed': True,
                 'previousReadings': prev_readings,
+                'latestExact': latest_exact(prev_readings),
                 'historyRange': pools.history_ranges(
                     conn, c['org'], c['dest'], c['dow'], c['dep'], c['hoursUntilDep'], c['flightDate'],
                 ),
@@ -770,7 +788,7 @@ def get_next_batch(conn, skip_route_days=None, include_departed=False, forced_ro
         'flightDate': next_candidate['flightDate'],
         'routeOrg': next_candidate['org'], 'routeDest': next_candidate['dest'],
         'carrier': next_candidate['car'], 'routeFlag': route_flag,
-        'glanceEstimates': glance_estimates(floor_estimates),
+        'floorDistributions': floor_distributions(floor_model),
         'summaryText': summary_text, 'waitMinutes': None, 'rows': route_rows,
         'aircraftList': load_aircraft_list(conn), 'settings': settings,
         'openFullSettings': load_open_full_settings(conn),
@@ -786,14 +804,15 @@ def save_entry_dialog(conn, payload):
       flightDate: "YYYY-MM-DD",   # the flight's own schedule date - may
                                    # be "yesterday" per the cross-midnight
                                    # handling above, not always ET-today
+      searched: [1, 5, 9],         # the numbers searched for, route-wide
       entries: [{ scheduleRow, org, dest, car, dep, aircraftConfig,
                   flightNumber,
                   every key in ENTRY_COLUMNS (each '' or a value as typed),
                   insider: {InsiderReadings.NUMBER_FIELDS..., verdict, checkTime} }]
     }
     An entry is logged when any ENTRY_COLUMNS field is non-blank - a
-    seat-map-only or glance-only entry is valid, blank can-buy just means
-    not observed. Glance fields land in the cheap* columns.
+    seat-map-only or floor-only entry is valid, blank can-buy just means
+    not observed. Every logged entry carries the sitting's searched list.
     """
     flight_date = payload['flightDate']
     flight_date_obj = datetime.strptime(flight_date, '%Y-%m-%d').date()
@@ -810,6 +829,7 @@ def save_entry_dialog(conn, payload):
         return {'logged': 0}
 
     check_timestamp = now.strftime('%Y-%m-%d %H:%M')
+    searched = format_searched(int(n) for n in payload.get('searched', []))
 
     for entry in to_write:
         def num(field):
@@ -830,10 +850,10 @@ def save_entry_dialog(conn, payload):
         conn.execute(
             f"""INSERT INTO observations
                (carrier, carriersFltNum_notStable_DO_NOT_USE, org, dest, flightDate, checkTimestamp,
-                hoursBeforeDep, depTime, {', '.join(ENTRY_COLUMNS.values())})
-               VALUES ({', '.join('?' * (8 + len(ENTRY_COLUMNS)))})""",
+                hoursBeforeDep, depTime, searched, {', '.join(ENTRY_COLUMNS.values())})
+               VALUES ({', '.join('?' * (9 + len(ENTRY_COLUMNS)))})""",
             (entry['car'], entry['flightNumber'], entry['org'], entry['dest'],
-             flight_date, check_timestamp, hours_before_dep, entry['dep'],
+             flight_date, check_timestamp, hours_before_dep, entry['dep'], searched,
              *[num(field) for field in ENTRY_COLUMNS]),
         )
 

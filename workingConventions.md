@@ -52,6 +52,11 @@ TODO.md; dated analysis results belong in findings.md.
   question: a service's open/full record is its own, shown as counts.
 - Yardstick: how big a move in the summed can-buy total matters, by the
   current total, in either direction. A setting, as total/move pairs.
+- Floor: the most seats a cabin could be bought on a sitting's searches.
+  Searched: the numbers searched for in that sitting, route-wide. A
+  cabin's ceiling is derived, never stored: the next searched number above
+  its floor, less one, or 9 with none above. A floor reading is any
+  reading taken this way.
 - Never say bare "service" in docs or discussion; say weekly or daily.
 
 ## Delivering changes
@@ -120,10 +125,17 @@ TODO.md; dated analysis results belong in findings.md.
   a blank submit skips the route. Keep this confirm-then-skip two-step.
 - His logging tab stays open for days. Refreshing deliberately resets the
   session and revisits skipped flights. Keep this.
+- Floors: he ticks each number he searches in the Searched row (1-9, one
+  per route) and types each cabin's floor. Actual fills with the exact
+  count, locked, once the range closes; otherwise it shows the estimate to
+  one decimal. Un-ticking reopens ranges; a floor of 0 ticks 1. Submitting
+  saves the ticks on every row logged and clears them. The highlighted
+  tick is the search to do next: 9, then 1, then whichever most narrows
+  the next departing flight that has no golden ticket and an open cabin.
 - Cadence practice: the leadoff (first reading of a flight) is a full
-  count; readings in between are usually glances; the golden ticket, or
-  the last reading he knows he'll get, is a full count. Seat maps only at
-  the golden ticket. This is practice, not code.
+  count; readings in between are usually floor readings; the golden
+  ticket, or the last reading he knows he'll get, is a full count. Seat
+  maps only at the golden ticket. This is practice, not code.
 - Cadence states (TrustPools.cadence_state): Now! for the leadoff and for
   an unread golden-ticket window; Skip once the golden ticket is in;
   otherwise by the points a reading now would buy - the pool's curve at
