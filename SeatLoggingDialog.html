@@ -1488,7 +1488,8 @@
 
     function floorInputHtml(field, i, seatDisabled) {
       return '<div class="seatCellWrap"><input class="seat floor" data-i="' + i + '" data-field="' + field +
-        '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '></div>';
+        '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>' +
+        '<div class="estimateLine" data-spread-i="' + i + '" data-spread-field="' + field + '"></div></div>';
     }
 
     // The searched numbers bound every floor: a cabin's ceiling is the next
@@ -1522,13 +1523,38 @@
       return dist.seats.reduce(function (sum, s, k) { return sum + s * dist.probs[k]; }, 0);
     }
 
+    var LIKELY_RANGE_SHARE = 0.8;
+
+    // The narrowest run of seat counts holding LIKELY_RANGE_SHARE of the
+    // probability; between equally narrow runs, the one holding more.
+    function likelyRange(dist) {
+      var best = null;
+      for (var start = 0; start < dist.seats.length; start++) {
+        var mass = 0;
+        for (var end = start; end < dist.seats.length; end++) {
+          mass += dist.probs[end];
+          if (mass >= LIKELY_RANGE_SHARE - 1e-9) {
+            var width = end - start;
+            if (!best || width < best.width || (width === best.width && mass > best.mass)) {
+              best = { lo: dist.seats[start], hi: dist.seats[end], width: width, mass: mass };
+            }
+            break;
+          }
+        }
+      }
+      return best.lo === best.hi ? '\u2248' + best.lo : best.lo + '\u2013' + best.hi;
+    }
+
     // Closed floor: Actual fills and locks with the exact count. Open
-    // floor: Actual's placeholder is the estimate, one decimal.
+    // floor: Actual's placeholder is the estimate, one decimal, and under
+    // the floor sits the likely range.
     function syncActualFromFloor(floorField, i) {
       var actualField = floorActualField()[floorField];
       var actual = inputFor(actualField, i);
       if (!actual) return;
       var dist = floorDistribution(floorField, i);
+      var spread = document.querySelector('[data-spread-i="' + i + '"][data-spread-field="' + floorField + '"]');
+      if (spread) spread.textContent = dist && dist.seats.length > 1 ? likelyRange(dist) : '';
       if (dist && dist.seats.length === 1) {
         actual.value = String(dist.seats[0]);
         markAuto(actual);
@@ -1646,8 +1672,9 @@
       var cleaned = el.value.replace(/[^0-9]/g, '').slice(0, isCanBuy ? 1 : 3);
       if (cleaned !== el.value) el.value = cleaned;
       if (el.classList.contains('floor')) {
-        if (el.value === '0' && searchedNumbers.indexOf(1) === -1) {
-          setSearched(1, true);
+        var implied = { '0': 1, '1': 1, '9': 9 }[el.value];
+        if (implied !== undefined && searchedNumbers.indexOf(implied) === -1) {
+          setSearched(implied, true);
           syncAllFloors();
         } else {
           syncActualFromFloor(el.getAttribute('data-field'), parseInt(el.getAttribute('data-i'), 10));

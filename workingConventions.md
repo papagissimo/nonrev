@@ -128,8 +128,10 @@ TODO.md; dated analysis results belong in findings.md.
 - Floors: he ticks each number he searches in the Searched row (1-9, one
   per route) and types each cabin's floor. Actual fills with the exact
   count, locked, once the range closes; otherwise it shows the estimate to
-  one decimal. Un-ticking reopens ranges; a floor of 0 ticks 1. Submitting
-  saves the ticks on every row logged and clears them. The highlighted
+  one decimal, with the narrowest range holding 80% of the probability
+  under the floor. Un-ticking reopens ranges; a floor of 0 or 1 ticks 1, a
+  floor of 9 ticks 9. Submitting saves the ticks on every row logged and
+  clears them. The highlighted
   tick is the search to do next: 9, then 1, then whichever most narrows
   the next departing flight that has no golden ticket and an open cabin.
 - Cadence practice: the leadoff (first reading of a flight) is a full
