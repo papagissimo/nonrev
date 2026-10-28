@@ -1579,7 +1579,8 @@
       var el = document.querySelector('.totalUncertainty[data-i="' + i + '"]');
       if (!el) return;
       var off = totalUncertainty(i);
-      el.textContent = off === null ? '' : '\u00b1' + off.toFixed(1);
+      var shown = off === null ? '' : off.toFixed(1);
+      el.textContent = shown === '' ? '' : shown === '0.0' ? '-' : '\u00b1' + shown;
     }
 
     // Closed floor: Actual fills and locks with the exact count. Open
