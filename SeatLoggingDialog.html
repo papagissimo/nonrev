@@ -75,7 +75,12 @@
     #flightTable:not(.mode-floor) .grp-floor, #flightTable:not(.mode-insider) .grp-insider { display: none; }
     td.col-floorY { border-left: 2px solid #ddd; }
     input.seat.floor { border-color: #a8c7fa; }
-    .totalUncertainty { font-size: 15px; font-weight: bold; color: #1a73e8; margin-top: 2px; }
+    td.col-floorY { overflow: visible; }
+    .totalUncertaintyAnchor { position: relative; }
+    .totalUncertainty {
+      position: absolute; top: calc(100% + 8px); left: -5px; text-align: center;
+      font-size: 18px; font-weight: bold; color: #1a73e8; z-index: 1;
+    }
     .searchedRow { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; font-size: 14px; color: #555; }
     .searchTick {
       width: 34px; height: 30px; font-size: 16px; border: 1px solid #a8c7fa; border-radius: 4px;
@@ -1418,7 +1423,7 @@
             (row.grade ? '<div class="gradeLine">' + escapeHtml(row.grade) + '</div>' : '') +
             '<div class="panelLinks"><a class="insiderLink" data-i="' + i + '">insider</a>' +
             (row.departed ? '' : '<a class="seatMapLink" data-i="' + i + '">seat<br>map</a>') + '</div>',
-          floorY: floorInputHtml('floorY', i, seatDisabled),
+          floorY: floorInputHtml('floorY', i, seatDisabled, row.hasD1 ? 4 : 3),
           floorCplus: floorInputHtml('floorCplus', i, seatDisabled),
           floorOnePS: floorInputHtml('floorOnePS', i, seatDisabled),
           floorD1: row.hasD1 ? floorInputHtml('floorD1', i, seatDisabled) : '',
@@ -1442,7 +1447,6 @@
           prev: '<div class="prev">' + formatPreviousReadings(anyD1, row.previousReadings) + '</div>',
           t1: '<div class="prev">' + formatT1Column(row.previousReadings) + '</div>',
           hrs: '<span class="' + hrsClass + '">' + formatTimeUntil(row) + '</span>' +
-            '<div class="totalUncertainty" data-i="' + i + '"></div>' +
             (row.nextReading ? '<div class="nextReading">' + escapeHtml(row.nextReading.label) + '<br>' +
               escapeHtml(formatNextReadingWhen(row.nextReading)) + '</div>' : ''),
           gap: '',
@@ -1488,9 +1492,15 @@
       updateSearchHint();
     }
 
-    function floorInputHtml(field, i, seatDisabled) {
-      return '<div class="seatCellWrap"><input class="seat floor" data-i="' + i + '" data-field="' + field +
-        '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '></div>';
+    // The total's ± sits under the Y floor, as wide as the row's floor
+    // boxes (each cell is its width plus 5px padding a side), so it reads
+    // centered under all of them.
+    function floorInputHtml(field, i, seatDisabled, floorCount) {
+      return '<div class="seatCellWrap' + (floorCount ? ' totalUncertaintyAnchor' : '') +
+        '"><input class="seat floor" data-i="' + i + '" data-field="' + field +
+        '" placeholder="-" maxlength="1" inputmode="numeric"' + seatDisabled + '>' +
+        (floorCount ? '<div class="totalUncertainty" data-i="' + i + '" style="width: calc(' + floorCount +
+          ' * (100% + 10px));"></div>' : '') + '</div>';
     }
 
     // The searched numbers bound every floor: a cabin's ceiling is the next
