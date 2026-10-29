@@ -38,6 +38,7 @@
     .noFlights { color: #767676; }
     .btnRow { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; border-top: 1px solid #eee; padding-top: 10px; }
     #status { color: #666; font-size: 12px; }
+    #copyBtn { background: none; border: none; color: #1a73e8; font-size: 12px; cursor: pointer; padding: 8px 4px; }
     #deleteBtn { background: none; border: none; color: #c5221f; font-size: 12px; cursor: pointer; padding: 8px 4px; }
     #saveBtn { background: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
     #saveBtn:disabled { background: #a9c6f2; }
@@ -73,6 +74,7 @@
         <div class="btnRow">
           <span id="status"></span>
           <span>
+            <button id="copyBtn" type="button">Copy scenario</button>
             <button id="deleteBtn" type="button">Delete scenario</button>
             <button id="saveBtn" type="button">Save</button>
           </span>
@@ -258,19 +260,35 @@
       markDirty();
     }
 
-    function addScenario() {
+    function unusedName(base) {
       const taken = new Set(state.scenarios.map(function (s) { return s.name.trim().toLowerCase(); }));
-      let name = 'New scenario';
+      let name = base;
       let n = 2;
-      while (taken.has(name.toLowerCase())) { name = 'New scenario ' + n; n += 1; }
+      while (taken.has(name.toLowerCase())) { name = base + ' ' + n; n += 1; }
+      return name;
+    }
+
+    function addUnsavedScenario(name, cells) {
       state.newCounter += 1;
-      const scenario = { key: 'new-' + state.newCounter, id: null, name: name, active: false, cells: {} };
+      const scenario = { key: 'new-' + state.newCounter, id: null, name: unusedName(name), active: false, cells: cells };
       state.scenarios.push(scenario);
       markDirty();
       select(scenario.key);
       const nameInput = document.getElementById('scenarioName');
       nameInput.focus();
       nameInput.select();
+    }
+
+    function addScenario() {
+      addUnsavedScenario('New scenario', {});
+    }
+
+    function copySelected() {
+      const source = selected();
+      if (!source) return;
+      const cells = {};
+      Object.keys(source.cells).forEach(function (key) { cells[key] = new Set(source.cells[key]); });
+      addUnsavedScenario(source.name + ' copy', cells);
     }
 
     function deleteSelected() {
@@ -333,6 +351,7 @@
       document.getElementById('dayHeads').appendChild(el('div', { className: 'dayHead', textContent: d }));
     });
     document.getElementById('addBtn').addEventListener('click', addScenario);
+    document.getElementById('copyBtn').addEventListener('click', copySelected);
     document.getElementById('deleteBtn').addEventListener('click', deleteSelected);
     document.getElementById('saveBtn').addEventListener('click', save);
     document.getElementById('scenarioName').addEventListener('input', function (e) {
