@@ -1090,8 +1090,21 @@
       }
     }
 
+    function isEntryBox(el) {
+      var c = el.classList;
+      return !!c && (c.contains('seat') || c.contains('seatn') || c.contains('insn'));
+    }
+
     function selectSeatMapInputOnFocus(e) {
-      if (e.target.classList && (e.target.classList.contains('seatn') || e.target.classList.contains('insn'))) e.target.select();
+      if (isEntryBox(e.target)) e.target.select();
+    }
+
+    // A click would otherwise drop the selection or place the caret; keep
+    // the whole value selected, so a digit typed replaces what's there.
+    function keepSelectionOnFocusClick(e) {
+      if (!isEntryBox(e.target)) return;
+      e.preventDefault();
+      e.target.select();
     }
 
     function toggleSettings() {
@@ -1489,6 +1502,8 @@
       tbody.addEventListener('change', handleSeatMapChange);
       tbody.removeEventListener('focusin', selectSeatMapInputOnFocus);
       tbody.addEventListener('focusin', selectSeatMapInputOnFocus);
+      tbody.removeEventListener('mouseup', keepSelectionOnFocusClick);
+      tbody.addEventListener('mouseup', keepSelectionOnFocusClick);
       updateSearchHint();
     }
 
@@ -1744,50 +1759,38 @@
         e.preventDefault();
         target.focus();
         target.select();
+      } else if (el.classList.contains('seat')) {
+        e.preventDefault();
+        el.select();
       }
     }
 
+    // A grid per kind of box - floors, or actuals: left and right step
+    // along the row and wrap to the next or previous flight; up and down
+    // keep the column, or the row's last box where that cabin is missing.
     function canBuyArrowTarget(el, key) {
       var i = parseInt(el.getAttribute('data-i'), 10);
       var field = el.getAttribute('data-field');
-      var isFloor = el.classList.contains('floor');
-      var gridFields = isFloor ? floorFields() : canBuyFields();
+      var gridFields = el.classList.contains('floor') ? floorFields() : canBuyFields();
       var order = currentColumns.map(function (c) { return c.key; })
         .filter(function (k) { return gridFields.indexOf(k) !== -1; });
-      function usable(candidate) { return candidate && !candidate.disabled ? candidate : null; }
-      function firstUsableInRow(row) {
-        for (var c = 0; c < order.length; c++) {
-          var candidate = usable(inputFor(order[c], row));
-          if (candidate) return candidate;
-        }
-        return null;
+      function usableInRow(row) {
+        return order.map(function (k) { return inputFor(k, row); })
+          .filter(function (candidate) { return candidate && !candidate.disabled; });
       }
 
-      if (isFloor && key === 'ArrowRight') return nextEmptyFloor(i, order.indexOf(field) + 1);
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
-        var dir = key === 'ArrowLeft' ? -1 : 1;
-        for (var idx = order.indexOf(field) + dir; idx >= 0 && idx < order.length; idx += dir) {
-          var sideways = usable(inputFor(order[idx], i));
-          if (sideways) return sideways;
-        }
-        return null;
+        var cells = [];
+        for (var row = 0; row < batch.rows.length; row++) cells = cells.concat(usableInRow(row));
+        var at = cells.indexOf(el);
+        return cells[at + (key === 'ArrowLeft' ? -1 : 1)] || null;
       }
       var step = key === 'ArrowUp' ? -1 : 1;
-      for (var row = i + step; row >= 0 && row < batch.rows.length; row += step) {
-        var vertical = isFloor ? firstUsableInRow(row) : usable(inputFor(field, row));
-        if (vertical) return vertical;
-      }
-      return null;
-    }
-
-    function nextEmptyFloor(i, startCol) {
-      var order = currentColumns.map(function (c) { return c.key; })
-        .filter(function (k) { return floorFields().indexOf(k) !== -1; });
-      for (var row = i; row < batch.rows.length; row++) {
-        for (var c = (row === i ? startCol : 0); c < order.length; c++) {
-          var candidate = inputFor(order[c], row);
-          if (candidate && !candidate.disabled && candidate.value === '') return candidate;
-        }
+      for (var r = i + step; r >= 0 && r < batch.rows.length; r += step) {
+        var inRow = usableInRow(r);
+        if (!inRow.length) continue;
+        var same = inputFor(field, r);
+        return same && !same.disabled ? same : inRow[inRow.length - 1];
       }
       return null;
     }
